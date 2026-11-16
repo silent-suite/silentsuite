@@ -130,6 +130,64 @@ class NoteEditorContractTest {
         assertFalse("the read-only hint is gone with its uses", strings.contains("notes_read_only_hint"))
     }
 
+    @Test fun `a delete saves first, calls the store on IO, and its confirmations carry the process token and the account`() {
+        assertEquals(1, modelCode.split("withContext(Dispatchers.IO) { readDelete() }").size - 1)
+        assertEquals(1, modelCode.split("withContext(Dispatchers.IO) { deleteOnIo(shown, discardConfirmed) }").size - 1)
+        assertEquals("deleteNote only there", 1, Regex("store\\.deleteNote\\(").findAll(modelCode).count())
+        assertTrue(function("deleteOnIo").contains("store.deleteNote("))
+        // With no entry, the item marked deleted must be the revision the confirmation showed, checked before it is marked.
+        val onIo = function("deleteOnIo")
+        assertTrue(onIo.indexOf("item.etag != shown.revision") in 0 until onIo.indexOf("EtebasePushRemote.markDeleted("))
+        assertTrue(function("readDelete").contains("revision = shown"))
+        // A failed write that left the delete in place is never reported as nothing deleted.
+        assertTrue(onIo.contains("e is IOException && deleteIsThere(store, shown.noteUid) -> DeleteAnswer.UNSURE"))
+        // A removal that left the note's own entry in place (a replaced original went first) deleted nothing.
+        assertTrue(onIo.contains("entryStillThere(store, shown.noteUid) -> DeleteAnswer.FAILED"))
+        // The deleted item carries no text of the note: never a bare delete().
+        assertTrue(function("deleteOnIo").contains("EtebasePushRemote.markDeleted(item, System.currentTimeMillis())"))
+        assertFalse(Regex("\\.delete\\(\\)").containsMatchIn(modelCode))
+        val ask = model.substringAfter("    fun askDelete() {").substringBefore("\n    }\n")
+        assertTrue("everything typed is saved first", ask.indexOf("saveStep()") in 0 until ask.indexOf("readDelete()"))
+        val delete = model.substringAfter("    fun delete(shown: DeleteShown, discardConfirmed: Boolean) {").substringBefore("\n    }\n")
+        assertTrue("text typed after the confirmation was prepared stops the delete",
+            delete.indexOf("core.dirty") in 0 until delete.indexOf("deleteOnIo(shown, discardConfirmed)"))
+        assertTrue("a delete on disk asks for a run, also one that may not last a power loss",
+            delete.contains("if (answer == DeleteAnswer.RECORDED || answer == DeleteAnswer.UNSURE) requestSync(0)"))
+        val dialog = read("src/main/java/io/silentsuite/sync/ui/notes/NoteDeleteConfirmation.kt")
+        assertTrue(dialog.contains("putString(ARG_PROCESS, ProcessIncarnation.current())"))
+        assertTrue(dialog.contains("putString(ARG_CREATION_ID, identity.creationId)"))
+        val confirmed = screen.substringAfter("    internal fun deleteConfirmed(").substringBefore("\n    }\n")
+        assertTrue(confirmed.indexOf("ProcessIncarnation.isCurrent(shownIn)") in 0 until confirmed.indexOf("model.delete("))
+        assertTrue(confirmed.contains("identity != ExactAccountIdentity(account.type, account.name, creationId)"))
+        assertTrue("the discard of unsynced text is its own confirmation",
+            confirmed.contains("if (shown.unsynced && !discard) confirmDelete(shown, discard = true)"))
+    }
+
+    @Test fun `Back and Up ask the editor first, a leave saves first, and an answer is checked before anything is done`() {
+        val activity = code(read("src/main/java/io/silentsuite/sync/ui/notes/NotesActivity.kt"))
+        val up = activity.substringAfter("    private fun up() {").substringBefore("\n    }\n")
+        assertTrue("the editor is asked before Up pops", up.indexOf("editor?.guardLeave() == true") in 0 until up.indexOf("popBackStackImmediate()"))
+        assertEquals("onSupportNavigateUp and the toolbar's Up arrow both go there", 3, Regex("\\bup\\(\\)").findAll(activity).count())
+        assertTrue(code(screen).contains("requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, back)"))
+        val back = screen.substringAfter("    private val back = object : OnBackPressedCallback(false) {").substringBefore("\n    }\n")
+        assertTrue("Back asks the editor first", back.indexOf("if (guardLeave()) return") in 0 until back.indexOf("onBackPressed()"))
+        val leave = model.substringAfter("    fun requestLeave() {").substringBefore("\n    }\n")
+        assertTrue("in a step of the app's", leave.contains("background.launch {"))
+        assertTrue("the save runs first, as a step", leave.indexOf("steps.withLock {") in 0 until leave.indexOf("saveStep()"))
+        assertTrue(leave.indexOf("saveStep()") < leave.indexOf("NoteEditing.leave("))
+        assertTrue(code(screen).contains("putString(ARG_PROCESS, ProcessIncarnation.current())"))
+        val answered = screen.substringAfter("    internal fun leaveAnswered(").substringBefore("\n    }\n")
+        val check = answered.indexOf("if (model.leavePromptAnswered(shownIn, shownNote) == null) {")
+        assertTrue("an answer is checked", check > 0)
+        for (act in listOf("copy()", "leave()")) assertTrue("$act only after the check", answered.indexOf(act) > check)
+        // The question never says the text is lost, and the way out is never called Discard: nothing is deleted.
+        val strings = read("src/main/res/values/strings.xml")
+        for (name in listOf("notes_editor_leave_title", "notes_editor_leave_changes", "notes_editor_leave_new_note", "notes_editor_leave_anyway")) {
+            val text = strings.substringAfter("<string name=\"$name\">").substringBefore("</string>")
+            for (banned in listOf("lost", "Discard", "deleted")) assertFalse("$name says $banned: $text", text.contains(banned))
+        }
+    }
+
     @Test fun `the editor makes no release, discard, hold or send`() {
         for (banned in listOf(".release(", ".discard(", "discardStore", "discardOrphan", "discardNotebook", "clearAll", ".hold(",
             ".rebase(", "beginSend", "startSend", "completeSend", "replaceWithNewNote", "Trigger.MANUAL")) {

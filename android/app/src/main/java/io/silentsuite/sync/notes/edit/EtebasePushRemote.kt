@@ -104,6 +104,8 @@ internal class EtebasePushRemote(
      * The server copy with the entry's change on top: its text, with its name and mtime
      * merged into the server copy's metadata, so fields another client wrote there are kept. The result
      * keeps the server copy's revision as its base, so its push names the copy it was built on.
+     * For a pending delete, the server copy marked deleted: the step rebases a delete only onto a copy
+     * of ours (NotePushPolicy.decide), so it never deletes over another client's change.
      */
     override fun rebase(entry: PendingEntry, onto: ServerItem): Built {
         val itemMgr = manager(entry.notebookUid)
@@ -115,6 +117,7 @@ internal class EtebasePushRemote(
                 target.setContent(local.content)
                 writeNameAndMtime(target, name, mtime)
             }
+            PendingEntry.State.DELETE -> markDeleted(target, now())
             PendingEntry.State.HELD -> error("held text is never rebased")
         }
         return Built(target.etag, itemMgr.cacheSaveWithContent(target))
@@ -183,6 +186,18 @@ internal class EtebasePushRemote(
     companion object {
         private const val UNTITLED = "Untitled"
         private const val CONFLICTED_COPY = "(conflicted copy)"
+
+        /**
+         * Marks [item] deleted so that it carries no note text: its content is emptied and its name blanked first, so a
+         * delete built on unsynced text the user confirmed for discard sends none of that text, not even encrypted, into
+         * the deleted revision the server keeps. The name goes through the raw merge, which keeps every other field
+         * another client wrote; metadata the merge refuses is left as it is rather than not deleting the note.
+         */
+        fun markDeleted(item: Item, now: Long) {
+            item.setContent("")
+            (NoteMetaCodec.merge(item.metaRaw, "", now) as? NoteMetaCodec.Merge.Merged)?.let { item.setMetaRaw(it.bytes) }
+            item.delete()
+        }
 
         /**
          * The metadata to write when [name] and [mtime] go onto a copy whose metadata is [raw]: the raw

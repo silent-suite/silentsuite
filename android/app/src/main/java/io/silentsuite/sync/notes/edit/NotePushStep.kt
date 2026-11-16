@@ -3,6 +3,7 @@ package io.silentsuite.sync.notes.edit
 import com.etebase.client.exceptions.PermissionDeniedException
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.notes.edit.NotePushPolicy.ConflictOutcome
+import io.silentsuite.sync.notes.edit.NotePushPolicy.DeleteNotDone
 import io.silentsuite.sync.notes.edit.NotePushPolicy.FailureKind
 import io.silentsuite.sync.notes.edit.NotePushPolicy.NotebookCheck
 import io.silentsuite.sync.notes.edit.PendingNotesStore.HoldOutcome
@@ -49,6 +50,11 @@ internal class NotePushStep(
     private val userInitiated: Boolean,
     /** SyncRunGuard.mayWrite: false once the run is cancelled, Notes is off, or the account generation is gone. */
     private val mayWrite: () -> Boolean = { true },
+    /**
+     * Called once for each pending delete dropped without deleting its note, right after the drop, so the notebook
+     * list's notice (NoteDeleteNotices) does not depend on the run reaching its end. It must not throw.
+     */
+    private val onDeleteNotDone: (DeleteNotDone) -> Unit = {},
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     /** How the notebook stands in the Etebase cache after this run's refresh step, deleted notebooks included. */
@@ -143,6 +149,8 @@ internal class NotePushStep(
      * A 401 is not recorded here; it is [Ended.NEEDS_AUTHENTICATION].
      * @property carriedFailure the last failure category of the most recently failed entry that was skipped
      * in backoff and is still waiting, so an automatic run does not record success over an entry that is stuck.
+     * @property deletesNotDone pending deletes dropped without deleting their note, by the reason the notebook list
+     * gives. A dropped delete is not a failure of the run: nothing is lost, and the note shows again.
      */
     data class Result(
         val ended: Ended,
@@ -151,6 +159,7 @@ internal class NotePushStep(
         val conflicts: Map<String, Int>,
         val failure: FailureKind?,
         val carriedFailure: String?,
+        val deletesNotDone: Map<DeleteNotDone, Int> = emptyMap(),
     ) {
         /** Every entry the run attempted was pushed or resolved, and none was skipped while stuck. */
         val succeeded: Boolean get() = ended == Ended.COMPLETED && failure == null && carriedFailure == null
@@ -167,6 +176,7 @@ internal class NotePushStep(
     private val rebased = HashSet<String>()
     private val notebookChecks = HashMap<String, NotebookCheck>()
     private val conflicts = HashMap<String, Int>()
+    private val deletesNotDone = HashMap<DeleteNotDone, Int>()
 
     /** Entries skipped in backoff, by uid, with the failure time and category they had then. */
     private val skipped = HashMap<String, Pair<Long, String>>()
@@ -194,7 +204,7 @@ internal class NotePushStep(
         } catch (end: EndPass) {
             end.ended
         }
-        return Result(ended, pushed, held, conflicts.toMap(), failure, carriedFailure())
+        return Result(ended, pushed, held, conflicts.toMap(), failure, carriedFailure(), deletesNotDone.toMap())
     }
 
     private fun pushWaiting() {
@@ -459,7 +469,9 @@ internal class NotePushStep(
         val decision = NotePushPolicy.decide(latest, store.landed(uid)?.revision,
             NotePushPolicy.ServerCopy(server.revision, server.deleted))
         when (decision) {
-            ConflictOutcome.DONE -> if (cacheFirst(latest, server)) {
+            // A pending delete whose note is deleted on the server is done as well: the deleted copy goes into the
+            // cache, and the entry is dropped.
+            ConflictOutcome.DONE, ConflictOutcome.ALREADY_DELETED -> if (cacheFirst(latest, server)) {
                 when (val outcome = store.completeSend(uid, latest.version, server.revision, server.blob)) {
                     SendOutcome.Done -> Unit
                     // Saved since the read above: the newer change is rebased onto our copy, as in [send].
@@ -478,8 +490,35 @@ internal class NotePushStep(
                 if (latest.version != snapshot.version || cacheFirst(latest, server)) {
                     hold(uid, HeldReason.REPEATED_CONFLICT, sentVersion = snapshot.version)
                 }
+            // The other client's change wins. Its copy goes into the cache before the delete is dropped, so the note
+            // shows again with that text, never with the older copy the user saw (design 3.3).
+            ConflictOutcome.RESTORE_SERVER_NOTE -> if (cacheFirst(latest, server)) restoreServerNote(latest)
             ConflictOutcome.RETRY_LATER -> error("decided with a server copy")
         }
+    }
+
+    /** Drops the pending delete [latest] that met another client's change, and counts it for the notebook list. */
+    private fun restoreServerNote(latest: PendingEntry) {
+        val uid = latest.noteUid
+        val dropped = try {
+            store.dropDelete(uid, latest.version)
+        } catch (e: PendingNotesStore.RemovalNotSynced) {
+            // The entry is gone until a power loss: the notice is written now, or never, since the next run finds nothing.
+            deleteNotDone(DeleteNotDone.CHANGED_ELSEWHERE)
+            throw e
+        }
+        if (dropped) {
+            deleteNotDone(DeleteNotDone.CHANGED_ELSEWHERE)
+        } else {
+            // It moved on, or its file cannot be read now.
+            failIfUnreadable(uid)
+        }
+        settled += uid
+    }
+
+    private fun deleteNotDone(reason: DeleteNotDone) {
+        deletesNotDone[reason] = (deletesNotDone[reason] ?: 0) + 1
+        onDeleteNotDone(reason)
     }
 
     /**
@@ -617,8 +656,19 @@ internal class NotePushStep(
 
     private fun hold(uid: String, reason: HeldReason, sentVersion: Long?) {
         ensureCurrent()
-        when (store.hold(uid, reason, now(), sentVersion)) {
+        val outcome = try {
+            store.hold(uid, reason, now(), sentVersion)
+        } catch (e: PendingNotesStore.RemovalNotSynced) {
+            // Only the drop of a pending delete removes a file here. It is gone until a power loss, so its notice is
+            // written now, or never, since the next run finds nothing; the run still records the storage failure.
+            NotePushPolicy.deleteNotDoneFor(reason)?.let(::deleteNotDone)
+            throw e
+        }
+        when (outcome) {
             HoldOutcome.HELD -> held++
+            // A pending delete is dropped instead of held, and the note shows again; the notebook list says why,
+            // unless the notebook itself is gone for this account.
+            HoldOutcome.DELETE_DROPPED -> NotePushPolicy.deleteNotDoneFor(reason)?.let(::deleteNotDone)
             // Its text lives in a conflict copy now, which is held in its own right.
             HoldOutcome.UNFINISHED_ORIGINAL -> {
                 unfinishedOriginal(uid)

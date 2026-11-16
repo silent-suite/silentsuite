@@ -16,4 +16,9 @@
           app:iconTint="@color/note_editor_action"
           app:showAsAction="ifRoom"/>
 
+    <!-- In the overflow only, away from Undo and Redo, and behind a confirmation. -->
+    <item android:id="@+id/note_delete"
+          android:title="@string/notes_delete_note"
+          app:showAsAction="never"/>
+
 </menu>

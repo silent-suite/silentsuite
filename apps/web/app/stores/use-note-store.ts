@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import type { Note, SyncStatus } from '@silentsuite/core'
+import type { ItemMeta, Note, SyncStatus } from '@silentsuite/core'
 import {
   hasOutstandingNoteCustody,
   noteEditorMatches,
@@ -130,6 +130,71 @@ function typedSince(id: string, authorized: MountedNoteEditor | undefined, perio
   const current = getMountedNoteEditor(id)
   if (!current) return false
   return !current.isClean() || (current === authorized && current.periodGen() !== period)
+}
+
+/** A move this store refused before anything was written; `toast` says why and that nothing moved. */
+class NoteMoveRefusedError extends Error {
+  constructor(name: string, message: string, readonly toast: string) {
+    super(message)
+    this.name = name
+  }
+}
+
+/** The source item's metadata cannot be decoded, or is not a map of fields. */
+class NoteMetaUnreadableError extends NoteMoveRefusedError {
+  constructor() {
+    super(
+      'NoteMetaUnreadableError',
+      'Note metadata is unreadable',
+      'Note not moved: some of its details could not be read. It stays in its notebook, unchanged.',
+    )
+  }
+}
+
+/** The cached source item is not saved at the revision the move removes. */
+class NoteMoveSourceChangedError extends NoteMoveRefusedError {
+  constructor() {
+    super(
+      'NoteMoveSourceChangedError',
+      'Cached note is not at the revision being moved',
+      'Note not moved: it changed since this page loaded it. It stays in its notebook. Move it again after sync finishes.',
+    )
+  }
+}
+
+/** Another client gave the source item a type other than a Markdown note. */
+class NoteMoveNotANoteError extends NoteMoveRefusedError {
+  constructor() {
+    super(
+      'NoteMoveNotANoteError',
+      'Note item has a non-note type',
+      'Note not moved: another app changed it into an item that is not a note. It stays in its notebook, unchanged.',
+    )
+  }
+}
+
+/**
+ * The moved copy's metadata: every field of the source item, including fields
+ * other clients wrote, with `own` (title and last-edit time) on top. Metadata
+ * that cannot be decoded or is not a map is never dropped: the move is refused.
+ * Metadata that decodes to null or undefined holds no fields, as on save. An
+ * item `isNote` rejects is refused too, so a move never lands a non-note copy
+ * that every client skips while it deletes the source.
+ */
+function movedNoteMeta(source: { getMeta?: () => unknown }, own: ItemMeta, isNote: (meta: ItemMeta) => boolean): ItemMeta {
+  if (typeof source.getMeta !== 'function') throw new NoteMetaUnreadableError()
+  let decoded: unknown
+  try {
+    decoded = source.getMeta()
+  } catch {
+    // The SDK error is not passed on: only this error's name is ever logged.
+    throw new NoteMetaUnreadableError()
+  }
+  if (decoded == null) return { ...own }
+  const prototype = typeof decoded === 'object' ? Object.getPrototypeOf(decoded) : undefined
+  if (prototype !== Object.prototype && prototype !== null) throw new NoteMetaUnreadableError()
+  if (!isNote(decoded as ItemMeta)) throw new NoteMoveNotANoteError()
+  return { ...(decoded as ItemMeta), ...own }
 }
 
 interface NoteState {
@@ -339,8 +404,9 @@ export const useNoteStore = create<NoteState & NoteActions>()(
         let revision = shown.revision
         if (obligated || !revision) {
           // An obligated note or an unknown revision is proved against a fresh live copy first.
-          revision = await proveNoteRevision(id, { title: shown.title, content: shown.content, revision: shown.revision })
-          if (!isCurrentAccountEpoch(accountEpoch) || !revision) return false
+          const proved = await proveNoteRevision(id, { title: shown.title, content: shown.content, revision: shown.revision })
+          if (!isCurrentAccountEpoch(accountEpoch) || !proved) return false
+          revision = proved.revision
         }
         const outcome = await useEtebaseStore.getState().deleteItem('notes', id, {
           collectionUid: shown.notebookId,
@@ -391,16 +457,27 @@ export const useNoteStore = create<NoteState & NoteActions>()(
         const period = editor?.periodGen()
         const obligated = Boolean(getNoteObligation(id))
         let revision = shown.revision
+        // The copy's metadata and the revision the source delete uses always come from one read.
+        let source: { getMeta?: () => unknown } | undefined
         if (obligated || !revision) {
-          revision = await proveNoteRevision(id, { title: shown.title, content: shown.content, revision: shown.revision })
-          if (!isCurrentAccountEpoch(accountEpoch) || !revision) return null
+          // A fresh proof: the copy takes the metadata of that same fresh read.
+          const proved = await proveNoteRevision(id, { title: shown.title, content: shown.content, revision: shown.revision })
+          if (!isCurrentAccountEpoch(accountEpoch) || !proved) return null
+          revision = proved.revision
+          source = proved.item
         }
-        const { noteToItemMeta } = await import('@silentsuite/core')
+        const { isMarkdownNoteItem, noteToItemMeta, savedRevisionOf } = await import('@silentsuite/core')
         // Check before the lower store sees anything: a late call would run as the next account.
         if (!isCurrentAccountEpoch(accountEpoch)) return null
         const etebase = useEtebaseStore.getState()
-        // A move is not an edit: the title and last-edit time travel with the note.
-        const movedId = await etebase.moveItem('notes', id, shown.content, notebookId, shown.notebookId, noteToItemMeta(shown), {
+        // Otherwise the shown revision is paired with the cached item it was read or saved
+        // from; a cached item at any other revision cannot supply the copy's metadata.
+        const cached = etebase.itemCache.get(id)
+        if (!source && (!cached || savedRevisionOf(cached) !== revision)) throw new NoteMoveSourceChangedError()
+        // A move is not an edit: the title and last-edit time travel with the note, and
+        // every other field, including those other clients wrote, stays as it was.
+        const meta = movedNoteMeta(source ?? cached, noteToItemMeta(shown), isMarkdownNoteItem)
+        const movedId = await etebase.moveItem('notes', id, shown.content, notebookId, shown.notebookId, meta, {
           sourceRevision: revision,
           offlineAllowed: !obligated,
         })
@@ -417,7 +494,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       } catch (err) {
         if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
         console.error('[note-store] Failed to move note', getSafeErrorDetails(err))
-        showErrorToast('Failed to move note. Please try again.')
+        showErrorToast(err instanceof NoteMoveRefusedError ? err.toast : 'Failed to move note. Please try again.')
         return null
       }
     },

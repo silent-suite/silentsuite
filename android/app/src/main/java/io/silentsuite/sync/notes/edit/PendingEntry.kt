@@ -49,7 +49,12 @@ internal data class PendingEntry(
     val fromConflict: Boolean = false,
     val blob: ByteArray,
 ) {
-    enum class State { UPSERT, HELD }
+    /**
+     * UPSERT: text waiting to be sent. HELD: text kept in the holding area, never sent. DELETE: the user's confirmed
+     * delete of the note, waiting to be sent; its [blob] is the note item the user saw, marked deleted. It holds no
+     * text to keep, so it is never held: where an edit would be held, it is dropped (PendingNotesStore.hold).
+     */
+    enum class State { UPSERT, HELD, DELETE }
 
     /** The replaced entry, identified by version and revision (a random uid), so it cannot be confused with a later entry. */
     data class Origin(val noteUid: String, val revision: String, val version: Long, val serverRevision: String)

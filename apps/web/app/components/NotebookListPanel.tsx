@@ -129,6 +129,7 @@ export function NotebookListPanel() {
             count: notes.filter((note) => note.notebookId === pendingDelete.id).length,
           })}
           confirmLabel={t('deleteNotebook')}
+          cancelLabel={t('cancel')}
           onConfirm={() => void confirmDelete()}
           onCancel={() => setPendingDelete(null)}
         />

@@ -371,4 +371,40 @@ class NotesOverlayTest {
         assertEquals(server.copy(observedSequence = 12), note(server, Read.Present(entry(State.UPSERT, 8, notebook = "team")),
             body = Decrypted("x", "x", "x", 1)))
     }
+
+    // ---- pending deletes ----
+
+    @Test fun `a pending delete leaves nothing to view where a run sends it, and the server copy unmarked elsewhere`() {
+        val deleted = Read.Present(entry(State.DELETE, 9))
+        assertNull(note(server, deleted, body = Decrypted("x", "x", "x", 1)))
+        assertNull("a create that never reached the server too", note(null, deleted))
+        assertEquals("a read-only notebook: the run drops it", server.copy(observedSequence = 12), note(server, deleted, writable = false))
+        assertEquals("an unfinished discard covers it: never sent", server.copy(observedSequence = 12), note(server, deleted, confirmed = true))
+    }
+
+    @Test fun `a pending delete hides its row and waits on its notebook's row, and is never decrypted`() {
+        val fake = Fake(mapOf("a" to text("Alpha edited", "x", 30)))
+        val result = notebook(listOf(header("a", State.DELETE)), unreadableCached = setOf("a"), fake = fake)
+        assertEquals(listOf(newer), result.notes)
+        assertEquals("a server copy that cannot be decoded is covered by the delete", 0, result.unreadable)
+        assertTrue(fake.asked.isEmpty())
+        val access = listOf(NotesOverlay.NotebookAccess("own", false, false))
+        val overview = NotesOverlay.notebooks(listOf(own), access, listOf(header("a", State.DELETE)), emptyMap())
+        assertEquals(listOf(1), overview.notebooks.map { it.waiting })
+        assertEquals(0, overview.unsyncedText)
+    }
+
+    @Test fun `a pending delete where a run does not send it changes no row and is never unsynced text`() {
+        val result = notebook(listOf(header("a", State.DELETE, "ro"), header("b", State.DELETE, "ro")), row = readOnly)
+        assertEquals("both server rows, unmarked", setOf("a", "b"), result.notes.map { it.uid }.toSet())
+        assertTrue(result.notes.all { it.sync == NoteSync.SYNCED })
+        assertEquals(listOf(older), notebook(listOf(header("b", State.DELETE)), confirmed = setOf("b")).notes.filter { it.uid == "a" })
+        assertEquals("covered by an unfinished discard: the row stays", 2, notebook(listOf(header("b", State.DELETE)), confirmed = setOf("b")).notes.size)
+        val access = listOf(NotesOverlay.NotebookAccess("own", false, false), NotesOverlay.NotebookAccess("ro", false, true))
+        val headers = listOf(header("a", State.DELETE, "ro"), header("d", State.DELETE, "gone"), header("c", State.UPSERT, "ro"))
+        val overview = NotesOverlay.notebooks(listOf(own, readOnly), access, headers, emptyMap())
+        assertEquals("only the text counts as unsynced", 1, overview.unsyncedText)
+        assertEquals(listOf("c"), NotesOverlay.unsynced(listOf(own, readOnly), access, headers).map { it.noteUid })
+        assertEquals("with no notebook read, still only the text", listOf("c"), NotesOverlay.unsynced(emptyList(), emptyList(), headers).map { it.noteUid })
+    }
 }

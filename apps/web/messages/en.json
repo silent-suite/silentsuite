@@ -107,7 +107,25 @@
     "moveFailed": "Could not move note",
     "deleteNotebookTitle": "Delete notebook?",
     "deleteNotebookMessage": "{count, plural, =0 {\"{name}\" is empty and will be permanently deleted.} one {\"{name}\" and the # note in it will be permanently deleted.} other {\"{name}\" and the # notes in it will be permanently deleted.}} This cannot be undone.",
-    "experimentalWebOnly": "Experimental · Web app only"
+    "experimentalWebOnly": "Experimental · Web app only",
+    "disabledTitle": "Notes is experimental",
+    "disabledDescription": "Enable Notes in Settings to use encrypted Markdown notes. Any existing notes are preserved while this feature is off.",
+    "openExperimentalSettings": "Open Experimental settings",
+    "cancel": "Cancel"
+  },
+  "SettingsExport": {
+    "notebookLabel": "Notebook",
+    "notebookSelectLabel": "Notebook collection",
+    "allNotebooks": "All notebooks",
+    "notebookFallback": "Notebook",
+    "exportNotes": "Export Notes ({count, plural, one {# note} other {# notes}})",
+    "preparingNotes": "Preparing notes…",
+    "notesFormat": "Saved as a .zip with one folder per notebook and one Markdown (.md) file per note.",
+    "notesWaitingToSync": "Notes are exported as the server has them, so a note change still waiting to sync on this device isn't included.",
+    "notesLeftOut": "{count, plural, one {# note couldn't be read on this device and was left out of the export.} other {# notes couldn't be read on this device and were left out of the export.}}",
+    "notesNeedConnection": "Exporting notes needs a connection, so nothing was exported. Connect, then export again.",
+    "notesExportFailed": "Notes export failed. Please try again.",
+    "allDataWithNotes": "Includes every calendar, task list, address book, and notebook in a single archive."
   },
   "SettingsExperimental": {
     "Language": {
