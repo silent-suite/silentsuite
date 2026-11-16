@@ -700,8 +700,9 @@ async function updateNoteAtCapturedBase(
   const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
   const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
   if (!offlineQueueGuard) return false
-  const refuse = (): false => {
-    if (isCurrentAccountEpoch(accountEpoch)) options.onRefused?.()
+  // 'changed' only with proof that the note moved on from the base (#1113 D1).
+  const refuse = (reason?: 'changed'): false => {
+    if (isCurrentAccountEpoch(accountEpoch)) options.onRefused?.(reason)
     return false
   }
   const base = options.base
@@ -783,14 +784,16 @@ async function updateNoteAtCapturedBase(
     proving = true
     const fresh = await core.fetchItemFresh(account, collection, itemUid)
     assertGuard()
-    if (!fresh || !await noteMatchesBase(core, fresh, itemUid, base, assertGuard)) return refuse()
+    // A missing copy is not proof of anything; a live or deleted one that differs is.
+    if (!fresh) return refuse()
+    if (!await noteMatchesBase(core, fresh, itemUid, base, assertGuard)) return refuse('changed')
     const freshRevision = core.savedRevisionOf(fresh)
     if (!freshRevision) return refuse()
     if (!admissionRevision) admissionRevision = freshRevision
     const second = await dispatch(fresh, freshRevision)
     assertGuard()
     if (second.kind === 'saved') return await publish(second)
-    return refuse()
+    return refuse('changed')
   } catch (err) {
     if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
     if (!isOfflineError(err)) {
@@ -888,6 +891,164 @@ export async function proveNoteRevision(itemUid: string, base: SealedEditingBase
   } catch {
     return null
   }
+}
+
+/** What a read of a note's live server copy found (#1113 D1). */
+export type LiveNoteRead =
+  | { kind: 'note'; title: string; content: string; revision: string | null }
+  /** The server holds a tombstone: proof that the note was deleted. */
+  | { kind: 'deleted' }
+  | { kind: 'offline' }
+  /** The copy could not be decrypted, or another app made it something other than a note. */
+  | { kind: 'unreadable' }
+  /** Anything else, including a missing copy, which is not proof of deletion. */
+  | { kind: 'unknown' }
+
+/**
+ * A fresh read of a note's live server copy, decrypted in memory for display
+ * only. It never touches the item cache, the note store or any editor.
+ */
+export async function readLiveNote(itemUid: string, collectionUid?: string): Promise<LiveNoteRead> {
+  const { account, accountFingerprint, collections, itemCollectionMap } = useEtebaseStore.getState()
+  const guard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+  if (!guard) return { kind: 'unknown' }
+  const assertGuard = () => assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+  const knownCollectionUid = itemCollectionMap.get(itemUid) ?? collectionUid
+  const collection = knownCollectionUid ? resolveCollection(collections, 'notes', knownCollectionUid) : null
+  if (!collection) return { kind: 'unknown' }
+  let core: EtebaseCore
+  let fresh: any
+  try {
+    core = await import('@silentsuite/core')
+    assertGuard()
+    fresh = await core.fetchItemFresh(account, collection, itemUid)
+    assertGuard()
+  } catch (err) {
+    if (err instanceof AccountBoundaryChangedError) return { kind: 'unknown' }
+    return isOfflineError(err) ? { kind: 'offline' } : { kind: 'unknown' }
+  }
+  if (!fresh) return { kind: 'unknown' }
+  if (fresh.isDeleted) return { kind: 'deleted' }
+  try {
+    const meta = fresh.getMeta()
+    if (!core.isMarkdownNoteItem(meta)) return { kind: 'unreadable' }
+    const raw = await fresh.getContent()
+    assertGuard()
+    const content = typeof raw === 'string' ? raw : new TextDecoder().decode(raw)
+    return { kind: 'note', title: core.noteFromEtebaseItem(itemUid, '', meta).title, content, revision: core.savedRevisionOf(fresh) }
+  } catch (err) {
+    if (err instanceof AccountBoundaryChangedError) return { kind: 'unknown' }
+    return { kind: 'unreadable' }
+  }
+}
+
+/**
+ * Builds a Save as a copy item locally (#1113 D1): its UID and revision are
+ * chosen here, before anything is sent. No network.
+ */
+export async function prepareNoteCopyItem(collectionUid: string, content: string, meta: ItemMeta): Promise<any | null> {
+  const { account, collections } = useEtebaseStore.getState()
+  if (!account) return null
+  const collection = resolveCollection(collections, 'notes', collectionUid)
+  if (!collection) return null
+  return account.getCollectionManager().getItemManager(collection).create(meta, content)
+}
+
+/** What an upload of a prepared copy established (#1113 D1). */
+export type NoteCopyUpload =
+  /** The copy exists on the server and is published here; title and content are the server's. */
+  | { kind: 'copied'; item: any; revision: string | null; title: string; content: string }
+  /** The copy's UID holds a tombstone: it landed and was deleted, so a new copy needs a new UID. */
+  | { kind: 'deleted' }
+  /** Sent, but not confirmed: the copy may or may not exist. */
+  | { kind: 'unconfirmed' }
+  /** The server refused the write. */
+  | { kind: 'refused' }
+  | { kind: 'no-notebook' }
+
+function sdkErrorNamed(err: unknown, name: string): boolean {
+  return err instanceof Error && err.name === name
+}
+
+/**
+ * Uploads a prepared copy (#1113 D1). Every call sends a clone of the same item,
+ * so a retry carries the same UID at the same revision, which the server answers
+ * as a success when it already holds it. The upload is a transaction: a copy that
+ * another device changed since it landed gets a 409, never an overwrite, and that
+ * 409 counts as copied only once a fresh fetch of the UID finds the copy live.
+ * Only a confirmed copy is published to the item cache and the display cache.
+ */
+export async function uploadNoteCopyItem(collectionUid: string, prepared: any, own: { title: string; content: string }): Promise<NoteCopyUpload> {
+  const accountEpoch = getAccountEpoch()
+  const { account, collections, accountFingerprint } = useEtebaseStore.getState()
+  const guard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+  if (!guard) return { kind: 'unconfirmed' }
+  const assertGuard = () => assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+  const collection = resolveCollection(collections, 'notes', collectionUid)
+  if (!collection) return { kind: 'no-notebook' }
+  const core = await import('@silentsuite/core')
+  assertGuard()
+  const itemManager = account.getCollectionManager().getItemManager(collection)
+  let committed: any
+  let fetched = false
+  try {
+    const clone = prepared._clone()
+    // A clone reads as saved at its own revision; the copy goes out as a create, with no etag.
+    clone.encryptedItem.lastEtag = null
+    await itemManager.transaction([clone])
+    assertGuard()
+    committed = clone
+  } catch (err) {
+    if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
+    if (sdkErrorNamed(err, 'PermissionDeniedError')) return { kind: 'refused' }
+    if (!sdkErrorNamed(err, 'ConflictError')) {
+      logger.warn('[etebase-store] Note copy upload not confirmed', getSafeErrorDetails(err))
+      return { kind: 'unconfirmed' }
+    }
+    try {
+      committed = await core.fetchItemFresh(account, collection, prepared.uid)
+      assertGuard()
+    } catch (fetchErr) {
+      if (fetchErr instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
+      return { kind: 'unconfirmed' }
+    }
+    if (!committed) return { kind: 'unconfirmed' }
+    if (committed.isDeleted) return { kind: 'deleted' }
+    fetched = true
+  }
+  let { title, content } = own
+  let revision = core.savedRevisionOf(committed)
+  if (fetched) {
+    // The copy landed earlier and may have changed since: show the server's text.
+    try {
+      const raw = await committed.getContent()
+      const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw)
+      title = core.noteFromEtebaseItem(committed.uid, '', committed.getMeta()).title
+      content = text
+    } catch {
+      // Unreadable here: this tab's own text at an unknown revision, until a paired read.
+      title = own.title
+      revision = null
+    }
+    assertGuard()
+  }
+  const state = useEtebaseStore.getState()
+  const itemCache = new Map(state.itemCache)
+  const itemTypeMap = new Map(state.itemTypeMap)
+  const itemCollectionMap = new Map(state.itemCollectionMap)
+  itemCache.set(committed.uid, committed)
+  itemTypeMap.set(committed.uid, 'notes')
+  itemCollectionMap.set(committed.uid, collection.uid)
+  useEtebaseStore.setState({ itemCache, itemTypeMap, itemCollectionMap })
+  // The copy is on the server; a failed display write does not undo that.
+  try {
+    await writeItemToCache('notes', collection.uid, committed.uid, content, accountEpoch, itemMetaOf(committed))
+  } catch (displayErr) {
+    if (displayErr instanceof AccountBoundaryChangedError && !isCurrentAccountEpoch(accountEpoch)) throw displayErr
+    logger.warn('[etebase-store] Display write after a note copy failed', getSafeErrorDetails(displayErr))
+  }
+  assertGuard()
+  return { kind: 'copied', item: committed, revision, title, content }
 }
 
 /** #744 §9 editor check: the mounted editor shows exactly the shown note, saved, with nothing in flight. */
@@ -1962,8 +2123,11 @@ interface EtebaseActions {
       base?: SealedEditingBase
       /** Called with the saved etag right after a conditional save is published. */
       onSaved?: (etag: string) => void
-      /** Called when the save is refused because reconciliation is unproved. */
-      onRefused?: () => void
+      /**
+       * Called when the save is refused because reconciliation is unproved; a note
+       * save passes 'changed' when the note proved to have moved on (#1113 D1).
+       */
+      onRefused?: (reason?: 'changed') => void
       /** The note owes a reconciliation proof: write only through a proved fresh copy, never offline (#744 §7). */
       obligated?: boolean
       /** Called when the save gate observes outstanding custody for this note (#744 T1). */

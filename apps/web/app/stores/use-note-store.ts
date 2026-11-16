@@ -5,9 +5,13 @@ import type { ItemMeta, Note, SyncStatus } from '@silentsuite/core'
 import {
   hasOutstandingNoteCustody,
   noteEditorMatches,
+  prepareNoteCopyItem,
   proveLiveNoteBase,
   proveNoteRevision,
+  readLiveNote,
+  uploadNoteCopyItem,
   useEtebaseStore,
+  type LiveNoteRead,
   type SealedEditingBase,
 } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -36,6 +40,8 @@ export interface NoteSaveCapture {
   obligation?: object
   /** Called with the exact saved etag of this save's own accepted write. */
   onSaved?: (etag: string) => void
+  /** Called when the server refused the save, with 'changed' when the note proved to have moved on. */
+  onRefused?: (reason?: 'changed') => void
 }
 
 /** A mounted note editor's registration (#744 §2): read-only views of its own lineage state. */
@@ -48,12 +54,61 @@ export interface MountedNoteEditor {
 }
 
 /**
+ * Why a note save was refused (#1113 D1): the note proved to have changed since
+ * the text's base, or this browser could not prove that it did not.
+ */
+export type NoteRefusal = 'changed' | 'unproved'
+
+/** Why a Save as a copy did not make a copy. */
+export type NoteCopyFailure = 'offline' | 'unconfirmed' | 'deleted' | 'read-only' | 'no-notebook'
+
+/**
  * Text of a note whose last save failed, with the base it was typed on (#1113 D1).
  * An editor that opens the note starts from it, so the text outlives its editor.
  */
 export interface HeldNoteDraft {
   draft: { title: string; content: string }
   base: SealedEditingBase
+  /** How the last save failed. Absent for text carried to a new copy, which is saved when it opens. */
+  failed?: 'error' | NoteRefusal
+  /** A Save as a copy of this text that is running, or why it failed. */
+  copy?: 'running' | NoteCopyFailure
+}
+
+export type NoteCopyResult =
+  | { kind: 'copied'; id: string }
+  | { kind: 'failed'; reason: NoteCopyFailure }
+  /** The account changed meanwhile; nothing is reported. */
+  | { kind: 'stale' }
+
+/** What Show newer version found. */
+export type NewerNoteVersion = LiveNoteRead
+
+const UNTITLED = 'Untitled'
+const CONFLICTED_COPY = '(conflicted copy)'
+
+/**
+ * Android's conflicted copy title (NotePushPolicy.conflictCopyTitle): the title as
+ * displayed, so a blank one becomes "Untitled (conflicted copy)", and a copy of a
+ * copy gets no second suffix. Stored on the server and read by every client, so
+ * in English, like "Untitled".
+ */
+export function conflictCopyTitle(displayTitle: string): string {
+  const base = displayTitle.trim() || UNTITLED
+  return base.endsWith(` ${CONFLICTED_COPY}`) ? base : `${base} ${CONFLICTED_COPY}`
+}
+
+/**
+ * A copy built for a note's text, kept before its first upload so every retry
+ * sends the same item: the same UID at the same revision. Lives as long as the
+ * text it guards, in memory.
+ */
+interface NoteCopyAttempt {
+  item: any
+  collectionUid: string
+  title: string
+  content: string
+  createdAt: Date
 }
 
 // In memory only. Each entry keeps the account epoch it was made under, so a
@@ -63,6 +118,9 @@ const mountedEditors = new Map<string, { editor: MountedNoteEditor; accountEpoch
 const heldNoteDrafts = new Map<string, { held: HeldNoteDraft; accountEpoch: number }>()
 // Unmounted editors whose last save is still running, per note.
 const closingNoteSaves = new Map<string, number>()
+// Keyed by the note the copy is made from.
+const noteCopyAttempts = new Map<string, { attempt: NoteCopyAttempt; accountEpoch: number }>()
+const noteCopiesInFlight = new Map<string, { running: Promise<NoteCopyResult>; accountEpoch: number }>()
 
 let unloadGuard: ((event: BeforeUnloadEvent) => void) | null = null
 
@@ -72,7 +130,7 @@ let unloadGuard: ((event: BeforeUnloadEvent) => void) | null = null
  */
 function syncUnloadGuard(): void {
   if (typeof window === 'undefined') return
-  const needed = heldNoteDrafts.size > 0 || closingNoteSaves.size > 0
+  const needed = heldNoteDrafts.size > 0 || closingNoteSaves.size > 0 || noteCopiesInFlight.size > 0
   if (needed && !unloadGuard) {
     unloadGuard = (event) => {
       event.preventDefault()
@@ -104,9 +162,114 @@ export function holdNoteDraft(id: string, held: HeldNoteDraft): void {
   syncUnloadGuard()
 }
 
-/** Drops the note's held text once it is saved or no longer differs from the saved text. */
-export function releaseHeldNoteDraft(id: string): void {
+/**
+ * Drops the note's held text once it is saved or no longer differs from the saved
+ * text; with `only`, just when that exact record is still the one held.
+ */
+export function releaseHeldNoteDraft(id: string, only?: HeldNoteDraft): void {
+  if (only && heldNoteDrafts.get(id)?.held !== only) return
   if (heldNoteDrafts.delete(id)) syncUnloadGuard()
+}
+
+/** Replaces the held record only while it is still `current`. */
+function replaceHeldNoteDraft(id: string, current: HeldNoteDraft, next: HeldNoteDraft): void {
+  const entry = heldNoteDrafts.get(id)
+  if (entry?.held === current) heldNoteDrafts.set(id, { held: next, accountEpoch: entry.accountEpoch })
+}
+
+/** The note's running Save as a copy in this account, if any. */
+export function getNoteCopyInFlight(id: string): Promise<NoteCopyResult> | undefined {
+  const entry = noteCopiesInFlight.get(id)
+  return entry && isCurrentAccountEpoch(entry.accountEpoch) ? entry.running : undefined
+}
+
+function getNoteCopyAttempt(id: string): NoteCopyAttempt | undefined {
+  const entry = noteCopyAttempts.get(id)
+  if (!entry) return undefined
+  if (!isCurrentAccountEpoch(entry.accountEpoch)) {
+    noteCopyAttempts.delete(id)
+    return undefined
+  }
+  return entry.attempt
+}
+
+/**
+ * A fresh, read-only look at the note's server copy (#1113 D1). Nothing it
+ * reads reaches the item cache, the note store or the editor.
+ */
+export async function readNewerNoteVersion(id: string): Promise<NewerNoteVersion> {
+  const note = useNoteStore.getState().notes.find((n) => n.id === id)
+  return readLiveNote(id, note?.notebookId)
+}
+
+/**
+ * The copy itself: builds and records the item before its first upload, uploads
+ * it, and on a confirmed copy does everything a new note does here. Any failure
+ * keeps the attempt, so a retry cannot make a second copy; only a tombstone for
+ * the copy's UID retires it unconfirmed.
+ */
+async function runNoteCopy(
+  id: string,
+  held: HeldNoteDraft,
+  accountEpoch: number,
+  get: () => NoteState & NoteActions,
+  set: (partial: (state: NoteState & NoteActions) => Partial<NoteState>) => void,
+): Promise<NoteCopyResult> {
+  const failed = (reason: NoteCopyFailure): NoteCopyResult => ({ kind: 'failed', reason })
+  try {
+    let attempt = getNoteCopyAttempt(id)
+    const notebookId = attempt?.collectionUid ?? get().notes.find((n) => n.id === id)?.notebookId
+    const notebook = useNotebookStore.getState().lists.find((list) => list.id === notebookId)
+    if (!notebookId || !notebook) return failed('no-notebook')
+    if (!useAuthStore.getState().canWrite() || !canWriteNotebook(notebook)) return failed('read-only')
+    // Nothing is built or sent while the browser knows it is offline.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return failed('offline')
+    const { noteToItemMeta } = await import('@silentsuite/core')
+    if (!isCurrentAccountEpoch(accountEpoch)) return { kind: 'stale' }
+    if (!attempt) {
+      const title = conflictCopyTitle(held.draft.title)
+      const createdAt = new Date()
+      const item = await prepareNoteCopyItem(notebookId, held.draft.content, noteToItemMeta({ title, updated_at: createdAt }))
+      if (!isCurrentAccountEpoch(accountEpoch)) return { kind: 'stale' }
+      if (!item) return failed('no-notebook')
+      attempt = { item, collectionUid: notebookId, title, content: held.draft.content, createdAt }
+      // Kept before anything is sent: a lost response or a retry re-sends this same item.
+      noteCopyAttempts.set(id, { attempt, accountEpoch })
+    }
+    const upload = await uploadNoteCopyItem(attempt.collectionUid, attempt.item, { title: attempt.title, content: attempt.content })
+    if (!isCurrentAccountEpoch(accountEpoch)) return { kind: 'stale' }
+    if (upload.kind === 'deleted') {
+      if (getNoteCopyAttempt(id) === attempt) noteCopyAttempts.delete(id)
+      return failed('deleted')
+    }
+    if (upload.kind === 'refused') return failed('read-only')
+    if (upload.kind !== 'copied') return failed(upload.kind)
+    if (getNoteCopyAttempt(id) === attempt) noteCopyAttempts.delete(id)
+    const copyId: string = upload.item.uid
+    const copy: StoredNote = {
+      id: copyId,
+      uid: copyId,
+      title: upload.title,
+      content: upload.content,
+      notebookId: attempt.collectionUid,
+      created_at: attempt.createdAt,
+      updated_at: attempt.createdAt,
+      revision: upload.revision,
+    }
+    set((state) => (state.notes.some((n) => n.id === copyId) ? {} : { notes: [...state.notes, copy] }))
+    // Typing after an earlier unconfirmed attempt goes onto the copy as an edit of the
+    // attempt's own text and revision, so it saves only if nobody changed the copy since.
+    const carried = { title: conflictCopyTitle(held.draft.title), content: held.draft.content }
+    if (carried.title !== attempt.title || carried.content !== attempt.content) {
+      holdNoteDraft(copyId, { draft: carried, base: { title: attempt.title, content: attempt.content, revision: attempt.item.etag ?? null } })
+    }
+    return { kind: 'copied', id: copyId }
+  } catch (err) {
+    if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return { kind: 'stale' }
+    console.error('[note-store] Failed to save a note copy', getSafeErrorDetails(err))
+    // Unknown, as anything after a send can be: the attempt stays for a retry.
+    return failed('unconfirmed')
+  }
 }
 
 /** An editor closed with a save still to finish; the note opens read-only until it does. */
@@ -195,6 +358,8 @@ export function resetNoteLifecycle(): void {
   mountedEditors.clear()
   heldNoteDrafts.clear()
   closingNoteSaves.clear()
+  noteCopyAttempts.clear()
+  noteCopiesInFlight.clear()
   useNoteStore.setState({ closingNoteIds: [] })
   syncUnloadGuard()
 }
@@ -311,6 +476,12 @@ interface NoteActions {
    * or the account changed meanwhile.
    */
   moveNote: (id: string, notebookId: string) => Promise<string | null>
+  /**
+   * Saves a note's text as a new note in the same notebook, titled
+   * "<title> (conflicted copy)" (#1113 D1). The text is held from the call on;
+   * a second call while one runs gets the same result.
+   */
+  saveNoteCopy: (id: string, held: HeldNoteDraft) => Promise<NoteCopyResult>
   canWriteNote: (note: Note) => boolean
   syncFromRemote: (notes: StoredNote[]) => void
 }
@@ -409,6 +580,9 @@ export const useNoteStore = create<NoteState & NoteActions>()(
             obligated,
             onCustodyObserved: () => {
               if (isCurrentAccountEpoch(accountEpoch)) markNoteObligation(id)
+            },
+            onRefused: (reason) => {
+              if (isCurrentAccountEpoch(accountEpoch)) capture.onRefused?.(reason)
             },
             onSaved: (etag) => {
               if (!isCurrentAccountEpoch(accountEpoch)) return
@@ -578,6 +752,25 @@ export const useNoteStore = create<NoteState & NoteActions>()(
         showErrorToast(err instanceof NoteMoveRefusedError ? err.toast : 'Failed to move note. Please try again.')
         return null
       }
+    },
+
+    saveNoteCopy: (id, held) => {
+      const running = getNoteCopyInFlight(id)
+      if (running) return running
+      const accountEpoch = getAccountEpoch()
+      // Held before the first await: an editor closing now leaves its text here.
+      const record: HeldNoteDraft = { ...held, copy: 'running' }
+      holdNoteDraft(id, record)
+      const settled: Promise<NoteCopyResult> = runNoteCopy(id, record, accountEpoch, get, set).then((result) => {
+        if (result.kind === 'copied') releaseHeldNoteDraft(id, record)
+        else if (result.kind === 'failed') replaceHeldNoteDraft(id, record, { ...record, copy: result.reason })
+        if (noteCopiesInFlight.get(id)?.running === settled) noteCopiesInFlight.delete(id)
+        syncUnloadGuard()
+        return result
+      })
+      noteCopiesInFlight.set(id, { running: settled, accountEpoch })
+      syncUnloadGuard()
+      return settled
     },
 
     canWriteNote: (note) => {

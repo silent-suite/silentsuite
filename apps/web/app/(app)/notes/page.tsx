@@ -15,14 +15,19 @@ import {
   beginClosingNoteSave,
   endClosingNoteSave,
   getHeldNoteDraft,
+  getNoteCopyInFlight,
   getNoteObligation,
   holdNoteDraft,
   observeNoteCustody,
   proveNoteBase,
+  readNewerNoteVersion,
   registerNoteEditor,
   releaseHeldNoteDraft,
   releaseNoteObligation,
   useNoteStore,
+  type NoteCopyFailure,
+  type NoteCopyResult,
+  type NoteRefusal,
   type StoredNote,
 } from '@/app/stores/use-note-store'
 import { canWriteNotebook, newNoteNotebook, useNotebookStore, type Notebook } from '@/app/stores/use-notebook-store'
@@ -72,14 +77,44 @@ const PREVIEW_CLASS = [
 type Draft = { title: string; content: string }
 
 /** Autosave progress shown next to the editor. 'clean' renders nothing. */
-type SaveState = 'clean' | 'pending' | 'saving' | 'saved' | 'failed'
+type SaveState = 'clean' | 'pending' | 'saving' | 'saved' | 'failed' | 'copied'
 
 const SAVE_STATE_KEY = {
   pending: 'saveStatePending',
   saving: 'saveStateSaving',
   saved: 'saveStateSaved',
   failed: 'saveStateFailed',
+  copied: 'saveStateCopied',
 } as const
+
+const REFUSAL_KEY = {
+  changed: 'conflictChanged',
+  unproved: 'conflictUnproved',
+} as const satisfies Record<NoteRefusal, string>
+
+const COPY_FAILURE_KEY = {
+  offline: 'copyFailedOffline',
+  unconfirmed: 'copyFailedUnconfirmed',
+  deleted: 'copyFailedDeleted',
+  'read-only': 'copyFailedReadOnly',
+  'no-notebook': 'copyFailedNoNotebook',
+} as const satisfies Record<NoteCopyFailure, string>
+
+/** The read-only look at the server's newer version, bound to the revision it read (#1113 D1). */
+type NewerView =
+  | { kind: 'closed' }
+  | { kind: 'loading' }
+  | { kind: 'shown'; title: string; content: string; revision: string | null }
+  | { kind: 'failed'; reason: 'deleted' | 'offline' | 'unreadable' | 'unknown' }
+
+const NEWER_FAILURE_KEY = {
+  deleted: 'newerVersionDeleted',
+  offline: 'newerVersionOffline',
+  unreadable: 'newerVersionUnreadable',
+  unknown: 'newerVersionUnknown',
+} as const
+
+const NOTICE_BUTTON_CLASS = 'touch-target rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 text-sm text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--background))] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60'
 
 /**
  * Breakpoint at which the list and the editor sit side by side. A 320 px list
@@ -227,7 +262,7 @@ function ClosingNoteView({ note }: { note: Note }) {
  * so each note gets its own draft. Text whose save failed is held in the note
  * store, and the next editor of the note starts from it (#1113 D1).
  */
-function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = false, onDelete, onMove }: {
+function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = false, copied = false, onDelete, onMove, onCopied }: {
   /** With the revision its text was read at; edits save only through that base (#744). */
   note: StoredNote
   canWrite: boolean
@@ -237,13 +272,18 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   notebooks: Notebook[]
   /** Focus the title on mount, for a note the user has just created. */
   autoFocusTitle?: boolean
+  /** The note was just made by Save as a copy here. */
+  copied?: boolean
   /** Shows the Delete action when provided; the caller owns the confirmation. */
   onDelete?: () => void
   /** Moves the note to another notebook; resolves false when nothing moved. */
   onMove: (notebookId: string) => Promise<boolean>
+  /** This note's text was saved as a copy with this id. */
+  onCopied: (copyId: string) => void
 }) {
   const t = useTranslations('Notes')
   const updateNote = useNoteStore((s) => s.updateNote)
+  const saveNoteCopy = useNoteStore((s) => s.saveNoteCopy)
   const accountEpoch = useRef(getAccountEpoch()).current
   const titleRef = useRef<HTMLInputElement>(null)
   // Text an earlier editor of this note could not save, on the base it was typed on (#1113 D1).
@@ -251,9 +291,17 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   const [title, setTitle] = useState(held?.draft.title ?? note.title)
   const [content, setContent] = useState(held?.draft.content ?? note.content)
   const [preview, setPreview] = useState(false)
-  const [saveState, setSaveState] = useState<SaveState>(held ? 'failed' : 'clean')
+  const [saveState, setSaveState] = useState<SaveState>(
+    held ? (held.failed || held.copy ? 'failed' : 'pending') : copied ? 'copied' : 'clean',
+  )
   const [moving, setMoving] = useState(false)
   const [moveFailed, setMoveFailed] = useState(false)
+  // Why the server refused this text, while it is unsaved (#1113 D1).
+  const [refusal, setRefusal] = useState<NoteRefusal | null>(
+    held?.failed === 'changed' || held?.failed === 'unproved' ? held.failed : null,
+  )
+  const [copy, setCopy] = useState<'idle' | 'running' | NoteCopyFailure>(held?.copy ?? 'idle')
+  const [newer, setNewer] = useState<NewerView>({ kind: 'closed' })
   // Latest typed values, and the last values the store accepted. While they
   // differ the draft is unsaved and a refresh of this note must not clobber it.
   const draftRef = useRef<Draft>(held?.draft ?? { title: note.title, content: note.content })
@@ -267,6 +315,11 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   const unmountedRef = useRef(false)
   // This editor closed with a save still running; the note opens read-only until it ends.
   const closingRef = useRef(false)
+  // A copy of this text is running; the store holds the text meanwhile, and nothing saves.
+  const copyingRef = useRef(held?.copy === 'running')
+  // The text now lives in its copy: this editor saves and holds nothing more.
+  const handedOffRef = useRef(false)
+  const newerRequestRef = useRef<object | null>(null)
   // Moves on whenever the editor enters or leaves a clean period, and on adoption.
   const periodGenRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -283,26 +336,48 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
       timerRef.current = null
     }
     if (!isCurrentAccountEpoch(accountEpoch)) return
+    if (copyingRef.current || handedOffRef.current) return
     const draft = draftRef.current
     if (draft.title === savedRef.current.title && draft.content === savedRef.current.content) return
     // Captured now, before the chain: the text, the lineage it was typed on and any obligation.
     const lineage = lineageRef.current
     const obligation = getNoteObligation(note.id)
+    let refusedWith: NoteRefusal | undefined
     inFlightRef.current += 1
     setSaveState('saving')
     const settle = (saved: boolean) => {
       inFlightRef.current -= 1
       if (inFlightRef.current > 0) return
-      if (isCurrentAccountEpoch(accountEpoch)) {
+      // While a copy runs, or once it has the text, the store's record is the copy's.
+      if (isCurrentAccountEpoch(accountEpoch) && !copyingRef.current && !handedOffRef.current) {
         // The text of a failed save outlives this editor; an accepted one needs no holding.
-        if (saved) releaseHeldNoteDraft(note.id)
-        else if (isDirty()) holdNoteDraft(note.id, { draft: draftRef.current, base: lineageRef.current.base })
+        if (saved) {
+          releaseHeldNoteDraft(note.id)
+        } else if (isDirty()) {
+          // A failed copy's reason stays with the text: its unconfirmed attempt is still kept.
+          const earlierCopy = getHeldNoteDraft(note.id)?.copy
+          holdNoteDraft(note.id, {
+            draft: draftRef.current,
+            base: lineageRef.current.base,
+            failed: refusedWith ?? 'error',
+            copy: earlierCopy === 'running' ? undefined : earlierCopy,
+          })
+        }
       }
       if (closingRef.current) {
         closingRef.current = false
         endClosingNoteSave(note.id)
       }
-      if (!unmountedRef.current) setSaveState(!saved ? 'failed' : isDirty() ? 'pending' : 'saved')
+      if (unmountedRef.current) return
+      setSaveState(!saved ? 'failed' : isDirty() ? 'pending' : 'saved')
+      if (saved) {
+        setRefusal(null)
+        setCopy((state) => (state === 'running' ? state : 'idle'))
+        newerRequestRef.current = null
+        setNewer({ kind: 'closed' })
+      } else if (refusedWith) {
+        setRefusal(refusedWith)
+      }
     }
     // Serialize saves so two flushes never race on the same Etebase item.
     saveChainRef.current = saveChainRef.current
@@ -313,6 +388,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
           base: lineage.base,
           obligation,
           onSaved: (etag) => { savedRevision = etag },
+          onRefused: (reason) => { refusedWith = reason ?? 'unproved' },
         })
         if (saved && isCurrentAccountEpoch(accountEpoch)) {
           // An accepted save advances only its own lineage; a queued one has no known revision.
@@ -333,8 +409,12 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
       // T2: a note leaving its clean period reads its custody afresh.
       if (!wasDirty) void observeNoteCustody(note.id)
     }
-    // Typing back to the saved text leaves nothing to hold.
-    if (!isDirty()) releaseHeldNoteDraft(note.id)
+    // Typing back to the saved text leaves nothing to hold or refuse.
+    if (!isDirty()) {
+      releaseHeldNoteDraft(note.id)
+      setRefusal(null)
+      setCopy((state) => (state === 'running' ? state : 'idle'))
+    }
     setMoveFailed(false)
     if (inFlightRef.current === 0) setSaveState('pending')
     if (timerRef.current) clearTimeout(timerRef.current)
@@ -367,8 +447,87 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
     setContent(note.content)
     draftRef.current = { title: note.title, content: note.content }
     savedRef.current = draftRef.current
+    setRefusal(null)
     void releaseIfProved()
   }, [note.title, note.content, note.revision, releaseIfProved])
+
+  // The newer-version view shows one revision: once the note moves past both it and
+  // this editor's base, the view closes rather than show an outdated version.
+  useEffect(() => {
+    const revision = note.revision
+    if (!revision || revision === lineageRef.current.base.revision) return
+    setNewer((view) => (view.kind === 'shown' && view.revision !== revision ? { kind: 'closed' } : view))
+  }, [note.revision])
+
+  // Text carried to a new copy, or held after an error that was not a refusal, saves
+  // again once it opens; refused text waits for an edit or Save as a copy.
+  useEffect(() => {
+    if (held && !held.copy && held.failed !== 'changed' && held.failed !== 'unproved') schedule({})
+  }, [held, schedule])
+
+  // The latest callback, so following a copy does not restart on every render.
+  const onCopiedRef = useRef(onCopied)
+  useEffect(() => {
+    onCopiedRef.current = onCopied
+  }, [onCopied])
+
+  const followCopy = useCallback(async (running: Promise<NoteCopyResult>) => {
+    const result = await running
+    if (result.kind === 'stale' || !isCurrentAccountEpoch(accountEpoch)) return
+    copyingRef.current = false
+    if (result.kind === 'copied') {
+      // The text now lives in the copy; closing this editor saves nothing more.
+      handedOffRef.current = true
+      draftRef.current = savedRef.current
+      if (!unmountedRef.current) onCopiedRef.current(result.id)
+      return
+    }
+    if (!unmountedRef.current) setCopy(result.reason)
+  }, [accountEpoch])
+
+  // An editor opened while its note's copy runs follows that copy.
+  useEffect(() => {
+    if (held?.copy !== 'running') return
+    const running = getNoteCopyInFlight(note.id)
+    if (running) {
+      void followCopy(running)
+    } else {
+      copyingRef.current = false
+      setCopy('unconfirmed')
+    }
+  }, [held, followCopy, note.id])
+
+  // One copy per click at most: the flag, and the store's own in-flight copy.
+  const handleSaveCopy = () => {
+    if (copyingRef.current || handedOffRef.current || !isCurrentAccountEpoch(accountEpoch)) return
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    copyingRef.current = true
+    setCopy('running')
+    void followCopy(saveNoteCopy(note.id, {
+      draft: draftRef.current,
+      base: lineageRef.current.base,
+      failed: refusal ?? 'error',
+    }))
+  }
+
+  const toggleNewer = async () => {
+    if (newer.kind !== 'closed') {
+      newerRequestRef.current = null
+      setNewer({ kind: 'closed' })
+      return
+    }
+    const request = {}
+    newerRequestRef.current = request
+    setNewer({ kind: 'loading' })
+    const read = await readNewerNoteVersion(note.id)
+    if (newerRequestRef.current !== request || unmountedRef.current || !isCurrentAccountEpoch(accountEpoch)) return
+    setNewer(read.kind === 'note'
+      ? { kind: 'shown', title: read.title, content: read.content, revision: read.revision }
+      : { kind: 'failed', reason: read.kind })
+  }
 
   // T2: a note opened while custody is outstanding is obliged.
   useEffect(() => {
@@ -445,7 +604,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
         }}
         placeholder={t('titlePlaceholder')}
         aria-label={t('titleLabel')}
-        readOnly={!canWrite || moving || moveRunning}
+        readOnly={!canWrite || moving || moveRunning || copy === 'running'}
         // Browser spellcheck and writing suggestions can send text to third-party
         // services; the body editor disables them too.
         spellCheck={false}
@@ -467,7 +626,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
             <select
               value={note.notebookId ?? ''}
               onChange={(e) => void handleMove(e.target.value)}
-              disabled={!canWrite || moving || moveRunning || notebooks.length < 2}
+              disabled={!canWrite || moving || moveRunning || copy === 'running' || notebooks.length < 2}
               className="min-w-0 max-w-[11rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-1 pl-2 pr-6 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
             >
               {notebooks.map((notebook) => (
@@ -512,6 +671,49 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
           )}
         </div>
       </div>
+      {(refusal || copy !== 'idle') && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-[rgb(var(--foreground))]">
+          <div aria-live="polite" className="space-y-1">
+            {refusal && <p>{t(REFUSAL_KEY[refusal])}</p>}
+            {copy !== 'idle' && copy !== 'running' && <p>{t(COPY_FAILURE_KEY[copy])}</p>}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleSaveCopy}
+              disabled={!canWrite || copy === 'running' || moving || moveRunning}
+              className={NOTICE_BUTTON_CLASS}
+            >
+              {copy === 'running' ? t('savingCopy') : t('saveAsCopy')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void toggleNewer()}
+              aria-expanded={newer.kind !== 'closed'}
+              className={NOTICE_BUTTON_CLASS}
+            >
+              {newer.kind === 'closed' ? t('showNewerVersion') : t('hideNewerVersion')}
+            </button>
+          </div>
+        </div>
+      )}
+      {newer.kind !== 'closed' && (
+        <section
+          aria-label={t('newerVersionTitle')}
+          className="max-h-64 shrink-0 overflow-y-auto rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
+        >
+          <p className="text-xs font-medium text-[rgb(var(--muted))]">{t('newerVersionTitle')}</p>
+          {newer.kind === 'loading' && <p className="mt-1 text-xs text-[rgb(var(--muted))]">{t('newerVersionLoading')}</p>}
+          {newer.kind === 'failed' && <p className="mt-1 text-xs">{t(NEWER_FAILURE_KEY[newer.reason])}</p>}
+          {newer.kind === 'shown' && (
+            <>
+              <p className="mt-1 font-semibold">{newer.title.trim() || t('untitled')}</p>
+              {/* Plain text, exactly as stored, so it compares line by line with the draft. */}
+              <div className="mt-1 whitespace-pre-wrap break-words">{newer.content}</div>
+            </>
+          )}
+        </section>
+      )}
       {preview && (
         <div className={PREVIEW_CLASS} data-testid="note-preview">
           <NoteMarkdownPreview content={content} />
@@ -526,7 +728,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
         }}
         placeholder={t('bodyPlaceholder')}
         ariaLabel={t('bodyLabel')}
-        readOnly={!canWrite || moving || moveRunning}
+        readOnly={!canWrite || moving || moveRunning || copy === 'running'}
         className={preview
           ? 'hidden'
           : `min-h-[16rem] flex-1 overflow-hidden rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] focus-within:ring-2 focus-within:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
@@ -578,6 +780,8 @@ function NotesPageBody() {
   const [movingNoteIds, setMovingNoteIds] = useState<ReadonlySet<string>>(new Set())
   // The note just created here; its title gets focus so typing can start at once.
   const [newNoteId, setNewNoteId] = useState<string | null>(null)
+  // The copy just made here by Save as a copy; its editor says so.
+  const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null)
   const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [query, setQuery] = useState('')
@@ -643,6 +847,7 @@ function NotesPageBody() {
     try {
       const created = await createNote({ notebookId: newNoteTarget.id })
       setQuery('')
+      setCopiedNoteId(null)
       setNewNoteId(created.id)
       setSelectedId(created.id)
     } catch {
@@ -662,6 +867,13 @@ function NotesPageBody() {
       setMovingNoteIds((ids) => new Set([...ids].filter((id) => id !== noteId)))
     }
   }, [moveNote])
+
+  // The copy opens in place of its source, unless another note, or none, was opened meanwhile.
+  const handleCopied = useCallback((sourceId: string, copyId: string) => {
+    setNewNoteId(null)
+    setCopiedNoteId(copyId)
+    setSelectedId((current) => (current === sourceId ? copyId : current))
+  }, [])
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -805,6 +1017,7 @@ function NotesPageBody() {
                           dateLabel={formatNoteDate(note.updated_at, dateFormat, timeFormat, locale)}
                           onSelect={() => {
                             setNewNoteId(null)
+                            setCopiedNoteId(null)
                             setSelectedId(note.id)
                           }}
                         />
@@ -828,8 +1041,10 @@ function NotesPageBody() {
               moveRunning={movingNoteIds.has(selectedNote.id)}
               notebooks={pickerNotebooks}
               autoFocusTitle={selectedNote.id === newNoteId}
+              copied={selectedNote.id === copiedNoteId}
               onDelete={canEditSelected ? () => setConfirmDelete(true) : undefined}
               onMove={(notebookId) => handleMove(selectedNote.id, notebookId)}
+              onCopied={(copyId) => handleCopied(selectedNote.id, copyId)}
             />
           ) : (
             <div className={`hidden flex-1 items-center justify-center rounded-lg border border-dashed border-[rgb(var(--border))] text-sm text-[rgb(var(--muted))] ${layout.placeholder}`}>
