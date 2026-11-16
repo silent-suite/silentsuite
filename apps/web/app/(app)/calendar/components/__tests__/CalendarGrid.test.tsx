@@ -452,6 +452,34 @@ describe('CalendarGrid timed-event integration', () => {
     )
   })
 
+  it('#1097: a zero-length event (no DTEND) can be dragged and keeps its zero length', () => {
+    mocks.projectedSegment = false
+    const zero = event({ startDate: new Date(2026, 6, 13, 9, 0), endDate: new Date(2026, 6, 13, 9, 0) })
+    const { container } = render(<StrictMode><CalendarGrid events={[zero]} /></StrictMode>)
+    const target = screen.getByTestId('projected-segment')
+    const grid = screen.getByTestId('time-grid')
+    vi.spyOn(screen.getByTestId('projected-event'), 'getBoundingClientRect').mockReturnValue(rect(0, 200, 200, 50))
+    vi.spyOn(grid, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    vi.spyOn(screen.getByTestId('day-column'), 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    vi.spyOn(screen.getByTestId('schedule-x').parentElement as HTMLElement, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    Object.defineProperty(grid, 'scrollHeight', { configurable: true, value: 1600 })
+    Object.defineProperty(grid, 'scrollTop', { configurable: true, value: 0, writable: true })
+
+    // 100 px per hour from 07:00: y=210 is 09:06, inside the drawn 30-minute chip.
+    fireEvent.mouseDown(target, { button: 0, clientX: 20, clientY: 210 })
+    fireEvent.mouseMove(target, { clientX: 25, clientY: 310 })
+    expect(document.body.classList.contains('is-drag-moving')).toBe(true)
+    const preview = container.querySelector('[class*="bg-emerald-500"]') as HTMLElement | null
+    expect(preview).not.toBeNull()
+    expect(parseFloat(preview!.style.height)).toBeGreaterThan(0)
+    fireEvent.mouseUp(target, { clientX: 25, clientY: 310 })
+
+    expect(mocks.calendarState.updateEvent).toHaveBeenCalledTimes(1)
+    const [, update] = mocks.calendarState.updateEvent.mock.calls[0]!
+    expect(update.endDate.getTime()).toBe(update.startDate.getTime())
+    expect(update.startDate.getTime()).not.toBe(zero.startDate.getTime())
+  })
+
   it('proves the unguarded bottom-edge resize path activates, cancels, and completes', () => {
     const { container, target } = renderGestureHarness(false)
     fireEvent.mouseDown(target, { button: 0, clientX: 20, clientY: 296 })

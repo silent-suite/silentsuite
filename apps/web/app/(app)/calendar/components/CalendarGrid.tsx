@@ -23,6 +23,7 @@ import {
   isTimeGridGestureEligible,
   toScheduleXProjection,
   visibleDateRangeToInstantRange,
+  ZERO_LENGTH_DISPLAY_MS,
   type DisplayEvent,
   type VisibleDateRange,
 } from '../lib/calendar-grid-events'
@@ -188,7 +189,11 @@ function findEventAtPosition(
       ev.startDate.getFullYear() === colDate.getFullYear() &&
       ev.startDate.getMonth() === colDate.getMonth() &&
       ev.startDate.getDate() === colDate.getDate()
-    return sameDay && ev.startDate <= clickTime && ev.endDate > clickTime
+    // A zero-length event is drawn as a short chip; hit-test the chip, not its zero length.
+    const end = ev.endDate.getTime() === ev.startDate.getTime()
+      ? new Date(ev.startDate.getTime() + ZERO_LENGTH_DISPLAY_MS)
+      : ev.endDate
+    return sameDay && ev.startDate <= clickTime && end > clickTime
   })
 
   if (candidates.length === 0) return null
@@ -873,7 +878,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         gridEl.scrollTop +
         gridRect.top -
         wrapperRect.top
-      const heightPx = durationHours * pixelsPerHour
+      // A zero-length event keeps its zero length; its preview is as tall as its drawn chip.
+      const heightPx = ((dragMoveStartRef.current.duration || ZERO_LENGTH_DISPLAY_MS) / (60 * 60 * 1000)) * pixelsPerHour
 
       const timeLabel = `${clampedStart.toLocaleTimeString('en-US', {
         hour: 'numeric',
