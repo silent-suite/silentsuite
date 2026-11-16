@@ -29,7 +29,23 @@ type CalendarGridView = 'week' | 'month'
  * apps such as Fossify write those. The grid draws them this long so they can be seen and clicked;
  * the event itself keeps its zero length.
  */
-const ZERO_LENGTH_DISPLAY_MS = 30 * 60 * 1000
+export const ZERO_LENGTH_DISPLAY_MS = 30 * 60 * 1000
+
+/**
+ * Drawn end of a zero-length timed event: 30 minutes after its start, but no later than the end
+ * of its local day, so a late-evening event stays a single chip on its own day.
+ */
+export function zeroLengthDisplayEnd(start: Date, timeZone: string): Date {
+  const startMs = start.getTime()
+  const end = startMs + ZERO_LENGTH_DISPLAY_MS
+  try {
+    const day = Temporal.Instant.fromEpochMilliseconds(startMs).toZonedDateTimeISO(timeZone).toPlainDate()
+    const lastMs = startOfDay(day.add({ days: 1 }), timeZone).epochMilliseconds - 1
+    return new Date(lastMs > startMs ? Math.min(end, lastMs) : end)
+  } catch {
+    return new Date(end)
+  }
+}
 
 export interface VisibleDateRange {
   start: Temporal.PlainDate
@@ -339,7 +355,7 @@ export function toScheduleXProjection(
       }
       // Zero length: all-day ends clamp to their start day; timed ones get a short display end.
       const displayEnd = sourceEndMs === sourceStartMs && !source.allDay
-        ? new Date(sourceStartMs + ZERO_LENGTH_DISPLAY_MS)
+        ? zeroLengthDisplayEnd(source.startDate, userTz)
         : source.endDate
       const sourceStart = toScheduleXDateTime(source.startDate, userTz)
       const sourceEnd = toScheduleXDateTime(displayEnd, userTz)

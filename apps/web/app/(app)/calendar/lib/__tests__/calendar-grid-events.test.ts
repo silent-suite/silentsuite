@@ -729,3 +729,28 @@ describe('events without DTEND show in the grid (#1097)', () => {
     expect(projection.events).toHaveLength(0)
   })
 })
+
+describe('a late-evening event without DTEND stays on its own day (#1097 review)', () => {
+  const dates = {
+    start: Temporal.PlainDate.from('2026-11-16'),
+    end: Temporal.PlainDate.from('2026-11-17'),
+  }
+  const berlin = (date: Date) => zdt(date, 'Europe/Berlin')
+  // 23:45 Berlin on 16 November.
+  const start = new Date('2026-11-16T22:45:00.000Z')
+
+  it('ends its chip before local midnight in week and month view', () => {
+    for (const view of ['week', 'month'] as const) {
+      const projection = toScheduleXProjection(
+        [displayEvent({ startDate: start, endDate: start, instanceDate: start })],
+        new Map(), 'Europe/Berlin', view, dates, berlin,
+      )
+      expect(projection.events).toHaveLength(1)
+      const chip = projection.events[0]!
+      expect(chip._options?.additionalClasses).not.toContain('ss-month-multiday')
+      expect(chip._options?.additionalClasses).not.toContain('ss-timegrid-multiday-segment')
+      expect(String(chip.start)).toContain('2026-11-16T23:45:00')
+      expect(String(chip.end)).toContain('2026-11-16T23:59:59.999')
+    }
+  })
+})
