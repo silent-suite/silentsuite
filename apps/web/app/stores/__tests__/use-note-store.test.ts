@@ -186,6 +186,22 @@ describe('useNoteStore', () => {
       useAuthStore.setState({ subscriptionStatus: 'expired' })
       await expect(useNoteStore.getState().createNote()).rejects.toThrow('subscription')
     })
+
+    it('refuses offline before the shared queue sees it, with one reason and no generic try-again toast', async () => {
+      const createItem = vi.fn(async () => 'remote-note')
+      etebase({ createItem })
+      const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+      onTestFinished(() => online.mockRestore())
+      // Its own precondition: the browser reports offline.
+      expect(navigator.onLine).toBe(false)
+
+      await expect(useNoteStore.getState().createNote({ title: 'Lost' })).rejects.toThrow('needs a connection')
+
+      expect(createItem).not.toHaveBeenCalled()
+      expect(useNoteStore.getState().notes).toEqual([])
+      expect(toastMock.showErrorToast).toHaveBeenCalledTimes(1)
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith('No note was created. A new note needs a connection.')
+    })
   })
 
   describe('updateNote', () => {

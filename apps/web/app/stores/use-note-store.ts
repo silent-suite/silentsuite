@@ -251,6 +251,12 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       const notebookId = newNote.notebookId ?? defaultNotebookId()
       const notebook = useNotebookStore.getState().lists.find((list) => list.id === notebookId)
       if (!notebook || !canWriteNotebook(notebook)) throw new Error('No writable notebook is available.')
+      // The shared offline queue refuses a new note's text, so offline the request would end in its
+      // generic "try again" toast. Refuse here and say why; the page turns New note off for the same reason.
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        showErrorToast('No note was created. A new note needs a connection.')
+        throw new Error('A new note needs a connection.')
+      }
 
       const now = new Date()
       const draft: Omit<Note, 'id' | 'uid'> = {

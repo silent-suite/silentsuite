@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
@@ -567,7 +567,9 @@ function NotesPageBody() {
     () => newNoteNotebook(notebooks, activeListId, { filterId: filteredNotebook?.id, openNotebookId: selectedNote?.notebookId }),
     [notebooks, activeListId, filteredNotebook?.id, selectedNote?.notebookId],
   )
-  const canCreateNote = canWrite && !isLoading && newNoteTarget !== undefined
+  // The offline queue refuses a new note, so New note is off until there is a connection.
+  const canCreateNote = canWrite && isOnline && !isLoading && newNoteTarget !== undefined
+  const offlineNoticeId = useId()
   // The picker offers every shown writable notebook, plus the note's own so it always shows.
   const pickerNotebooks = useMemo(() => {
     const targets = notebooks.filter((notebook) => notebook.visible && canWriteNotebook(notebook))
@@ -614,7 +616,10 @@ function NotesPageBody() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       {!isOnline && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+        <div
+          id={offlineNoticeId}
+          className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400"
+        >
           <WifiOff className="h-3.5 w-3.5 shrink-0" />
           {t('offlineMessage')}
         </div>
@@ -672,7 +677,8 @@ function NotesPageBody() {
             type="button"
             onClick={() => void handleCreate()}
             disabled={!canCreateNote}
-            title={!canWrite ? t('subscriptionRequired') : newNoteTarget ? t('newNoteIn', { name: newNoteTarget.name }) : !isLoading ? t('noWritableNotebook') : undefined}
+            aria-describedby={canWrite && !isOnline ? offlineNoticeId : undefined}
+            title={!canWrite ? t('subscriptionRequired') : !isOnline ? t('newNoteOffline') : newNoteTarget ? t('newNoteIn', { name: newNoteTarget.name }) : !isLoading ? t('noWritableNotebook') : undefined}
             className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canCreateNote ? 'cursor-not-allowed opacity-50' : 'hover:bg-emerald-500'}`}
           >
             <Plus className="h-4 w-4" />

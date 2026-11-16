@@ -761,6 +761,80 @@ describe('NotesPage', () => {
     storeMock.syncState.isOnline = true
   })
 
+  describe('while offline, a new note needs a connection', () => {
+    const NOTICE = /You are offline\. Edits to an open note are saved encrypted on this device and sync when you reconnect, unless the note changed elsewhere\. New notes and moves need a connection, so New note is turned off\./
+
+    beforeEach(() => {
+      storeMock.syncState.isOnline = false
+    })
+    afterEach(() => {
+      storeMock.syncState.isOnline = true
+    })
+
+    it('turns the header button off and explains why in its title and its description', () => {
+      loaded([note('n1', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+      // Its own precondition: the notice is up and the notes loaded.
+      const notice = screen.getByText(NOTICE)
+      expect(screen.getByRole('button', { name: /Existing/ })).toBeInTheDocument()
+
+      const button = screen.getByRole('button', { name: 'New note' })
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', 'New note is turned off while you are offline. A new note needs a connection.')
+      expect(button).toHaveAccessibleDescription(notice.textContent!)
+
+      fireEvent.click(button)
+      expect(storeMock.noteState.createNote).not.toHaveBeenCalled()
+    })
+
+    it('offers no New note action in the empty list', () => {
+      loaded([])
+      renderWithIntl(<NotesPage />)
+      expect(screen.getByText('No notes yet')).toBeInTheDocument()
+      // Only the disabled header button remains; the empty state adds none.
+      expect(screen.getAllByRole('button', { name: 'New note' })).toHaveLength(1)
+      expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+    })
+
+    it('offers no New note action in an empty notebook either', () => {
+      const EMPTY: Notebook = { id: 'notes-3', name: 'Empty', color: '#10b981', visible: true, accessLevel: 1 }
+      loaded([note('a', { title: 'Alpha', notebookId: 'notes-1' })], [NOTEBOOK, EMPTY])
+      renderWithIntl(<NotesPage />)
+      fireEvent.click(within(screen.getByRole('group', { name: 'Show notes from' })).getByRole('button', { name: 'Empty' }))
+      expect(screen.getByText('No notes in Empty')).toBeInTheDocument()
+      expect(screen.getAllByRole('button', { name: 'New note' })).toHaveLength(1)
+      expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+    })
+
+    it('turns New note back on, with its usual title, once the connection returns', async () => {
+      loaded([])
+      const view = renderWithIntl(<NotesPage />)
+      expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+
+      storeMock.syncState.isOnline = true
+      view.rerender(<NotesPage />)
+
+      expect(screen.queryByText(/You are offline/)).not.toBeInTheDocument()
+      const button = screen.getAllByRole('button', { name: 'New note' })[0]!
+      expect(button).toBeEnabled()
+      expect(button).toHaveAttribute('title', 'New note in Personal Notes')
+      expect(button).not.toHaveAttribute('aria-describedby')
+      fireEvent.click(button)
+      await vi.waitFor(() => expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1))
+    })
+
+    it('keeps the subscription reason first when both apply', () => {
+      storeMock.authState.canWrite.mockReturnValue(false)
+      loaded([note('n1', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+      expect(screen.getByText(NOTICE)).toBeInTheDocument()
+      const button = screen.getByRole('button', { name: 'New note' })
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', 'Subscription required')
+      expect(button).not.toHaveAttribute('aria-describedby')
+    })
+  })
+
   it('shows the compact Experimental · Web app only label next to the heading on every layout', () => {
     loaded([note('note-1', { title: 'Any' })])
     renderWithIntl(<NotesPage />)

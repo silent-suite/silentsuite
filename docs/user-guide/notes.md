@@ -56,6 +56,8 @@ Edits made while offline to a note that is already open are encrypted locally an
 
 Reloading the page while offline and reading previously opened notes depends on how the deployment is configured: it needs the encrypted local cache to be enabled, and it only covers notes already loaded on that device. Where the cache is not enabled, an offline reload cannot show your notes.
 
+In the web app, **New note** is turned off while you are offline, and the page says why. It turns on again when the connection returns.
+
 ## Sharing
 
 Share a notebook from **Settings → Sharing**. Members see the same notebook, end-to-end encrypted to the public keys you confirm. Before you share or accept, compare security fingerprints with each person over a separate channel, such as in person or on a call; the server supplies usernames and keys, so an unverified fingerprint gives no assurance about who receives access. Read-only members can read notes but cannot change them.
