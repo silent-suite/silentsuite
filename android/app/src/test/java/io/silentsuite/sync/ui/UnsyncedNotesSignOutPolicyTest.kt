@@ -404,7 +404,8 @@ class UnsyncedNotesSignOutPolicyTest {
             "NotesRemovalDialogFragment.kt" to Triple(1, 1, true),
             "HeldTextFragment.kt" to Triple(1, 1, true),
             "NoteDeleteConfirmation.kt" to Triple(1, 0, true),
-            "NoteViewFragment.kt" to Triple(0, 1, false),
+            "NoteViewFragment.kt" to Triple(1, 2, true),
+            "NoteEditorViewModel.kt" to Triple(0, 1, false),
         ), found.toMap())
     }
 

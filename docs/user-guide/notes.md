@@ -60,6 +60,14 @@ Reloading the page while offline and reading previously opened notes depends on 
 
 Share a notebook from **Settings → Sharing**. Members see the same notebook, end-to-end encrypted to the public keys you confirm. Before you share or accept, compare security fingerprints with each person over a separate channel, such as in person or on a call; the server supplies usernames and keys, so an unverified fingerprint gives no assurance about who receives access. Read-only members can read notes but cannot change them.
 
+## Export
+
+In the web app, **Settings → Export** saves notes as Markdown files in a `.zip`, with one folder per notebook and one `.md` file per note. Pick one notebook or **All notebooks**, which includes hidden notebooks. **Export All Data (.zip)** puts the same folders under `silentsuite-notes/`, next to your calendars, tasks, and contacts. Notes are included whenever your account has a notebook, even while Notes is turned off under **Settings → Experimental**.
+
+Each file starts with a YAML header (frontmatter) holding the note's `title` and `modified` (when it was last edited), followed by the body exactly as stored. A note without a title is saved as `Untitled.md`, and its header has no `title`. In file names, characters that file systems refuse, such as `/` and `:`, and look-alikes of `/` and `\` become `_`, invisible characters are removed, names Windows reserves, such as `CON`, get a leading `_`, and titles longer than 60 bytes (60 unaccented letters, or 20 Chinese or Japanese characters) are cut. Notes with the same title get a number, such as `Ideas (2).md`. The header keeps the full title.
+
+The export lists your notebooks and notes from the server again, so it needs a connection, and decrypts every note in your browser: no note title, text, or notebook name is sent anywhere. A note that cannot be decrypted is left out, and the page says how many were left out. Changes to notes that are still waiting to sync on this device are not included until they sync. The `.zip` itself is not encrypted, so anyone who gets the file can read your notes.
+
 ## Not in this release
 
-Moving notes on Android, the DAV bridge, attachments, import/export, and rich-text editing are not available yet. Use Markdown in the web app for now.
+Moving notes on Android, the DAV bridge, attachments, importing notes, and rich-text editing are not available yet. Use Markdown in the web app for now.

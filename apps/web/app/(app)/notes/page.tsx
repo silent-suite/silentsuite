@@ -485,14 +485,15 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
 }
 
 export default function NotesPage() {
+  const t = useTranslations('Notes')
   const enabled = useNotesEnabled()
   const fingerprint = useEtebaseStore((state) => state.accountFingerprint)
   if (!enabled) {
     return (
       <section className="mx-auto max-w-lg space-y-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6">
-        <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Notes is experimental</h2>
-        <p className="text-sm text-[rgb(var(--muted))]">Enable Notes in Settings to use encrypted Markdown notes. Any existing notes are preserved while this feature is off.</p>
-        <Link href="/settings/experimental" className="inline-block text-sm text-[rgb(var(--primary))] underline">Open Experimental settings</Link>
+        <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{t('disabledTitle')}</h2>
+        <p className="text-sm text-[rgb(var(--muted))]">{t('disabledDescription')}</p>
+        <Link href="/settings/experimental" className="inline-block text-sm text-[rgb(var(--primary))] underline">{t('openExperimentalSettings')}</Link>
       </section>
     )
   }
@@ -790,6 +791,7 @@ function NotesPageBody() {
           title={t('deleteConfirmTitle')}
           message={t('deleteConfirmMessage', { title: selectedNote.title.trim() || t('untitled') })}
           confirmLabel={t('deleteNote')}
+          cancelLabel={t('cancel')}
           onConfirm={() => {
             setConfirmDelete(false)
             void deleteNote(selectedNote.id)

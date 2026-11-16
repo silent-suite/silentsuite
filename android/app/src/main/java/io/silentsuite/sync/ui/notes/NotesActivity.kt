@@ -5,6 +5,7 @@ import android.accounts.AccountManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.MenuItem
 import androidx.fragment.app.commit
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
@@ -77,8 +78,25 @@ class NotesActivity : BaseActivity() {
     }
 
     override fun onSupportNavigateUp(): Boolean {
-        if (!supportFragmentManager.popBackStackImmediate()) finish()
+        up()
         return true
+    }
+
+    /** The toolbar's Up arrow, which [BaseActivity] would take before [onSupportNavigateUp]. */
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId != android.R.id.home) return super.onOptionsItemSelected(item)
+        up()
+        return true
+    }
+
+    /**
+     * Up goes back one screen, or closes Notes from the first one. The note editor asks first while its text is not
+     * saved on this device ([NoteViewFragment.guardLeave]), as it does for Back.
+     */
+    private fun up() {
+        val editor = supportFragmentManager.findFragmentById(R.id.fragment_container) as? NoteViewFragment
+        if (editor?.guardLeave() == true) return
+        if (!supportFragmentManager.popBackStackImmediate()) finish()
     }
 
     companion object {

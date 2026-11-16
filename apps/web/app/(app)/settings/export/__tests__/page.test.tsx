@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
-import { act, render, screen, fireEvent } from '@testing-library/react'
+import { useNotebookStore } from '@/app/stores/use-notebook-store'
+import { useSyncStore } from '@/app/stores/use-sync-store'
+import { useExperimentalStore } from '@/app/stores/use-experimental-store'
+import { act, screen, fireEvent } from '@testing-library/react'
+import { renderWithIntl as render } from '@/src/__tests__/render-with-intl'
 import { toVEvent, toVTodo, toVCard } from '@silentsuite/core'
 import { showErrorToast, showWarningToast } from '@/app/stores/use-toast-store'
 import JSZip from 'jszip'
@@ -111,7 +115,14 @@ vi.mock('@/app/stores/use-contact-list-store', () => ({
     selector({ lists: mockData.contactLists }),
 }))
 
-// Mock @silentsuite/core serializers
+// The server's notebooks and note items, as the Notes export lists them again.
+const notesServer = vi.hoisted(() => ({
+  notebooks: [] as { uid: string; name: string; items: { uid: string }[] }[],
+  listCollectionsError: null as Error | null,
+  stallItemList: false,
+}))
+
+// Mock @silentsuite/core serializers and the two listing calls
 vi.mock('@silentsuite/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@silentsuite/core')>()
   return {
@@ -119,6 +130,16 @@ vi.mock('@silentsuite/core', async (importOriginal) => {
     toVEvent: vi.fn(() => 'BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nEND:VEVENT'),
     toVTodo: vi.fn(() => 'BEGIN:VTODO\r\nSUMMARY:Test task\r\nEND:VTODO'),
     toVCard: vi.fn(actual.toVCard),
+    listCollections: vi.fn(async (_account: unknown, collectionType: string) => {
+      if (collectionType !== actual.COLLECTION_TYPE_NOTES) throw new Error(`unexpected type ${collectionType}`)
+      if (notesServer.listCollectionsError) throw notesServer.listCollectionsError
+      return notesServer.notebooks.map((notebook) => ({ uid: notebook.uid, getMeta: () => ({ name: notebook.name }) }))
+    }),
+    listItems: vi.fn(async (_account: unknown, collection: { uid: string }, _stoken: string | null) => {
+      if (notesServer.stallItemList) return { items: [], stoken: null, done: false }
+      const notebook = notesServer.notebooks.find((entry) => entry.uid === collection.uid)
+      return { items: notebook ? notebook.items : [], stoken: 'end', done: true }
+    }),
   }
 })
 
@@ -154,6 +175,7 @@ vi.mock('lucide-react', () => ({
 // Mock jszip
 vi.mock('jszip', () => {
   const mockFile = vi.fn()
+  const mockFolder = vi.fn()
   const mockGenerateAsync = vi
     .fn()
     .mockResolvedValue(new Blob(['zip'], { type: 'application/zip' }))
@@ -161,6 +183,7 @@ vi.mock('jszip', () => {
     default: vi.fn(function MockJSZip() {
       return {
         file: mockFile,
+        folder: mockFolder,
         generateAsync: mockGenerateAsync,
       }
     }),
@@ -184,6 +207,13 @@ const etebaseMock = vi.hoisted(() => {
       notes: 'loaded',
       preferences: 'unknown',
     } as Record<'calendar' | 'tasks' | 'contacts' | 'notes' | 'preferences', DomainStatus>,
+    // Listed notes, as the Etebase store holds them. No notebooks by default,
+    // so Notes take no part in the exports unless a test adds one.
+    account: { stand: 'in' } as unknown,
+    collections: { notes: [] as { uid: string }[] },
+    itemCache: new Map<string, unknown>(),
+    itemTypeMap: new Map<string, string>(),
+    itemCollectionMap: new Map<string, string>(),
   })
   return { loadedState, state: loadedState() }
 })
@@ -671,7 +701,8 @@ describe('ExportPage', () => {
 // An export may only include a domain whose server view has fully loaded
 // (domainLoadState === 'loaded'). 'failed' and 'unknown' domains are refused
 // both by the disabled button and inside the click handler, with a visible
-// reason. Notes and preferences are not exported and do not gate anything.
+// reason. Preferences are not exported and do not gate anything. Notes gate
+// only an account that has a notebook (the Notes block at the end covers that).
 // 'loaded' means the last full enumeration in this session succeeded; it is
 // not proof of every historical server item.
 
@@ -795,7 +826,7 @@ describe('ExportPage export completeness (WEB-07)', () => {
     expect(downloaded()).toEqual(['silentsuite-tasks.ics', 'silentsuite-contacts.vcf'])
   })
 
-  it('control: Notes and preferences load state does not affect calendar, task or contact exports', async () => {
+  it('control: without a notebook, Notes and preferences load state does not affect calendar, task or contact exports', async () => {
     etebaseMock.state.domainLoadState.notes = 'failed'
     etebaseMock.state.domainLoadState.preferences = 'unknown'
     render(<ExportPage />)
@@ -908,5 +939,338 @@ describe('ExportPage waits for the loaded snapshot to reach the store (WEB-07)',
     expect(button(/Export Calendar/)).toBeDisabled()
     expect(button(/Export Tasks/)).toBeDisabled()
     expect(button(/Export Contacts/)).toBeDisabled()
+  })
+})
+
+// ── Notes ──
+// The export lists notebooks and their items from the server again
+// (notesServer above) and decrypts each note when it runs; the store only
+// supplies the counts shown. Notes take part whenever the account has a
+// notebook, whatever the experimental Notes switch says.
+
+describe('ExportPage Notes export', () => {
+  let downloads: HTMLAnchorElement[] = []
+
+  const button = (name: RegExp) => screen.getByText(name).closest('button')!
+  const downloaded = () => downloads.map((a) => a.download)
+  const statusText = () => screen.queryAllByRole('status').map((el) => el.textContent ?? '').join(' ')
+  type ZipMock = { file: ReturnType<typeof vi.fn>; folder: ReturnType<typeof vi.fn> }
+  const lastZip = () => vi.mocked(JSZip).mock.results.at(-1)!.value as ZipMock
+  const zipPaths = () => lastZip().file.mock.calls.map((call) => call[0] as string)
+  const folders = () => lastZip().folder.mock.calls.map((call) => call[0] as string)
+  const zipEntry = (path: string) =>
+    new TextDecoder().decode(lastZip().file.mock.calls.find((call) => call[0] === path)![1] as Uint8Array)
+
+  function noteItem(body: string | Error, meta: unknown, extra: { isDeleted?: boolean } = {}) {
+    return {
+      ...extra,
+      getMeta: () => {
+        if (meta instanceof Error) throw meta
+        return meta
+      },
+      getContent: vi.fn(async () => {
+        if (body instanceof Error) throw body
+        return new TextEncoder().encode(body)
+      }),
+    }
+  }
+
+  function addNotebook(id: string, name: string) {
+    notesServer.notebooks.push({ uid: id, name, items: [] })
+    etebaseMock.state.collections.notes.push({ uid: id })
+    useNotebookStore.setState({
+      lists: [...useNotebookStore.getState().lists, { id, name, color: '#f59e0b', visible: true, accessLevel: 1 }],
+    })
+  }
+
+  /** A note on the server that a sync refresh dropped from this device's store (it could not decrypt it). */
+  function addServerOnlyNote(uid: string, notebookId: string, item: ReturnType<typeof noteItem>) {
+    notesServer.notebooks.find((notebook) => notebook.uid === notebookId)!.items.push({ ...item, uid })
+  }
+
+  function addNote(uid: string, notebookId: string, item: ReturnType<typeof noteItem>) {
+    addServerOnlyNote(uid, notebookId, item)
+    etebaseMock.state.itemCache.set(uid, item)
+    etebaseMock.state.itemTypeMap.set(uid, 'notes')
+    etebaseMock.state.itemCollectionMap.set(uid, notebookId)
+  }
+
+  beforeEach(() => {
+    downloads = []
+    resetMockData()
+    etebaseMock.state = etebaseMock.loadedState()
+    notesServer.notebooks = []
+    notesServer.listCollectionsError = null
+    notesServer.stallItemList = false
+    useNotebookStore.setState({ lists: [] })
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0, heldQueueCount: 0 })
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+    ;(URL.createObjectURL as ReturnType<typeof vi.fn>).mockImplementation(() => 'blob:mock')
+    ;(URL.revokeObjectURL as ReturnType<typeof vi.fn>).mockImplementation(() => {})
+    const originalCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = originalCreateElement(tag)
+      if (tag === 'a') {
+        downloads.push(el as HTMLAnchorElement)
+        vi.spyOn(el, 'click').mockImplementation(() => {})
+      }
+      return el
+    })
+  })
+
+  it('leaves Notes out of the page and the ZIP when the account has no notebook', async () => {
+    render(<ExportPage />)
+
+    expect(screen.queryByText(/Export Notes/)).toBeNull()
+    expect(screen.getByText('Includes every calendar, task list, and address book in a single archive.')).toBeTruthy()
+    fireEvent.click(button(/Export All Data/))
+    await vi.waitFor(() => expect(downloaded()).toContain('silentsuite-export.zip'))
+    expect(zipPaths().some((path) => path.startsWith('silentsuite-notes'))).toBe(false)
+    expect(folders()).toEqual([])
+  })
+
+  it('shows Notes with the listed note count when a notebook exists, with the Notes switch off', () => {
+    expect(useExperimentalStore.getState().notesAccounts).toEqual([])
+    addNotebook('nb1', 'Work')
+    addNote('n1', 'nb1', noteItem('A', { name: 'A' }))
+    addNote('n2', 'nb1', noteItem('B', { name: 'B' }))
+    render(<ExportPage />)
+
+    expect(button(/Export Notes/).textContent).toContain('Export Notes (2 notes)')
+    expect(button(/Export Notes/)).not.toBeDisabled()
+    expect(screen.getByText(/one Markdown \(\.md\) file per note/)).toBeTruthy()
+    expect(screen.getByText('Includes every calendar, task list, address book, and notebook in a single archive.')).toBeTruthy()
+  })
+
+  it('disables Export Notes when the chosen notebook has no notes', () => {
+    addNotebook('nb1', 'Empty')
+    render(<ExportPage />)
+
+    expect(button(/Export Notes/).textContent).toContain('(0 notes)')
+    expect(button(/Export Notes/)).toBeDisabled()
+  })
+
+  it('exports one folder per notebook and one Markdown file per note, body unchanged', async () => {
+    addNotebook('nb1', 'Work')
+    addNotebook('nb2', 'Home')
+    addNote('n1', 'nb1', noteItem('# Plan\r\n\r\nBody', { name: 'Plan: Q1', mtime: Date.UTC(2026, 10, 15, 9, 30) }))
+    render(<ExportPage />)
+
+    fireEvent.click(button(/Export Notes/))
+    await vi.waitFor(() => expect(downloaded()).toEqual(['silentsuite-notes.zip']))
+    expect(folders()).toEqual(['Home', 'Work'])
+    expect(zipPaths()).toEqual(['Work/Plan_ Q1.md'])
+    expect(zipEntry('Work/Plan_ Q1.md')).toBe(
+      '---\ntitle: "Plan: Q1"\nmodified: 2026-11-15T09:30:00.000Z\n---\n# Plan\r\n\r\nBody',
+    )
+    expect(showWarningToast).not.toHaveBeenCalled()
+    expect(showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('names untitled notes and duplicate titles uniquely', async () => {
+    addNotebook('nb1', 'Work')
+    addNote('n1', 'nb1', noteItem('one', {}))
+    addNote('n2', 'nb1', noteItem('two', { name: '  ' }))
+    addNote('n3', 'nb1', noteItem('three', { name: 'CON' }))
+    render(<ExportPage />)
+
+    fireEvent.click(button(/Export Notes/))
+    await vi.waitFor(() => expect(downloaded()).toEqual(['silentsuite-notes.zip']))
+    expect(zipPaths()).toEqual(['Work/Untitled (2).md', 'Work/Untitled.md', 'Work/_CON.md'])
+  })
+
+  it('exports only the chosen notebook, named after it', async () => {
+    addNotebook('nb1', 'Work')
+    addNotebook('nb2', 'Home')
+    addNote('n1', 'nb1', noteItem('Plan', { name: 'Plan' }))
+    addNote('n2', 'nb2', noteItem('Milk', { name: 'Groceries' }))
+    render(<ExportPage />)
+
+    fireEvent.change(screen.getByLabelText('Notebook collection'), { target: { value: 'nb2' } })
+    expect(button(/Export Notes/).textContent).toContain('(1 note)')
+    fireEvent.click(button(/Export Notes/))
+    await vi.waitFor(() => expect(downloaded()).toEqual(['silentsuite-notes-home.zip']))
+    expect(folders()).toEqual(['Home'])
+    expect(zipPaths()).toEqual(['Home/Groceries.md'])
+  })
+
+  it('puts every notebook under silentsuite-notes/ in the all-data ZIP', async () => {
+    addNotebook('nb1', 'Work')
+    addNotebook('nb2', 'Home')
+    addNote('n1', 'nb1', noteItem('Plan', { name: 'Plan' }))
+    render(<ExportPage />)
+
+    fireEvent.click(button(/Export All Data/))
+    await vi.waitFor(() => expect(downloaded()).toEqual(['silentsuite-export.zip']))
+    expect(zipPaths()).toEqual([
+      'silentsuite-calendar.ics',
+      'silentsuite-tasks.ics',
+      'silentsuite-contacts.vcf',
+      'silentsuite-notes/Work/Plan.md',
+    ])
+    expect(folders()).toEqual(['silentsuite-notes/Home', 'silentsuite-notes/Work'])
+  })
+
+  it('leaves out notes it cannot read, says how many, exports the rest and logs no note text', async () => {
+    const logged = [
+      vi.spyOn(console, 'warn').mockImplementation(() => {}),
+      vi.spyOn(console, 'error').mockImplementation(() => {}),
+      vi.spyOn(console, 'log').mockImplementation(() => {}),
+    ]
+    addNotebook('nb1', 'Secret notebook')
+    addNote('bad-body', 'nb1', noteItem(new Error('Secret body'), { name: 'Secret title' }))
+    addNote('bad-meta', 'nb1', noteItem('Secret body', new Error('Secret meta')))
+    addNote('deleted', 'nb1', noteItem('gone', { name: 'Gone' }, { isDeleted: true }))
+    addNote('typed', 'nb1', noteItem('bytes', { name: 'photo.jpg', type: 'attachment' }))
+    addNote('good', 'nb1', noteItem('Fine', { name: 'Fine' }))
+    render(<ExportPage />)
+
+    fireEvent.click(button(/Export Notes/))
+    await vi.waitFor(() => expect(downloaded()).toEqual(['silentsuite-notes.zip']))
+    expect(zipPaths()).toEqual(['Secret notebook/Fine.md'])
+    expect(showWarningToast).toHaveBeenCalledWith(
+      "2 notes couldn't be read on this device and were left out of the export.",
+    )
+    expect(showErrorToast).not.toHaveBeenCalled()
+    expect(JSON.stringify(logged.flatMap((spy) => spy.mock.calls))).not.toMatch(/Secret|Fine|Gone|photo/)
+  })
+
+  it('reports a left-out note from the all-data ZIP too', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    addNotebook('nb1', 'Work')
+    addNote('bad', 'nb1', noteItem(new Error('decrypt'), { name: 'Bad' }))
+    addNote('good', 'nb1', noteItem('Fine', { name: 'Fine' }))
+    render(<ExportPage />)
+
+    fireEvent.click(button(/Export All Data/))
+    await vi.waitFor(() => expect(downloaded()).toEqual(['silentsuite-export.zip']))
+    expect(zipPaths()).toContain('silentsuite-notes/Work/Fine.md')
+    expect(showWarningToast).toHaveBeenCalledWith(
+      "1 note couldn't be read on this device and was left out of the export.",
+    )
+  })
+
+  it('disables and refuses Notes and the ZIP while Notes failed to load, when there is a notebook', () => {
+    addNotebook('nb1', 'Work')
+    addNote('n1', 'nb1', noteItem('Plan', { name: 'Plan' }))
+    etebaseMock.state.domainLoadState.notes = 'failed'
+    render(<ExportPage />)
+
+    expect(button(/Export Notes/)).toBeDisabled()
+    expect(button(/Export All Data/)).toBeDisabled()
+    expect(statusText()).toMatch(/Notes didn't finish loading/)
+    expect(button(/Export Calendar/)).not.toBeDisabled()
+  })
+
+  it('says Notes are still loading while initialization runs', () => {
+    addNotebook('nb1', 'Work')
+    etebaseMock.state.isInitialized = false
+    etebaseMock.state.domainLoadState.notes = 'unknown'
+    render(<ExportPage />)
+
+    expect(button(/Export Notes/)).toBeDisabled()
+    expect(statusText()).toMatch(/Notes is still loading/)
+  })
+
+  it('refuses in the click handlers when Notes stop being loaded after render', async () => {
+    addNotebook('nb1', 'Work')
+    addNote('n1', 'nb1', noteItem('Plan', { name: 'Plan' }))
+    render(<ExportPage />)
+    expect(button(/Export Notes/)).not.toBeDisabled()
+    expect(button(/Export All Data/)).not.toBeDisabled()
+
+    etebaseMock.state.domainLoadState.notes = 'failed'
+    fireEvent.click(button(/Export Notes/))
+    fireEvent.click(button(/Export All Data/))
+    await Promise.resolve()
+
+    expect(vi.mocked(JSZip)).not.toHaveBeenCalled()
+    expect(downloads).toEqual([])
+    expect(vi.mocked(showWarningToast).mock.calls.map((call) => call[0])).toEqual([
+      "Notes hasn't finished loading, so nothing was exported. Sync again, then export.",
+      "Notes hasn't finished loading, so nothing was exported. Sync again, then export.",
+    ])
+  })
+
+  it.each([
+    ['Export Notes', /Export Notes/],
+    ['Export All Data', /Export All Data/],
+  ])('%s downloads nothing when the account changes while notes are decrypted', async (_name, label) => {
+    addNotebook('nb1', 'Work')
+    const switching = noteItem('Plan', { name: 'Plan' })
+    switching.getContent.mockImplementation(async () => {
+      bumpAccountEpoch()
+      return new TextEncoder().encode('Plan')
+    })
+    addNote('n1', 'nb1', switching)
+    render(<ExportPage />)
+
+    fireEvent.click(button(label))
+    await vi.waitFor(() => expect(switching.getContent).toHaveBeenCalled())
+    await vi.waitFor(() => expect(button(label)).toHaveAttribute('aria-busy', 'false'))
+    expect(downloads).toEqual([])
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+    expect(showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('says changes waiting to sync are not in the notes export only while the queue holds some', () => {
+    addNotebook('nb1', 'Work')
+    render(<ExportPage />)
+    expect(screen.queryByText(/still waiting to sync/)).toBeNull()
+
+    act(() => useSyncStore.setState({ pendingQueueCount: 1 }))
+    expect(screen.getByText(/a note change still waiting to sync on this device isn't included/)).toBeTruthy()
+  })
+
+  it('counts a note a sync dropped from this device and exports one the device has not listed yet', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    addNotebook('nb1', 'Work')
+    addNote('kept', 'nb1', noteItem('Kept', { name: 'Kept' }))
+    addServerOnlyNote('dropped', 'nb1', noteItem(new Error('decrypt'), { name: 'Dropped' }))
+    addServerOnlyNote('new', 'nb1', noteItem('New', { name: 'From elsewhere' }))
+    render(<ExportPage />)
+    expect(button(/Export Notes/).textContent).toContain('(1 note)')
+
+    fireEvent.click(button(/Export Notes/))
+    await vi.waitFor(() => expect(downloaded()).toEqual(['silentsuite-notes.zip']))
+    expect(zipPaths()).toEqual(['Work/From elsewhere.md', 'Work/Kept.md'])
+    expect(showWarningToast).toHaveBeenCalledWith(
+      "1 note couldn't be read on this device and was left out of the export.",
+    )
+  })
+
+  it.each([
+    ['Export Notes', /Export Notes/],
+    ['Export All Data', /Export All Data/],
+  ])('%s says notes need a connection and downloads nothing when listing fails offline', async (_name, label) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    addNotebook('nb1', 'Work')
+    addNote('n1', 'nb1', noteItem('Plan', { name: 'Plan' }))
+    notesServer.listCollectionsError = new TypeError('Failed to fetch')
+    render(<ExportPage />)
+
+    fireEvent.click(button(label))
+    await vi.waitFor(() => expect(showErrorToast).toHaveBeenCalledWith(
+      'Exporting notes needs a connection, so nothing was exported. Connect, then export again.',
+    ))
+    expect(downloads).toEqual([])
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['Export Notes', /Export Notes/, 'Notes export failed. Please try again.'],
+    ['Export All Data', /Export All Data/, 'ZIP build failed. Please try again.'],
+  ])('%s downloads nothing when a notebook listing does not finish', async (_name, label, message) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    addNotebook('nb1', 'Work')
+    addNote('n1', 'nb1', noteItem('Plan', { name: 'Plan' }))
+    notesServer.stallItemList = true
+    render(<ExportPage />)
+
+    fireEvent.click(button(label))
+    await vi.waitFor(() => expect(showErrorToast).toHaveBeenCalledWith(message))
+    expect(downloads).toEqual([])
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
   })
 })
