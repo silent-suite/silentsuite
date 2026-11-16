@@ -46,9 +46,17 @@ Save the file in Downloads. You can either keep the release file name or rename 
 cd $env:USERPROFILE\Downloads
 .\silentsuite-bridge-windows-x86_64.exe --version
 .\silentsuite-bridge-windows-x86_64.exe --login
+.\silentsuite-bridge-windows-x86_64.exe --install-autostart
+.\silentsuite-bridge-windows-x86_64.exe --background
 ```
 
 If you renamed the file, use `./silentsuite-bridge.exe` instead.
+
+`--login` only signs you in; it does not start the bridge. `--background` starts the bridge without a window, so it keeps running after you close PowerShell. `--install-autostart` starts it the same way each time you sign in to Windows. The startup entry points at the file where it is now, so move the file to a permanent folder first if you don't want to keep it in Downloads.
+
+::: warning
+If you start the bridge on Windows without `--background` (for example by double-clicking the `.exe` or running it without options), it runs inside that window and stops as soon as you close the window. Your calendar app then can't reach it.
+:::
 
 If Windows SmartScreen appears, choose **More info** and only continue if the publisher/file name matches the SilentSuite release you downloaded.
 
@@ -245,7 +253,7 @@ The bridge local cache contains decrypted calendar, contact, and task data. Use 
 
 ### 3. Keep The Bridge Running
 
-Leave `silentsuite-bridge` running. The bridge will:
+Leave `silentsuite-bridge` running. On Windows, start it with `silentsuite-bridge --background`; a bridge started without it stops when you close its window. The bridge will:
 - Start the CalDAV/CardDAV server on `localhost:37358`
 - Show a system tray icon (green = connected, yellow = warning, red = error)
 - Sync automatically in the background
@@ -279,7 +287,7 @@ silentsuite-bridge --install-autostart
 This configures the bridge to start when you log in:
 - **Linux**: Creates a systemd user service
 - **macOS**: Creates a launchd agent
-- **Windows**: Adds a startup registry entry
+- **Windows**: Adds a startup registry entry that runs `silentsuite-bridge --background` at sign-in. A console window may show for a few seconds while it starts; closing it does not stop the bridge. The entry does not start the bridge right away: run `silentsuite-bridge --background` for that.
 
 ### Listener settings survive auto-start
 
@@ -507,7 +515,7 @@ silentsuite-bridge --login
    listener reachability, not dashboard availability.
 2. Check the tray icon color (green = OK, red = error)
 3. Check the dashboard sync log for errors
-4. If you installed on Windows, also check `%LOCALAPPDATA%\SilentSuite\install.log` and `%LOCALAPPDATA%\SilentSuite\bridge.log`
+4. If you installed on Windows, also check `%LOCALAPPDATA%\SilentSuite\install.log` and `%LOCALAPPDATA%\silentsuite\silentsuite-bridge\bridge.log` (written by a bridge started with `--background` or at sign-in)
 5. On macOS with auto-start, check `~/Library/Logs/SilentSuiteBridge/bridge.error.log`. DAV requests, sign-in results and TLS errors are logged there, not in `bridge.log` (see [macOS Calendar & Contacts](./macos.md#where-to-find-the-bridge-logs))
 
 ### `SSL: WRONG_VERSION_NUMBER`
@@ -526,7 +534,7 @@ Use the CalDAV/CardDAV URL shown on the success page or dashboard, for example:
 http://127.0.0.1:37358/your@email.com/
 ```
 
-Do not copy the browser address-bar URL from the temporary sign-in page into Thunderbird, Outlook, or another DAV client. After sign-in, the success page waits for the real dashboard and automatically switches the tab to `http://127.0.0.1:37358/` once it is reachable.
+Do not copy the browser address-bar URL from the temporary sign-in page into Thunderbird, Outlook, or another DAV client. After sign-in, the success page waits for the real dashboard and automatically switches the tab to `http://127.0.0.1:37358/` once it is reachable. If you ran `--login` yourself, the bridge is not running yet: start it (on Windows with `silentsuite-bridge --background`) and the tab switches over.
 
 ### Thunderbird says no calendars, tasks, or contacts were found
 
@@ -534,7 +542,7 @@ Do not copy the browser address-bar URL from the temporary sign-in page into Thu
 2. Confirm the dashboard shows your configured account and a recent successful sync. If the sync log shows an error, fix that first.
 3. In Thunderbird, use the full account URL from the dashboard: `http://127.0.0.1:37358/your@email.com/`.
 4. Use your SilentSuite account email as the username and your SilentSuite account password as the password.
-5. If discovery still returns nothing, copy the dashboard sync log plus `%LOCALAPPDATA%\SilentSuite\bridge.log` into a support report. Do not include passwords or session tokens.
+5. If discovery still returns nothing, copy the dashboard sync log plus `%LOCALAPPDATA%\silentsuite\silentsuite-bridge\bridge.log` into a support report. Do not include passwords or session tokens.
 
 ### System tray not visible (GNOME)
 

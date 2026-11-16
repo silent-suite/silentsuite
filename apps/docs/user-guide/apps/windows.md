@@ -48,6 +48,8 @@ Click **Synchronize now** in the CalDav Synchronizer ribbon tab, or wait for the
 
 ## Running the Bridge at Startup
 
+Start the bridge with `silentsuite-bridge --background` so it keeps running after you close PowerShell. A bridge started without `--background` (or by double-clicking the `.exe`) stops when you close its window, and Outlook then reports that it cannot connect to the server.
+
 To run the SilentSuite Bridge automatically on Windows startup, see the [DAV bridge guide](./dav-bridge.md#auto-start) for auto-start configuration.
 
 ## Troubleshooting
@@ -56,7 +58,7 @@ To run the SilentSuite Bridge automatically on Windows startup, see the [DAV bri
 
 1. Open the **CalDav Synchronizer** tab and click **Status**.
 2. Check for error messages in the sync log.
-3. Make sure the bridge is running: open `http://localhost:37358/` in your browser.
+3. Make sure the bridge is running: open `http://localhost:37358/` in your browser. If the page can't be reached, start the bridge with `silentsuite-bridge --background`.
 4. Verify the DAV URL includes your email: `http://localhost:37358/your@email.com/`.
 
 ### Password rejected
