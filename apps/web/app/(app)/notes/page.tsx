@@ -468,10 +468,13 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
     releaseNoteObligation(note.id, obligation)
   }, [accountEpoch, note.id])
 
-  // Adopt refreshed store values (sync from another device) unless a draft is unsaved.
+  // Adopt refreshed store values (sync from another device) unless a draft is unsaved or a
+  // save is running. Until the save ends the store can hold that save's own record, and text
+  // typed back to the saved version would look clean and take it; a refused save's end
+  // checks the row again (cleanGen).
   // A different revision is a different base even when the text is the same.
   useEffect(() => {
-    if (isDirty()) return
+    if (isDirty() || inFlightRef.current > 0) return
     const base = lineageRef.current.base
     if (base.title === note.title && base.content === note.content && base.revision === note.revision) return
     lineageRef.current = { base: { title: note.title, content: note.content, revision: note.revision } }

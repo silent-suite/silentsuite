@@ -546,7 +546,7 @@ describe('#744 the rendered note editor saves only through its captured base', (
     expect(await getAll(guard)).toEqual([])
   })
 
-  it('#744 never lets a late accepted save advance a newer lineage of the same editor', async () => {
+  it('#744 adopts no refresh while its own save runs, and saves text typed back meanwhile on that save', async () => {
     const { account, collection, item } = await openSavedNote()
     // The server holds identical text at R1, so the R0 save rebinds through a fresh read.
     const peerItem = await peerWrites(account, collection, item, BASE_BODY)
@@ -554,23 +554,24 @@ describe('#744 the rendered note editor saves only through its captured base', (
     fireEvent.change(titleBox(), { target: { value: 'Late own title 744' } })
     hideTab()
     await rebindRead.arrived
-    // While that save waits, the editor turns clean and adopts R1 as a new lineage. The
-    // refresh carries the server's R1 text over this context's optimistic record.
+    // While that save waits, the editor turns clean and the refresh carries the server's R1
+    // text over this context's optimistic record. R1 is older than the save, which lands on it.
     fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
-    const adopted = refreshFromServer(item.uid, peerItem, { title: BASE_TITLE, content: BASE_BODY })
+    refreshFromServer(item.uid, peerItem, { title: BASE_TITLE, content: BASE_BODY })
     rebindRead.release(false)
     await settle()
-    expect(await serverTitle(account, collection, item.uid)).toBe('Late own title 744')
+    const late = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+    expect([late.getMeta().name, titleBox().value, saveStatus().textContent]).toEqual(['Late own title 744', BASE_TITLE, 'Unsaved changes'])
     const before = server.transactions.length
 
     hideTab()
     await settle()
 
     // 744 wired boundary
-    expect(server.transactions.length).toBe(before)
+    expect(server.transactions.slice(before).map((sent) => sent.items[0].etag)).toEqual([late.etag])
 
-    expect(storedNote(item.uid)).toBe(adopted)
-    expect(titleBox()).toHaveValue(BASE_TITLE)
+    expect(await serverTitle(account, collection, item.uid)).toBe(BASE_TITLE)
+    expect([titleBox().value, saveStatus().textContent]).toEqual([BASE_TITLE, 'Saved'])
   })
 
   it('#744 never lets a late accepted save advance another account', async () => {
@@ -1395,19 +1396,55 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(ui().queryByText(/This note changed somewhere else/)).toBeNull()
     })
 
-    it('keeps text typed back to the saved version while a save is still running', async () => {
-      await openSavedNote()
+    it('keeps text typed back to the saved version while a save runs, and once it is accepted', async () => {
+      const { account, collection, item } = await openSavedNote()
       const write = server.holdNext(isTransaction)
       fireEvent.change(titleBox(), { target: { value: 'Typed then removed 1113' } })
       hideTab()
       await write.arrived
+      // No wait after this change: its debounce must not run out while the write is held.
       fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
-      await settle()
 
       // The running save's optimistic record is not adopted as a refresh.
       expect(titleBox().value).toBe(BASE_TITLE)
       write.release(false)
       await settle()
+      // Nor is its accepted record: the typed-back title is unsaved text on top of it.
+      expect(await serverTitle(account, collection, item.uid)).toBe('Typed then removed 1113')
+      expect([titleBox().value, saveStatus().textContent]).toEqual([BASE_TITLE, 'Unsaved changes'])
+      hideTab()
+      await settle()
+
+      expect(await serverTitle(account, collection, item.uid)).toBe(BASE_TITLE)
+      expect([titleBox().value, storedNote(item.uid)?.title, saveStatus().textContent]).toEqual([BASE_TITLE, BASE_TITLE, 'Saved'])
+    })
+
+    it('takes a newer record that came while a repeated save ran, once that save is refused', async () => {
+      const { account, collection, item } = await openSavedNote()
+      const first = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      hideTab()
+      await first.arrived
+      // The tab hides again while the first save runs, so the same text is queued again.
+      hideTab()
+      const second = server.holdNext(isTransaction)
+      first.release(false)
+      await second.arrived
+      // Another device writes on top of the first save; sync brings that in while the repeat runs.
+      const landed = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+      expect(landed.getMeta().name).toBe(DRAFT_TITLE)
+      const peerItem = await peerWrites(account, collection, landed, PEER_BODY)
+      refreshFromServer(item.uid, peerItem, { title: DRAFT_TITLE, content: PEER_BODY })
+
+      second.release(false)
+      await settle()
+      expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
+      expect([titleBox().value, bodyBox().value]).toEqual([DRAFT_TITLE, PEER_BODY])
+      fireEvent.change(titleBox(), { target: { value: 'After the peer 1113' } })
+      hideTab()
+      await settle()
+
+      expect([await serverTitle(account, collection, item.uid), await serverText(account, collection, item.uid)]).toEqual(['After the peer 1113', PEER_BODY])
     })
 
     it('keeps its accepted save over a refresh read before that save landed', async () => {
