@@ -35,7 +35,7 @@ Use **Settings → Import → Manage imported data** to clear a task list's task
 **Settings → Export** gives you:
 
 - **Tasks (`.ics`)** — all tasks as a single iCalendar file with `VTODO` entries
-- **Everything (`.zip`)** — calendars, contacts, and tasks together
+- **Everything (`.zip`)** — calendars, contacts, and tasks together, plus your notebooks as Markdown files when you have any ([Notes](./notes.md#export))
 
 ## Bridge / DAV clients
 

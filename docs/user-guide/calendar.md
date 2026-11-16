@@ -57,9 +57,9 @@ If you imported into the wrong place, use **Settings → Import → Manage impor
 **Settings → Export** gives you:
 
 - **Calendar (`.ics`)** — all calendar events as a single iCalendar file
-- **Everything (`.zip`)** — calendars, contacts, and tasks together
+- **Everything (`.zip`)** — calendars, contacts, and tasks together, plus your notebooks as Markdown files when you have any ([Notes](./notes.md#export))
 
-The export is built from your locally decrypted data, so it works offline once your data is loaded.
+The export is built from your locally decrypted data, so it works offline once your data is loaded. When your account has notebooks, **Everything** also lists your notes from the server again, so it then needs a connection.
 
 ## Sharing
 

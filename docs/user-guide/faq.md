@@ -48,7 +48,7 @@ No. Your encryption keys are derived from your password, and the server never se
 
 ### Are imports and exports also private?
 
-Yes. Both happen entirely in your browser — `.ics` and `.vcf` files are parsed and encrypted (or decrypted and serialized) locally; the file contents never reach the server in plaintext.
+Yes. Both happen entirely in your browser — `.ics` and `.vcf` files are parsed and encrypted (or decrypted and serialized) locally; the file contents never reach the server in plaintext. Notes are exported the same way: they are decrypted and written as Markdown files in your browser.
 
 ## Self-Hosting
 
