@@ -11,7 +11,7 @@ import type { StoredNote } from '@/app/stores/use-note-store'
 import { useSidebarStore } from '@/app/stores/use-sidebar-store'
 import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
-import { NoteCreateRefusedError } from '@/app/lib/note-create-refusal'
+import { NoteNotCreatedError } from '@/app/lib/note-not-created'
 import { useToastStore } from '@/app/stores/use-toast-store'
 
 vi.mock('@/app/stores/use-etebase-store', () => ({
@@ -324,20 +324,24 @@ describe('NotesPage', () => {
     }
 
     it.each([
-      ['queue-refused', 'No note was created. A new note needs a connection.'],
-      ['failed', 'No note was created. It could not be saved to your account.'],
-      ['unavailable', 'No note was created. Your account or this notebook is not available right now.'],
-    ] as const)('says why for %s, once, with no "try again"', async (reason, message) => {
-      storeMock.noteState.createNote.mockRejectedValue(new NoteCreateRefusedError(reason))
+      ['queue-refused', 'error', 'No note was created. The server could not be reached, and a new note needs a connection.'],
+      ['failed', 'error', 'No note was created because saving it to your account failed.'],
+      ['unavailable', 'error', 'No note was created. Your account or this notebook is not loaded on this page. Reloading the page loads them again.'],
+      ['no-session', 'error', 'No note was created. Your account is not unlocked on this page yet. If an Unlock now button is shown at the top, use it. Otherwise reload the page.'],
+      ['queued', 'warning', 'The note is not in your list yet. It is saved on this device and is added to your account when you reconnect, without a name.'],
+    ] as const)('says why for %s, once, with no "try again"', async (reason, variant, message) => {
+      storeMock.noteState.createNote.mockRejectedValue(new NoteNotCreatedError(reason))
       await clickNewNote()
 
       await vi.waitFor(() => expect(toastMessages()).toEqual([message]))
+      expect(useToastStore.getState().toasts[0]!.variant).toBe(variant)
       expect(toastMessages()[0]).not.toMatch(/try again/i)
+      // Nothing was added to the list, so no editor opened.
       expect(screen.queryByRole('textbox', { name: 'Note title' })).not.toBeInTheDocument()
     })
 
     it('says it in Italian when that catalog is chosen', async () => {
-      storeMock.noteState.createNote.mockRejectedValue(new NoteCreateRefusedError('queue-refused'))
+      storeMock.noteState.createNote.mockRejectedValue(new NoteNotCreatedError('queue-refused'))
       loaded([note('existing', { title: 'Existing' })])
       render(
         <NextIntlClientProvider locale="it" messages={itMessages}>
@@ -346,7 +350,7 @@ describe('NotesPage', () => {
       )
       fireEvent.click(screen.getByRole('button', { name: 'Nuova nota' }))
 
-      await vi.waitFor(() => expect(toastMessages()).toEqual(['Nessuna nota è stata creata. Una nuova nota richiede una connessione.']))
+      await vi.waitFor(() => expect(toastMessages()).toEqual(['Nessuna nota è stata creata. Il server non è raggiungibile e una nuova nota richiede una connessione.']))
     })
 
     it('shows nothing for a rejection the store did not name, as before', async () => {

@@ -21,8 +21,8 @@ import {
   type StoredNote,
 } from '@/app/stores/use-note-store'
 import { canWriteNotebook, newNoteNotebook, useNotebookStore, type Notebook } from '@/app/stores/use-notebook-store'
-import { NoteCreateRefusedError, type NoteCreateRefusalReason } from '@/app/lib/note-create-refusal'
-import { showErrorToast } from '@/app/stores/use-toast-store'
+import { NoteNotCreatedError, type NoteNotCreatedReason } from '@/app/lib/note-not-created'
+import { showErrorToast, showWarningToast } from '@/app/stores/use-toast-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useSidebarStore } from '@/app/stores/use-sidebar-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -71,12 +71,14 @@ type Draft = { title: string; content: string }
 /** Autosave progress shown next to the editor. 'clean' renders nothing. */
 type SaveState = 'clean' | 'pending' | 'saving' | 'saved' | 'failed'
 
-/** The message for each reason a new note was not created. */
-const CREATE_REFUSAL_KEY = {
+/** The message for each reason a new note was not added to the list. */
+const NOT_CREATED_KEY = {
   'queue-refused': 'createQueueRefused',
   failed: 'createFailed',
+  queued: 'createQueued',
+  'no-session': 'createNoSession',
   unavailable: 'createUnavailable',
-} as const satisfies Record<NoteCreateRefusalReason, string>
+} as const satisfies Record<NoteNotCreatedReason, string>
 
 const SAVE_STATE_KEY = {
   pending: 'saveStatePending',
@@ -615,10 +617,13 @@ function NotesPageBody() {
       setNewNoteId(created.id)
       setSelectedId(created.id)
     } catch (err) {
-      // Nothing was added locally. A refusal the store can name is worded here; any other
+      // Nothing was added locally. A reason the store can name is worded here; any other
       // rejection (subscription, notebook access, account change) is reported nowhere else either, as before.
-      if (err instanceof NoteCreateRefusedError) {
-        showErrorToast(t(CREATE_REFUSAL_KEY[err.reason]))
+      if (err instanceof NoteNotCreatedError) {
+        // A queued create is not a failure, so it is a warning, not an error.
+        const message = t(NOT_CREATED_KEY[err.reason])
+        if (err.reason === 'queued') showWarningToast(message)
+        else showErrorToast(message)
       }
     }
   }, [canCreateNote, createNote, newNoteTarget, t])

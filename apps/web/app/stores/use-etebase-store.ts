@@ -1848,6 +1848,8 @@ interface EtebaseActions {
       suppressErrorToast?: boolean
       /** Called once when the create request or the queue failed. Not called for a missing session or collection, an account change, or a queued create. */
       onRefused?: (reason: CreateItemRefusal) => void
+      /** Called once when the create was queued for replay instead of created now. The call still resolves null. */
+      onQueued?: () => void
     },
   ) => Promise<string | null>
 
@@ -3383,6 +3385,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId: queueTempId }, offlineQueueGuard)
           assertOfflineQueueAccountGuard(offlineQueueGuard, get())
           logger.warn(`[etebase-store] Offline — queued create for ${type} (tempId: ${queueTempId})`)
+          options?.onQueued?.()
         } catch (queueErr) {
           if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return null
           console.error('[etebase-store] Failed to enqueue create', getSafeErrorDetails(queueErr))

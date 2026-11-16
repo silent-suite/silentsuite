@@ -111,7 +111,7 @@ describe('useNoteStore', () => {
         // Receives the committed SDK item so the note publishes its paired saved revision (#744).
         expect.any(Function),
         // The page words a failure itself, so the shared "try again" toasts are off for a new note.
-        { suppressErrorToast: true, onRefused: expect.any(Function) },
+        { suppressErrorToast: true, onRefused: expect.any(Function), onQueued: expect.any(Function) },
       )
       expect(created).toMatchObject({ id: 'remote-note', uid: 'remote-note', title: 'Titled', content: '# Hi', notebookId: 'notes-1', revision: null })
       expect(useNoteStore.getState().notes).toEqual([created])
@@ -131,7 +131,7 @@ describe('useNoteStore', () => {
       etebase({ createItem: vi.fn(async () => null) })
 
       // No reason was reported: no session or no collection to create it in.
-      await expect(useNoteStore.getState().createNote({ title: 'Lost' })).rejects.toMatchObject({ name: 'NoteCreateRefusedError', reason: 'unavailable', message: 'Note could not be saved.' })
+      await expect(useNoteStore.getState().createNote({ title: 'Lost' })).rejects.toMatchObject({ name: 'NoteNotCreatedError', reason: 'unavailable', message: 'Note could not be saved.' })
 
       expect(useNoteStore.getState().notes).toEqual([])
       expect(toastMock.showErrorToast).not.toHaveBeenCalled()
@@ -145,27 +145,42 @@ describe('useNoteStore', () => {
       })
       etebase({ createItem })
 
-      await expect(useNoteStore.getState().createNote({ title: 'Lost' })).rejects.toMatchObject({ name: 'NoteCreateRefusedError', reason })
+      await expect(useNoteStore.getState().createNote({ title: 'Lost' })).rejects.toMatchObject({ name: 'NoteNotCreatedError', reason })
 
       expect(createItem).toHaveBeenCalledTimes(1)
       expect(useNoteStore.getState().notes).toEqual([])
       expect(toastMock.showErrorToast).not.toHaveBeenCalled()
     })
 
-    it('rejects with no session as unavailable, without calling the shared store', async () => {
+    it('rejects with no session as no-session, without calling the shared store', async () => {
       const createItem = vi.fn(async () => 'remote-note')
       useEtebaseStore.setState({ account: null, createItem } as any)
 
-      await expect(useNoteStore.getState().createNote({ title: 'Lost' })).rejects.toMatchObject({ reason: 'unavailable' })
+      await expect(useNoteStore.getState().createNote({ title: 'Lost' })).rejects.toMatchObject({ reason: 'no-session' })
 
       expect(createItem).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    })
+
+    it('rejects as queued when the shared store queued the create, and adds no note to the list', async () => {
+      const createItem = vi.fn(async (...args: unknown[]) => {
+        const options = args[6] as { onQueued: () => void }
+        options.onQueued()
+        return null
+      })
+      etebase({ createItem })
+
+      await expect(useNoteStore.getState().createNote({ title: 'Later' })).rejects.toMatchObject({ name: 'NoteNotCreatedError', reason: 'queued' })
+
+      expect(useNoteStore.getState().notes).toEqual([])
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
     })
 
     it('rejects as failed, with no generic try-again toast, when creation throws', async () => {
       etebase({ createItem: vi.fn(async () => { throw new Error('boom') }) })
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-      await expect(useNoteStore.getState().createNote({ title: 'Lost' })).rejects.toMatchObject({ name: 'NoteCreateRefusedError', reason: 'failed' })
+      await expect(useNoteStore.getState().createNote({ title: 'Lost' })).rejects.toMatchObject({ name: 'NoteNotCreatedError', reason: 'failed' })
 
       expect(useNoteStore.getState().notes).toEqual([])
       expect(toastMock.showErrorToast).not.toHaveBeenCalled()
