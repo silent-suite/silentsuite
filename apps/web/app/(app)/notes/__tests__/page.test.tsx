@@ -1,8 +1,10 @@
-import { act, fireEvent, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { NextIntlClientProvider } from 'next-intl'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import NotesPage from '../page'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
+import itMessages from '../../../../messages/it.json'
 import type { Note } from '@silentsuite/core'
 import type { Notebook } from '@/app/stores/use-notebook-store'
 import type { StoredNote } from '@/app/stores/use-note-store'
@@ -231,6 +233,8 @@ describe('NotesPage', () => {
     useExperimentalStore.setState({ notesAccounts: [] })
     loaded([note('existing')])
     renderWithIntl(<NotesPage />)
+    expect(screen.getByRole('heading', { name: 'Notes is experimental' })).toBeInTheDocument()
+    expect(screen.getByText(/Enable Notes in Settings to use encrypted Markdown notes/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Open Experimental settings' })).toHaveAttribute('href', '/settings/experimental')
     expect(screen.queryByRole('button', { name: 'New note' })).not.toBeInTheDocument()
     expect(storeMock.noteState.createNote).not.toHaveBeenCalled()
@@ -238,6 +242,34 @@ describe('NotesPage', () => {
     expect(storeMock.noteState.deleteNote).not.toHaveBeenCalled()
     act(() => useExperimentalStore.getState().setNotesEnabled('notes-test-account', true))
     expect(screen.getByRole('button', { name: /existing/ })).toBeInTheDocument()
+  })
+
+  it('shows the not-enabled panel in Italian when that catalog is chosen', () => {
+    useExperimentalStore.setState({ notesAccounts: [] })
+    loaded([note('existing')])
+    render(
+      <NextIntlClientProvider locale="it" messages={itMessages}>
+        <NotesPage />
+      </NextIntlClientProvider>,
+    )
+    expect(screen.getByRole('heading', { name: 'Le note sono una funzione sperimentale' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Apri le impostazioni sperimentali' })).toHaveAttribute('href', '/settings/experimental')
+    expect(screen.queryByText('Open Experimental settings')).not.toBeInTheDocument()
+  })
+
+  it('shows the translated Cancel button in the note deletion dialog', () => {
+    loaded([note('note-1', { title: 'Doomed' })])
+    render(
+      <NextIntlClientProvider locale="it" messages={itMessages}>
+        <NotesPage />
+      </NextIntlClientProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Doomed/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Elimina nota' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Eliminare la nota?' })
+    expect(within(dialog).getByRole('button', { name: 'Annulla' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
   })
 
   it('flushes pending edits when hidden and preserves existing notes for re-enabling', async () => {
