@@ -816,7 +816,7 @@ describe('NotesPage', () => {
   })
 
   describe('while offline, a new note needs a connection', () => {
-    const NOTICE = /You are offline\. Edits to an open note are saved encrypted on this device and sync when you reconnect, unless the note changed elsewhere or the editor shows Not saved\. New notes and moves need a connection, so New note is turned off\./
+    const NOTICE = /You are offline\. Edits to an open note are saved encrypted on this device and sync when you reconnect, unless the note changed elsewhere or the editor shows Not saved\. New notes and moves need a connection, so New note and the notebook picker are turned off\./
 
     const OFFLINE_EMPTY = 'New notes need a connection, so New note is turned off while you are offline.'
 

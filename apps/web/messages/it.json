@@ -71,7 +71,7 @@
     "nothingToPreview": "Ancora nulla da visualizzare in anteprima.",
     "imageBlocked": "Immagine non mostrata",
     "imageBlockedWithAlt": "Immagine non mostrata: {alt}",
-    "offlineMessage": "Sei offline. Le modifiche a una nota aperta vengono salvate in forma crittografata su questo dispositivo e sincronizzate alla riconnessione, a meno che la nota non sia cambiata altrove o l'editor mostri Non salvata. Le nuove note e gli spostamenti richiedono una connessione, quindi il pulsante Nuova nota è disattivato.",
+    "offlineMessage": "Sei offline. Le modifiche a una nota aperta vengono salvate in forma crittografata su questo dispositivo e sincronizzate alla riconnessione, a meno che la nota non sia cambiata altrove o l'editor mostri Non salvata. Le nuove note e gli spostamenti richiedono una connessione, quindi il pulsante Nuova nota e il selettore del blocco appunti sono disattivati.",
     "backToNotes": "Torna alle note",
     "subscriptionRequired": "Abbonamento richiesto",
     "noWritableNotebook": "Nessun blocco appunti scrivibile visualizzato",

@@ -71,7 +71,7 @@
     "nothingToPreview": "Nothing to preview yet.",
     "imageBlocked": "Image not shown",
     "imageBlockedWithAlt": "Image not shown: {alt}",
-    "offlineMessage": "You are offline. Edits to an open note are saved encrypted on this device and sync when you reconnect, unless the note changed elsewhere or the editor shows Not saved. New notes and moves need a connection, so New note is turned off.",
+    "offlineMessage": "You are offline. Edits to an open note are saved encrypted on this device and sync when you reconnect, unless the note changed elsewhere or the editor shows Not saved. New notes and moves need a connection, so New note and the notebook picker are turned off.",
     "backToNotes": "Back to notes",
     "subscriptionRequired": "Subscription required",
     "noWritableNotebook": "No writable notebook is shown",
