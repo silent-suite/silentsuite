@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
+import { NextIntlClientProvider } from 'next-intl'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
+import itMessages from '../../../messages/it.json'
 
 const updateCollectionMeta = vi.fn()
 
@@ -109,6 +111,20 @@ describe('NotebookListPanel', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete notebook?' })).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByText('Delete notebook?')).not.toBeInTheDocument()
     expect(mockEtebaseState.deleteCollection).not.toHaveBeenCalled()
+  })
+
+  it('shows the translated Cancel button in the notebook deletion dialog', () => {
+    render(
+      <NextIntlClientProvider locale="it" messages={itMessages}>
+        <NotebookListPanel />
+      </NextIntlClientProvider>,
+    )
+    fireEvent.click(screen.getByLabelText('Open Work actions'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Elimina blocco appunti' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Eliminare il blocco appunti?' })
+    expect(within(dialog).getByRole('button', { name: 'Annulla' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
   })
 
   it('creates a new encrypted notebook collection', async () => {
