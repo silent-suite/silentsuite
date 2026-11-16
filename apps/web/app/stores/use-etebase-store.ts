@@ -1191,14 +1191,21 @@ async function clearMembersConditionally(
  * and the tombstone is sent only at S and the main item's fetched revision.
  * Anything unproved refuses; there is no unconditional or offline fallback.
  */
+/**
+ * Why a proved notebook or address book delete was refused (#1113 D1): this device
+ * still owes work on it, or the server holds items or changes this context does not show.
+ */
+export type CollectionDeleteRefusal = 'unsaved' | 'changed'
+
 async function deleteCollectionIfProved(
   type: 'notes' | 'contacts',
   collectionUid: string,
   get: () => EtebaseState,
-): Promise<boolean> {
+): Promise<'deleted' | CollectionDeleteRefusal> {
   const { account, accountFingerprint } = get()
   const guard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
-  if (!guard) return false
+  // Without the account guard nothing owed here can be checked: an error, not a refusal.
+  if (!guard) throw new Error('No account guard for a proved collection delete')
   const assertGuard = () => assertOfflineQueueAccountGuard(guard, get())
   const noteStore = type === 'notes' ? await import('@/app/stores/use-note-store') : null
   const contactStore = type === 'contacts' ? await import('@/app/stores/use-contact-store') : null
@@ -1225,20 +1232,20 @@ async function deleteCollectionIfProved(
   }
   for (let attempt = 0; attempt < 3; attempt++) {
     const members = shownMembers()
-    if (await localWorkOwed(members)) return false
+    if (await localWorkOwed(members)) return 'unsaved'
     const before = await core.getCollection(account, collectionUid)
     assertGuard()
     const stoken = before.stoken
-    if (!stoken || before.isDeleted) return false
+    if (!stoken || before.isDeleted) return 'changed'
     let pageToken: string | null = null
     for (;;) {
       const page = await core.listItems(account, before, pageToken)
       assertGuard()
       for (const child of page.items) {
         if (child.isDeleted) continue
-        if (type === 'notes' && !core.isMarkdownNoteItem(itemMetaOf(child))) return false
+        if (type === 'notes' && !core.isMarkdownNoteItem(itemMetaOf(child))) return 'changed'
         const revision = members.get(child.uid)
-        if (!knownRevision(revision) || core.savedRevisionOf(child) !== revision) return false
+        if (!knownRevision(revision) || core.savedRevisionOf(child) !== revision) return 'changed'
       }
       if (page.done) break
       pageToken = page.stoken
@@ -1247,12 +1254,12 @@ async function deleteCollectionIfProved(
     assertGuard()
     // Something changed while the children were listed: list them again.
     if (after.stoken !== stoken) continue
-    if (await localWorkOwed(shownMembers())) return false
+    if (await localWorkOwed(shownMembers())) return 'unsaved'
     const result = await core.deleteCollectionIfUnchanged(account, after, stoken, { beforeDispatch: assertGuard })
     assertGuard()
-    return result.kind === 'deleted'
+    return result.kind === 'deleted' ? 'deleted' : 'changed'
   }
-  return false
+  return 'changed'
 }
 
 /** The record a contact edit was made on (#744 §8): its revision (null if unknown) and complete vCard. */
@@ -2028,7 +2035,15 @@ interface EtebaseActions {
   /**
    * Delete an Etebase collection and remove its cached items locally.
    */
-  deleteCollection: (type: CollectionTypeKey, collectionUid: string) => Promise<boolean>
+  /**
+   * `onRefused` (#1113 D1, notes and contacts): a refused proved delete reports its
+   * reason there instead of the generic toast, so the caller can say why.
+   */
+  deleteCollection: (
+    type: CollectionTypeKey,
+    collectionUid: string,
+    options?: { onRefused?: (reason: CollectionDeleteRefusal) => void },
+  ) => Promise<boolean>
 
   /**
    * Update Etebase collection metadata and refresh local list stores.
@@ -2487,7 +2502,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
   },
 
-  deleteCollection: async (type: CollectionTypeKey, collectionUid: string) => {
+  deleteCollection: async (type: CollectionTypeKey, collectionUid: string, options) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, domainLoadState, syncEngine, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
@@ -2512,8 +2527,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         // #744 §9: only a proved, unchanged collection with nothing owed here is tombstoned.
         const deleted = await deleteCollectionIfProved(type, collection.uid, get)
         assertCurrentAccountEpoch(accountEpoch)
-        if (!deleted) {
-          showErrorToast(`Failed to delete ${collectionDisplayName(type)}. Please try again.`)
+        if (deleted !== 'deleted') {
+          if (options?.onRefused) options.onRefused(deleted)
+          else showErrorToast(`Failed to delete ${collectionDisplayName(type)}. Please try again.`)
           return false
         }
       } else {

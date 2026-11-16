@@ -429,6 +429,36 @@ describe('#744 destructive note and contact paths delete only what this context 
     expect(useNoteStore.getState().notes.map((note) => note.id)).toEqual([item.uid])
   })
 
+  it('#1113 D1 names unsaved work as the reason a notebook delete was refused, instead of the generic toast', async () => {
+    const { account, collection, item } = await shownNotes()
+    await addNotebook(account)
+    holdText(item)
+    const reasons: string[] = []
+
+    const deleted = await useEtebaseStore.getState().deleteCollection('notes', collection.uid, { onRefused: (reason) => reasons.push(reason) })
+
+    expect(deleted).toBe(false)
+    expect(reasons).toEqual(['unsaved'])
+    expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    expect(await collectionDeleted(account, collection.uid)).toBe(false)
+  })
+
+  it('#1113 D1 names a peer change as the reason, and keeps the generic toast for a caller without onRefused', async () => {
+    const { account, collection, item } = await shownNotes()
+    await addNotebook(account)
+    await peerWrites(account, collection, item, PEER_BODY)
+    const reasons: string[] = []
+
+    expect(await useEtebaseStore.getState().deleteCollection('notes', collection.uid, { onRefused: (reason) => reasons.push(reason) })).toBe(false)
+    expect(reasons).toEqual(['changed'])
+    expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+
+    expect(await useEtebaseStore.getState().deleteCollection('notes', collection.uid)).toBe(false)
+    expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to delete notebook. Please try again.')
+    expect(await collectionDeleted(account, collection.uid)).toBe(false)
+    expect(await serverState(account, collection, item.uid)).toBe(PEER_BODY)
+  })
+
   it('#744 refuses a notebook tombstone once a child arrives after the proof', async () => {
     const { account, collection } = await shownNotes()
     await addNotebook(account)

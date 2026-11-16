@@ -3,6 +3,7 @@ import { render, screen, fireEvent, within } from '@testing-library/react'
 import { NextIntlClientProvider } from 'next-intl'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import itMessages from '../../../messages/it.json'
+import { useToastStore } from '@/app/stores/use-toast-store'
 
 const updateCollectionMeta = vi.fn()
 
@@ -98,7 +99,7 @@ describe('NotebookListPanel', () => {
 
     const dialog = screen.getByRole('dialog', { name: 'Delete notebook?' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete notebook' }))
-    await vi.waitFor(() => expect(mockEtebaseState.deleteCollection).toHaveBeenCalledWith('notes', 'notes-1'))
+    await vi.waitFor(() => expect(mockEtebaseState.deleteCollection).toHaveBeenCalledWith('notes', 'notes-1', expect.objectContaining({ onRefused: expect.any(Function) })))
     expect(screen.queryByText('Delete notebook?')).not.toBeInTheDocument()
   })
 
@@ -111,6 +112,44 @@ describe('NotebookListPanel', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete notebook?' })).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByText('Delete notebook?')).not.toBeInTheDocument()
     expect(mockEtebaseState.deleteCollection).not.toHaveBeenCalled()
+  })
+
+  it('says why a notebook delete was refused and that nothing was deleted (#1113 D1)', async () => {
+    useToastStore.setState({ toasts: [] })
+    mockEtebaseState.deleteCollection.mockImplementation(async (_type: string, _id: string, options?: { onRefused?: (reason: string) => void }) => {
+      options?.onRefused?.('unsaved')
+      return false
+    })
+    renderWithIntl(<NotebookListPanel />)
+    fireEvent.click(screen.getByLabelText('Open Personal actions'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete notebook' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete notebook?' })).getByRole('button', { name: 'Delete notebook' }))
+
+    await vi.waitFor(() => expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({
+      variant: 'error',
+      message: 'Notebook not deleted: a note in it has changes that are not on the server yet, such as a note marked Not saved. Nothing was deleted.',
+    })]))
+  })
+
+  it('says in Italian that a notebook holding changes it does not show was not deleted (#1113 D1)', async () => {
+    useToastStore.setState({ toasts: [] })
+    mockEtebaseState.deleteCollection.mockImplementation(async (_type: string, _id: string, options?: { onRefused?: (reason: string) => void }) => {
+      options?.onRefused?.('changed')
+      return false
+    })
+    render(
+      <NextIntlClientProvider locale="it" messages={itMessages}>
+        <NotebookListPanel />
+      </NextIntlClientProvider>,
+    )
+    fireEvent.click(screen.getByLabelText('Open Work actions'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Elimina blocco appunti' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Eliminare il blocco appunti?' })).getByRole('button', { name: 'Elimina blocco appunti' }))
+
+    await vi.waitFor(() => expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({
+      variant: 'error',
+      message: 'Blocco appunti non eliminato: contiene elementi o modifiche che questo browser non mostra. Non è stato eliminato nulla.',
+    })]))
   })
 
   it('shows the translated Cancel button in the notebook deletion dialog', () => {
