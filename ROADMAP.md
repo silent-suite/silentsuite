@@ -25,11 +25,6 @@ Planned · [#769](https://github.com/silent-suite/silentsuite/issues/769)
 
 An opt-in way to publish chosen calendars to people and services outside SilentSuite, readable by them and not end-to-end encrypted.
 
-### Editing notes on Android
-Planned · [#793](https://github.com/silent-suite/silentsuite/pull/793)
-
-Write and edit notes in the Android app; an early prototype exists, but it isn't ready.
-
 ### Two-factor sign-in
 Planned · [#145](https://github.com/silent-suite/silentsuite/issues/145)
 
@@ -50,10 +45,15 @@ In progress · [getumbrel/umbrel-apps#6286](https://github.com/getumbrel/umbrel-
 
 A SilentSuite package for umbrelOS, submitted to the Umbrel App Store and not available there yet.
 
+### Editing notes on Android, experimental
+Completed · 2026-11-16 · [v0.5.20-beta](https://github.com/silent-suite/silentsuite/releases/tag/v0.5.20-beta) · [#1104](https://github.com/silent-suite/silentsuite/pull/1104)
+
+Create, edit and delete notes in the Android app, off by default; edits are saved on the phone first and sync when they can.
+
 ### Notes, experimental
 Completed · 2026-09-14 · [v0.5.7-beta](https://github.com/silent-suite/silentsuite/releases/tag/v0.5.7-beta) · [v0.5.11-beta](https://github.com/silent-suite/silentsuite/releases/tag/v0.5.11-beta)
 
-End-to-end encrypted Markdown notes in the web app, off by default; Android can read them since 2026-10-04, but not edit them.
+End-to-end encrypted Markdown notes in the web app and, since 2026-10-04, the Android app; they are still experimental and off by default.
 
 ### Encrypted sharing
 Completed · 2026-06-21 · [v0.3.0-beta](https://github.com/silent-suite/silentsuite/releases/tag/v0.3.0-beta)
