@@ -49,6 +49,7 @@ export default defineConfig({
             { text: 'Contacts', link: '/user-guide/contacts' },
             { text: 'Tasks', link: '/user-guide/tasks' },
             { text: 'Notes', link: '/user-guide/notes' },
+            { text: 'What the Server Sees in Notes', link: '/user-guide/notes-server-sees' },
             { text: 'How Encryption Works', link: '/user-guide/encryption-explained' },
             { text: 'FAQ', link: '/user-guide/faq' },
             { text: 'Reporting a Problem', link: '/user-guide/reporting-a-problem' },

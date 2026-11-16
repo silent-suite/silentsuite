@@ -11,6 +11,7 @@ How-to guides for using SilentSuite -- your private, end-to-end encrypted sync f
 | [Contacts](./contacts.md) | How to manage your encrypted contacts |
 | [Tasks](./tasks.md) | How to manage your encrypted tasks |
 | [Notes](./notes.md) | How to manage your encrypted Markdown notes |
+| [What the Server Sees in Notes](./notes-server-sees.md) | What the server can and can't see about your notes |
 | [How Encryption Works](./encryption-explained.md) | Understand what's encrypted, how, and why it matters |
 | [FAQ](./faq.md) | Frequently asked questions |
 | [Reporting a Problem](./reporting-a-problem.md) | Send a problem report or feature request, and what it includes |

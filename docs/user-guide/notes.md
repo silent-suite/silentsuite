@@ -73,3 +73,7 @@ The export lists your notebooks and notes from the server again, so it needs a c
 ## Not in this release
 
 Moving notes on Android, the DAV bridge, attachments, importing notes, and rich-text editing are not available yet. Use Markdown in the web app for now.
+
+## What the server can see
+
+Note titles, note text and notebook names are encrypted, but the server still sees some facts, such as how many notes you have, how often each one was saved, and who is in a shared notebook. [What the Server Sees in Notes](./notes-server-sees.md) lists them.
