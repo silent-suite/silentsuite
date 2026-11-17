@@ -93,6 +93,86 @@ function Test-BridgeDashboardReady([int]$TimeoutSeconds = 20) {
     return $false
 }
 
+function Get-InstalledBridgeProcesses([string]$Target) {
+    $FullTarget = [IO.Path]::GetFullPath($Target)
+    $Name = [IO.Path]::GetFileNameWithoutExtension($FullTarget)
+    foreach ($Process in @(Get-Process -Name $Name -ErrorAction SilentlyContinue)) {
+        if ($Process.HasExited) { continue }
+        $Image = $Process.Path
+        if (-not $Image) { throw 'Could not identify a running bridge executable; quit it before upgrading.' }
+        if ([StringComparer]::OrdinalIgnoreCase.Equals([IO.Path]::GetFullPath($Image), $FullTarget)) {
+            $null = $Process.Handle
+            $Process
+        }
+    }
+}
+
+function Stop-InstalledBridgeProcesses($Processes) {
+    foreach ($Process in $Processes) {
+        $Process.Refresh()
+        if (-not $Process.HasExited) {
+            Stop-Process -InputObject $Process -Force -ErrorAction Stop
+        }
+    }
+    foreach ($Process in $Processes) {
+        if (-not $Process.WaitForExit(10000)) { throw 'The previous bridge did not exit; replacement was refused.' }
+    }
+}
+
+function Restore-BridgeBinary($State) {
+    if ($State.BackedUp) {
+        Stop-InstalledBridgeProcesses @(Get-InstalledBridgeProcesses $State.Target)
+        if (Test-Path -LiteralPath $State.Target) {
+            Remove-Item -LiteralPath $State.Target -Force -ErrorAction Stop
+        }
+        Move-Item -LiteralPath $State.Backup -Destination $State.Target -Force -ErrorAction Stop
+        $State.BackedUp = $false
+    } elseif (-not $State.HadTarget -and $State.Installed) {
+        Stop-InstalledBridgeProcesses @(Get-InstalledBridgeProcesses $State.Target)
+    }
+    if ($State.WasRunning -and (Test-Path -LiteralPath $State.Target)) {
+        if (@(Get-InstalledBridgeProcesses $State.Target).Count -eq 0) {
+            # Earlier releases may not implement the detached-start flag.
+            Start-Process -FilePath $State.Target -ArgumentList '--no-tray' -WindowStyle Hidden -ErrorAction Stop
+        }
+    }
+}
+
+function Install-BridgeBinary([string]$Source, [string]$Target, [string]$ExpectedHash) {
+    $Directory = Split-Path -Parent $Target
+    $Previous = @(Get-InstalledBridgeProcesses $Target)
+    $State = [pscustomobject]@{
+        Target=$Target; HadTarget=(Test-Path -LiteralPath $Target)
+        Backup=(Join-Path $Directory ([Guid]::NewGuid().ToString('N') + '.previous.exe'))
+        Staged=(Join-Path $Directory ([Guid]::NewGuid().ToString('N') + '.update-staged'))
+        Previous=$Previous; WasRunning=($Previous.Count -gt 0); BackedUp=$false; Installed=$false
+    }
+    try {
+        Move-Item -LiteralPath $Source -Destination $State.Staged -Force -ErrorAction Stop
+        if ((Get-FileHash -LiteralPath $State.Staged -Algorithm SHA256).Hash -ne $ExpectedHash) {
+            throw 'Staged bridge did not match the verified download.'
+        }
+        Stop-InstalledBridgeProcesses $Previous
+        if (@(Get-InstalledBridgeProcesses $Target).Count -ne 0) {
+            throw 'Another bridge process appeared; replacement was refused.'
+        }
+        if ($State.HadTarget) {
+            Move-Item -LiteralPath $Target -Destination $State.Backup -Force -ErrorAction Stop
+            $State.BackedUp = $true
+        }
+        Move-Item -LiteralPath $State.Staged -Destination $Target -Force -ErrorAction Stop
+        $State.Installed = $true
+        return $State
+    } catch {
+        try { Restore-BridgeBinary $State } catch {
+            Write-Warn "Previous bridge recovery was not confirmed. Retained backup, if present: $($State.Backup)"
+        }
+        throw
+    } finally {
+        Remove-Item -LiteralPath $State.Staged -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-SilentSuiteBridgeInstall {
     # --- Detect architecture ---
     $Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
@@ -195,81 +275,108 @@ function Invoke-SilentSuiteBridgeInstall {
     }
 
     # --- Install binary ---
-    Move-Item -Path $TmpFile -Destination $ExePath -Force
-    Write-Ok "Installed to $ExePath"
-
-    # --- Add to user PATH ---
-    $UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-    if ($UserPath -notlike "*$InstallDir*") {
-        [Environment]::SetEnvironmentVariable("PATH", "$InstallDir;$UserPath", "User")
-        Write-Ok "Added $InstallDir to user PATH"
-    } else {
-        Write-Ok "$InstallDir already in PATH"
-    }
-    $env:PATH = "$InstallDir;$env:PATH"
-
-    # --- Auto-start ---
-    Write-Step "Setting up auto-start..."
-    # The bridge validates and persists explicitly set SILENTSUITE_LISTEN_* /
-    # SILENTSUITE_SERVER_HOSTS / SILENTSUITE_ALLOW_REMOTE into settings.json before
-    # writing the startup entry. A non-zero exit code means the entry was not
-    # confirmed, so do not report success in that case.
+    $Replacement = Install-BridgeBinary -Source $TmpFile -Target $ExePath -ExpectedHash $ExpectedHash
     try {
-        & $ExePath --install-autostart 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "Auto-start was not confirmed (exit code $LASTEXITCODE). Retry later with: $BinaryName --install-autostart"
+        Write-Ok "Installed to $ExePath"
+
+        # --- Add to user PATH ---
+        $UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+        if ($UserPath -notlike "*$InstallDir*") {
+            [Environment]::SetEnvironmentVariable("PATH", "$InstallDir;$UserPath", "User")
+            Write-Ok "Added $InstallDir to user PATH"
         } else {
-            Write-Ok "Auto-start configured"
+            Write-Ok "$InstallDir already in PATH"
         }
-    } catch {
-        Write-Warn "Could not set up auto-start (run later: $BinaryName --install-autostart)"
-    }
+        $env:PATH = "$InstallDir;$env:PATH"
 
-    # --- Login ---
-    Write-Step "Launching login..."
-    Write-Host "  Opening your browser to sign in."
-    Write-Host "  The browser sign-in tab may use a temporary random port. Use the app URL it shows, not the address bar.`n"
-    $LoginOk = $false
-    try {
-        & $ExePath --login
-        $LoginOk = ($LASTEXITCODE -eq 0)
-    } catch {
+        # --- Auto-start ---
+        Write-Step "Setting up auto-start..."
+        # The bridge validates and persists explicitly set SILENTSUITE_LISTEN_* /
+        # SILENTSUITE_SERVER_HOSTS / SILENTSUITE_ALLOW_REMOTE into settings.json before
+        # writing the startup entry. A non-zero exit code means the entry was not
+        # confirmed, so do not report success in that case.
+        try {
+            & $ExePath --install-autostart 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "Auto-start was not confirmed (exit code $LASTEXITCODE). Retry later with: $BinaryName --install-autostart"
+            } else {
+                Write-Ok "Auto-start configured"
+            }
+        } catch {
+            Write-Warn "Could not set up auto-start (run later: $BinaryName --install-autostart)"
+        }
+
+        # --- Login ---
+        Write-Step "Launching login..."
+        Write-Host "  Opening your browser to sign in."
+        Write-Host "  The browser sign-in tab may use a temporary random port. Use the app URL it shows, not the address bar.`n"
         $LoginOk = $false
-    }
-    if (-not $LoginOk) {
-        Write-Warn "Login did not complete. Sign in from the dashboard once the bridge is running, or run later: $BinaryName --login"
-    }
+        try {
+            & $ExePath --login
+            $LoginOk = ($LASTEXITCODE -eq 0)
+        } catch {
+            $LoginOk = $false
+        }
+        if (-not $LoginOk) {
+            Write-Warn "Login did not complete. Sign in from the dashboard once the bridge is running, or run later: $BinaryName --login"
+        }
 
-    # --background starts the bridge without a window (and outside this
-    # terminal where Windows allows it), so closing PowerShell does not
-    # stop it. It logs to $BridgeLog and refuses to start a second copy.
-    $BackgroundExit = 1
-    try {
-        $BackgroundOutput = & $ExePath --background 2>&1
-        $BackgroundExit = $LASTEXITCODE
-        $BackgroundOutput | ForEach-Object { Write-InstallLog "bridge --background: $_" }
+        # --background starts the bridge without a window (and outside this
+        # terminal where Windows allows it), so closing PowerShell does not
+        # stop it. It logs to $BridgeLog and refuses to start a second copy.
+        $BackgroundExit = 1
+        try {
+            $BackgroundOutput = & $ExePath --background 2>&1
+            $BackgroundExit = $LASTEXITCODE
+            $BackgroundOutput | ForEach-Object { Write-InstallLog "bridge --background: $_" }
+        } catch {
+            Write-InstallLog "bridge --background failed: $_"
+        }
+
+        if ($BackgroundExit -ne 0) {
+            throw "The replacement bridge did not start (exit code $BackgroundExit). Check $BridgeLog."
+        }
+        $DashboardReady = Test-BridgeDashboardReady -TimeoutSeconds 20
+        if (-not $DashboardReady -and $Replacement.HadTarget) {
+            throw "The replacement bridge dashboard did not respond yet. Check $BridgeLog."
+        }
+        if ((Get-FileHash -LiteralPath $ExePath -Algorithm SHA256).Hash -ne $ExpectedHash -or
+            @(Get-InstalledBridgeProcesses $ExePath).Count -eq 0) {
+            throw 'The verified replacement executable was not confirmed running.'
+        }
+        foreach ($Previous in $Replacement.Previous) {
+            if (-not $Previous.HasExited) { throw 'The previous bridge is still running.' }
+        }
+        if ($Replacement.BackedUp) {
+            try {
+                Remove-Item -LiteralPath $Replacement.Backup -Force -ErrorAction Stop
+                $Replacement.BackedUp = $false
+            } catch {
+                Write-Warn "The verified bridge is running, but its previous backup could not be removed: $($Replacement.Backup)"
+            }
+        }
+        if ($DashboardReady) {
+            Write-Ok "Bridge is running in the background. Closing this window does not stop it. Dashboard: $BridgeDashboardUrl"
+        } else {
+            Write-Warn "Bridge started in the background but the dashboard did not respond yet. Open $BridgeDashboardUrl or check $BridgeLog before adding the URL to your calendar app."
+        }
+
+        # --- Done ---
+        Write-Step "Setup complete!"
+        Write-Host ""
+        Write-Host "  Bridge installed." -ForegroundColor Green
+        Write-Host "  Dashboard: " -NoNewline; Write-Host "$BridgeDashboardUrl" -ForegroundColor Cyan
+        Write-Host "  Log in:    " -NoNewline; Write-Host "$BinaryName --login" -ForegroundColor Cyan
+        Write-Host "  Install log: " -NoNewline; Write-Host "$InstallLog" -ForegroundColor Cyan
+        Write-Host "  Bridge log:  " -NoNewline; Write-Host "$BridgeLog" -ForegroundColor Cyan
+        Write-Host "  Full docs: " -NoNewline; Write-Host "https://docs.silentsuite.io/bridge" -ForegroundColor Cyan
+        Write-Host ""
     } catch {
-        Write-InstallLog "bridge --background failed: $_"
+        try { Restore-BridgeBinary $Replacement } catch {
+            Write-Warn "Previous bridge recovery was not confirmed. Retained backup, if present: $($Replacement.Backup)"
+        }
+        throw
     }
-
-    if ($BackgroundExit -ne 0) {
-        Write-Warn "The bridge did not start in the background (exit code $BackgroundExit). Check $BridgeLog, then run: $BinaryName --background"
-    } elseif (Test-BridgeDashboardReady -TimeoutSeconds 20) {
-        Write-Ok "Bridge is running in the background. Closing this window does not stop it. Dashboard: $BridgeDashboardUrl"
-    } else {
-        Write-Warn "Bridge started in the background but the dashboard did not respond yet. Open $BridgeDashboardUrl or check $BridgeLog before adding the URL to your calendar app."
-    }
-
-    # --- Done ---
-    Write-Step "Setup complete!"
-    Write-Host ""
-    Write-Host "  Bridge installed." -ForegroundColor Green
-    Write-Host "  Dashboard: " -NoNewline; Write-Host "$BridgeDashboardUrl" -ForegroundColor Cyan
-    Write-Host "  Log in:    " -NoNewline; Write-Host "$BinaryName --login" -ForegroundColor Cyan
-    Write-Host "  Install log: " -NoNewline; Write-Host "$InstallLog" -ForegroundColor Cyan
-    Write-Host "  Bridge log:  " -NoNewline; Write-Host "$BridgeLog" -ForegroundColor Cyan
-    Write-Host "  Full docs: " -NoNewline; Write-Host "https://docs.silentsuite.io/bridge" -ForegroundColor Cyan
-    Write-Host ""
 }
 
 try {

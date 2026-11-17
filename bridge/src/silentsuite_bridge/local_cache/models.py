@@ -30,9 +30,13 @@ class CollectionEntity(db.BaseModel):
     stoken = pw.CharField(null=True, default=None)
     local_stoken = pw.CharField(null=True, default=None)
     dav_revision = pw.IntegerField(null=False, default=0)
+    dav_href = pw.CharField(null=True, default=None)
 
     class Meta:
-        indexes = ((("local_user", "uid"), True),)
+        indexes = (
+            (("local_user", "uid"), True),
+            (("local_user", "dav_href"), True),
+        )
 
 
 class ItemEntity(db.BaseModel):

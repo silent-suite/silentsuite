@@ -6,6 +6,7 @@ import pytest
 from playhouse.sqlite_ext import SqliteExtDatabase
 
 from silentsuite_bridge.local_cache import (
+    _ensure_cache_tables,
     Collection,
     Etebase,
     SessionSuperseded,
@@ -33,6 +34,7 @@ def _database(path):
     )
     models.Config.create(db_version=1)
     models.SchemaMigration.create(name="dav-revision-v1", applied_at=0)
+    _ensure_cache_tables(database)
     return database
 
 

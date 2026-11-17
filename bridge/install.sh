@@ -222,11 +222,27 @@ ensure_path() {
 # restart binds the same way. A non-zero exit means the entry was not confirmed;
 # never report success in that case.
 setup_autostart() {
+    AUTOSTART_CONFIRMED=false
     if "${INSTALL_DIR}/${BINARY_NAME}" --install-autostart; then
+        AUTOSTART_CONFIRMED=true
         info "Auto-start configured. Remove with: ${BINARY_NAME} --remove-autostart"
     else
         warn "Auto-start was not confirmed. Review the messages above; retry later with: ${BINARY_NAME} --install-autostart"
     fi
+}
+
+dashboard_ready() {
+    attempt=0
+    while [ "$attempt" -lt 10 ]; do
+        if command -v curl >/dev/null 2>&1; then
+            if curl -fsS --max-time 1 "$DASHBOARD_URL" >/dev/null 2>&1; then return 0; fi
+        else
+            if wget -q --timeout=1 -O /dev/null "$DASHBOARD_URL"; then return 0; fi
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    return 1
 }
 
 # --- Main ---
@@ -254,9 +270,6 @@ main() {
     install_binary
     ensure_path
 
-    step "Setting up auto-start..."
-    setup_autostart
-
     DASHBOARD_URL="http://localhost:37358/.web/"
 
     if prompt_yn "Log in to SilentSuite now?"; then
@@ -266,15 +279,26 @@ main() {
 
         # Run login flow — don't let failure kill the script
         if "${INSTALL_DIR}/${BINARY_NAME}" --login; then
-            # Start bridge daemon in background
-            "${INSTALL_DIR}/${BINARY_NAME}" --no-tray &
-            sleep 2
-            info "Bridge is running! Dashboard: http://localhost:37358/.web/"
-            info "Bookmark that URL to find your connection details later."
+            info "Login complete."
         else
             warn "Login did not complete. You can log in later with:"
             printf "    ${BINARY_NAME} --login\n"
         fi
+    fi
+
+    step "Setting up auto-start..."
+    setup_autostart
+    BRIDGE_READY=false
+    if dashboard_ready; then
+        BRIDGE_READY=true
+    elif [ "$AUTOSTART_CONFIRMED" = false ]; then
+        "${INSTALL_DIR}/${BINARY_NAME}" --no-tray &
+        if dashboard_ready; then BRIDGE_READY=true; fi
+    fi
+    if [ "$BRIDGE_READY" = true ]; then
+        info "Bridge dashboard is answering: ${DASHBOARD_URL}"
+    else
+        warn "Bridge startup was not confirmed. Check the messages above, or run: ${BINARY_NAME} --no-tray"
     fi
 
     # Print status and dashboard URL
