@@ -12,8 +12,8 @@ from pathlib import Path
 import yaml
 from yaml.tokens import AliasToken, AnchorToken, TagToken
 
-NGINX_DIGEST = "sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3"
-POSTGRES_IMAGE = "postgres:16.9@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7"
+NGINX_DIGEST = "sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03"
+POSTGRES_IMAGE = "postgres:16.16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e"
 FIELDS = {
     "app_proxy": {"environment"},
     "router": {"image", "restart", "volumes", "depends_on"},
@@ -112,7 +112,7 @@ def validate(document, data_root):
         require(services[name]["entrypoint"] == ["/bin/sh", f"/bootstrap/{script}"], f"{name}: startup changed")
     require(services["router"]["image"] in {
         f"nginxinc/nginx-unprivileged@{NGINX_DIGEST}",
-        f"nginxinc/nginx-unprivileged:1.30.5-alpine@{NGINX_DIGEST}",
+        f"nginxinc/nginx-unprivileged:1.30.6-alpine@{NGINX_DIGEST}",
     }, "router digest changed")
     require(services["postgres"]["image"] == POSTGRES_IMAGE, "postgres digest changed")
     require(services["postgres"]["shm_size"] == "128mb", "postgres shared memory changed")

@@ -370,6 +370,47 @@ class CollectionRouteContractTests(TransactionTestCase):
         )
         assert response.status_code == 404, response.content
 
+    def test_item_get_missing_uid_is_404(self):
+        response = self._get(
+            f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/{_uid('item-missing')}/",
+            self.alice_token,
+        )
+        assert response.status_code == 404, response.content
+        assert msgpack_decode(response.content)["code"] == "does_not_exist"
+
+    def test_item_get_uid_in_another_collection_is_404(self):
+        item = _add_item(self.col_a, _uid("item-only-a"), _uid("rev-only-a"))
+        response = self._get(
+            f"{COLLECTION_PREFIX}/{self.col_b.uid}/item/{item.uid}/", self.alice_token
+        )
+        assert response.status_code == 404, response.content
+        assert msgpack_decode(response.content)["code"] == "does_not_exist"
+
+    def test_fetch_updates_empty_json_list_succeeds_and_preserves_stoken(self):
+        # JSON keeps raw b"[]" truthy until FastAPI decodes it, so the empty
+        # list reaches fetch_updates through the route's accepted JSON path.
+        headers = {**self._headers(self.alice_token), "Content-Type": "application/json"}
+        for stoken in (None, self.col_a.stoken):
+            url = f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/fetch_updates/"
+            if stoken is not None:
+                url += f"?stoken={stoken}"
+            response = self.client.post(url, json=[], headers=headers)
+            assert response.status_code == 200, response.content
+            assert msgpack_decode(response.content) == {"data": [], "stoken": stoken, "done": True}
+
+    def test_fetch_updates_empty_msgpack_list_is_a_missing_body(self):
+        # MsgpackRequest.body() returns the decoded [], which the pinned
+        # FastAPI handler treats as absent before endpoint validation.
+        for stoken in (None, self.col_a.stoken):
+            url = f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/fetch_updates/"
+            if stoken is not None:
+                url += f"?stoken={stoken}"
+            response = self._post(url, self.alice_token, [])
+            assert response.status_code == 422, response.content
+            assert msgpack_decode(response.content) == {
+                "detail": [{"type": "missing", "loc": ["body"], "msg": "Field required", "input": None}],
+            }
+
     def test_fetch_updates_is_scoped_to_the_prefix_collection(self):
         expected = {self.col_a.uid: self.rev_a, self.col_b.uid: self.rev_b}
         for col_uid, revision_uid in expected.items():
@@ -395,6 +436,36 @@ class CollectionRouteContractTests(TransactionTestCase):
 
     def _batch_body(self, item_uid: str, revision_uid: str, chunks=()) -> dict:
         return {"items": [self._item_body(item_uid, revision_uid, chunks)], "deps": None}
+
+    def test_collection_create_duplicate_revision_returns_field_error_and_rolls_back(self):
+        new_uid = _uid("col-duplicate-rev")
+        tracked_models = (
+            models.Collection, models.CollectionItem, models.CollectionItemRevision,
+            models.CollectionMember, models.CollectionType, models.Stoken,
+            models.CollectionItemChunk, models.RevisionChunkRelation,
+        )
+        before = {model: set(model.objects.values_list("pk", flat=True)) for model in tracked_models}
+        response = self._post(
+            f"{COLLECTION_PREFIX}/",
+            self.alice_token,
+            {
+                "item": self._item_body(new_uid, self.rev_a),
+                "collectionKey": b"\x01" * 32,
+                "collectionType": b"duplicate-revision-type",
+            },
+        )
+        assert response.status_code == 400, response.content
+        error = msgpack_decode(response.content)
+        assert error["code"] == "field_errors"
+        assert error["detail"] == "Field validations failed."
+        assert len(error["errors"]) == 1
+        assert error["errors"][0]["field"] == "content.uid"
+        assert error["errors"][0]["code"] == "unique"
+        assert error["errors"][0]["detail"]
+        for model in tracked_models:
+            assert set(model.objects.values_list("pk", flat=True)) == before[model]
+        assert not models.Collection.objects.filter(uid=new_uid).exists()
+        assert not models.CollectionItem.objects.filter(uid=new_uid).exists()
 
     def test_item_batch_writes_into_the_prefix_collection(self):
         new_uid = _uid("item-batch-new")
