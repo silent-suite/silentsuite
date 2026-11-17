@@ -262,6 +262,31 @@ def test_install_autostart_without_environment_writes_no_network_profile(env, ca
     assert "default loopback bind (127.0.0.1:37358)" in capsys.readouterr().out
 
 
+def test_linux_reinstall_restarts_active_service(env, capsys):
+    active = {"version": "old"}
+    original = env.manager.__call__
+
+    def manager(argv, **kwargs):
+        result = original(argv, **kwargs)
+        if "restart" in argv and result.returncode == 0:
+            active["version"] = "replacement"
+        return result
+
+    env.monkeypatch.setattr(autostart.subprocess, "run", manager)
+    assert autostart.install_autostart() == 0
+    assert active["version"] == "replacement", "start on an active service leaves its old executable serving"
+    assert any("restart" in call for call in env.manager.calls)
+    assert "enable/restart" in capsys.readouterr().out
+
+
+def test_linux_reinstall_reports_restart_failure(env, capsys):
+    env.manager.failing = {"restart"}
+    assert autostart.install_autostart() == 1
+    out = capsys.readouterr().out
+    assert "not confirmed running" in out
+    assert "accepted" not in out
+
+
 def test_install_autostart_does_not_claim_running_when_start_fails(env, capsys):
     set_env(env, SILENTSUITE_LISTEN_PORT="45123")
     env.manager.failing = {"start"}
