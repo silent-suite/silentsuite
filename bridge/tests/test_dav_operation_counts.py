@@ -288,6 +288,33 @@ def test_cache_creation_sets_explicit_five_second_timeout(dav_world, monkeypatch
         local_cache.db.database_proxy.initialize(dav_world.database)
 
 
+def test_interrupted_cache_feature_migration_leaves_no_partial_schema(dav_world, monkeypatch, tmp_path):
+    import peewee as pw
+
+    database = pw.SqliteDatabase(str(tmp_path / "interrupted.sqlite"))
+    local_cache.db.database_proxy.initialize(database)
+    original = database.execute_sql
+    created = 0
+
+    def execute(sql, *args, **kwargs):
+        nonlocal created
+        if sql.startswith("CREATE TRIGGER"):
+            created += 1
+            if created == 2:
+                raise RuntimeError("interrupted schema migration")
+        return original(sql, *args, **kwargs)
+
+    monkeypatch.setattr(database, "execute_sql", execute)
+    try:
+        with pytest.raises(RuntimeError, match="interrupted schema migration"):
+            local_cache._ensure_cache_tables(database)
+        assert created == 2
+        assert database.get_tables() == []
+    finally:
+        database.close()
+        local_cache.db.database_proxy.initialize(dav_world.database)
+
+
 def test_current_cache_schema_upgrades_without_changing_legacy_data(dav_world, tmp_path):
     path = tmp_path / "current-cache.sqlite"
     legacy = sqlite3.connect(path)
