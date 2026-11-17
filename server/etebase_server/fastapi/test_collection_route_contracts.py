@@ -386,14 +386,30 @@ class CollectionRouteContractTests(TransactionTestCase):
         assert response.status_code == 404, response.content
         assert msgpack_decode(response.content)["code"] == "does_not_exist"
 
-    def test_fetch_updates_empty_list_succeeds_and_preserves_stoken(self):
+    def test_fetch_updates_empty_json_list_succeeds_and_preserves_stoken(self):
+        # JSON keeps raw b"[]" truthy until FastAPI decodes it, so the empty
+        # list reaches fetch_updates through the route's accepted JSON path.
+        headers = {**self._headers(self.alice_token), "Content-Type": "application/json"}
+        for stoken in (None, self.col_a.stoken):
+            url = f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/fetch_updates/"
+            if stoken is not None:
+                url += f"?stoken={stoken}"
+            response = self.client.post(url, json=[], headers=headers)
+            assert response.status_code == 200, response.content
+            assert msgpack_decode(response.content) == {"data": [], "stoken": stoken, "done": True}
+
+    def test_fetch_updates_empty_msgpack_list_is_a_missing_body(self):
+        # MsgpackRequest.body() returns the decoded [], which the pinned
+        # FastAPI handler treats as absent before endpoint validation.
         for stoken in (None, self.col_a.stoken):
             url = f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/fetch_updates/"
             if stoken is not None:
                 url += f"?stoken={stoken}"
             response = self._post(url, self.alice_token, [])
-            assert response.status_code == 200, response.content
-            assert msgpack_decode(response.content) == {"data": [], "stoken": stoken, "done": True}
+            assert response.status_code == 422, response.content
+            assert msgpack_decode(response.content) == {
+                "detail": [{"type": "missing", "loc": ["body"], "msg": "Field required", "input": None}],
+            }
 
     def test_fetch_updates_is_scoped_to_the_prefix_collection(self):
         expected = {self.col_a.uid: self.rev_a, self.col_b.uid: self.rev_b}
