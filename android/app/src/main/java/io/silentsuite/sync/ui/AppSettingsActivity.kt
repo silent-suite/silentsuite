@@ -498,6 +498,18 @@ class AppSettingsActivity : BaseActivity() {
                     AccountSettings.writeBirthdaysEnabled(AccountManager.get(requireContext().applicationContext), exact, value as Boolean)
                 }
             }
+            requirePreference<SwitchPreferenceCompat>("widgets_enabled").apply {
+                isEnabled = account != null
+                isChecked = account != null && AccountSettings.widgetsEnabled(AccountManager.get(requireContext()), account)
+                setOnPreferenceChangeListener { _, value ->
+                    val exact = exactSelectedAccount() ?: return@setOnPreferenceChangeListener false
+                    val context = requireContext().applicationContext
+                    if (!AccountSettings.writeWidgetsEnabled(AccountManager.get(context), exact, value as Boolean))
+                        return@setOnPreferenceChangeListener false
+                    io.silentsuite.sync.widgets.WidgetSettings.applyComponentState(context)
+                    true
+                }
+            }
         }
 
         /** One of the two Notes network settings (design 3.6): never persisted by the preference, always written to the exact account. */
