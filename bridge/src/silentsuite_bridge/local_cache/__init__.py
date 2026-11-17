@@ -16,11 +16,13 @@ import threading
 import time
 from contextlib import contextmanager
 from functools import wraps
+from types import SimpleNamespace
 
 import msgpack
 import peewee as pw
 import vobject
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
+from radicale.item import get_uid_from_object
 
 from .. import birthdays, config
 from ..privacy_logging import BoundedDiagnosticError, bounded_exception_class
@@ -37,6 +39,10 @@ class DavUnresolvedItemsError(RuntimeError):
 
 class DavCollectionPathError(ValueError):
     """A DAV collection path has more than one live owner."""
+
+
+class DavUidIndexPending(RuntimeError):
+    """An item changed after the request prepared its UID index."""
 
 
 def resolve_dav_collection_uid(username, segment):
@@ -205,6 +211,12 @@ def _migrate_cache_schema(database):
 
     collection_columns = {column.name for column in database.get_columns("collectionentity")}
     item_columns = {column.name for column in database.get_columns("itementity")}
+    if "dav_state_generation" not in collection_columns:
+        database.execute_sql(
+            "ALTER TABLE collectionentity ADD COLUMN dav_state_generation INTEGER NOT NULL DEFAULT 0"
+        )
+    if "dav_uid" not in item_columns:
+        database.execute_sql("ALTER TABLE itementity ADD COLUMN dav_uid VARCHAR(255)")
     if "dav_href" not in collection_columns:
         database.execute_sql("ALTER TABLE collectionentity ADD COLUMN dav_href VARCHAR(255)")
     database.execute_sql("UPDATE collectionentity SET dav_href=NULL WHERE deleted=1 AND dav_href IS NOT NULL")
@@ -276,6 +288,53 @@ def _migrate_cache_schema(database):
             database.execute_sql(
                 "ALTER TABLE davunresolveditem ADD COLUMN local_item_id INTEGER"
             )
+    _install_dav_state_triggers(database)
+
+
+def _install_dav_state_triggers(database):
+    """Observe legacy SQL writers as well as current cache writers."""
+    definitions = {}
+    fields = {
+        "collectionentity": ("id", "eb_col", "new", "dirty", "deleted", "dav_revision"),
+        "itementity": ("id", "collection_id", "uid", "remote_uid", "eb_item", "new", "dirty", "deleted"),
+        "hrefmapper": ("content_id", "href"),
+    }
+    for table, columns in fields.items():
+        for operation in ("INSERT", "UPDATE", "DELETE"):
+            if table == "collectionentity" and operation != "UPDATE":
+                continue
+            versions = ("OLD", "NEW") if operation == "UPDATE" else ("OLD",) if operation == "DELETE" else ("NEW",)
+            if table == "collectionentity":
+                owners = " UNION ".join(f"SELECT {version}.id" for version in versions)
+            elif table == "itementity":
+                owners = " UNION ".join(f"SELECT {version}.collection_id" for version in versions)
+            else:
+                owners = " UNION ".join(
+                    f"SELECT collection_id FROM itementity WHERE id={version}.content_id"
+                    for version in versions
+                )
+            condition = ""
+            if operation == "UPDATE":
+                condition = " WHEN " + " OR ".join(f'OLD."{field}" IS NOT NEW."{field}"' for field in columns)
+            name = f"dav_state_v2_{table}_{operation.lower()}"
+            definitions[name] = (
+                f'CREATE TRIGGER IF NOT EXISTS "{name}" AFTER {operation} ON "{table}"'
+                f"{condition} BEGIN UPDATE collectionentity "
+                f"SET dav_state_generation=dav_state_generation+1 WHERE id IN ({owners}); END"
+            )
+    definitions["dav_state_v2_uid_index"] = (
+        "CREATE TRIGGER IF NOT EXISTS dav_state_v2_uid_index AFTER UPDATE OF eb_item,uid,collection_id,deleted "
+        "ON itementity WHEN OLD.eb_item IS NOT NEW.eb_item OR OLD.uid IS NOT NEW.uid "
+        "OR OLD.collection_id IS NOT NEW.collection_id OR OLD.deleted IS NOT NEW.deleted "
+        "BEGIN UPDATE itementity SET dav_uid=NULL WHERE id=NEW.id; END"
+    )
+    installed = {row[0] for row in database.execute_sql("SELECT name FROM sqlite_master WHERE type='trigger'")}
+    missing = definitions.keys() - installed
+    if missing:
+        for name in missing:
+            database.execute_sql(definitions[name])
+        if "davsynctoken" in database.get_tables():
+            models.DavSyncToken.delete().execute()
 
 
 def _activate_dav_revision_ledger():
@@ -406,47 +465,24 @@ def get_millis():
 
 
 def dav_collection_state_hash(cache_col):
-    """Hash DAV-relevant encrypted cache state without exposing its contents."""
-    digest = hashlib.sha256()
-
-    def add(value):
-        if value is None:
-            payload = b"<null>"
-        elif isinstance(value, bytes):
-            payload = value
-        else:
-            payload = str(value).encode("utf-8")
-        digest.update(len(payload).to_bytes(8, "big"))
-        digest.update(payload)
-
+    """Fingerprint the transactionally tracked local mutation generation."""
     current_col = models.CollectionEntity.get_by_id(cache_col.id)
-    for value in (
-        current_col.eb_col,
-        current_col.new,
-        current_col.dirty,
-        current_col.deleted,
-        current_col.dav_revision,
-    ):
-        add(value)
-    items = (
-        models.ItemEntity.select()
-        .where(models.ItemEntity.collection == current_col)
-        .order_by(models.ItemEntity.id)
-    )
-    for item in items:
-        href = models.HrefMapper.get_or_none(models.HrefMapper.content == item)
-        for value in (
-            item.id,
-            item.uid,
-            item.remote_uid,
-            item.eb_item,
-            item.new,
-            item.dirty,
-            item.deleted,
-            href.href if href is not None else None,
-        ):
-            add(value)
-    return digest.hexdigest()
+    state = f"{current_col.id}:{current_col.dav_state_generation}".encode("ascii")
+    return "v2:" + hashlib.sha256(state).hexdigest()
+
+
+def _store_dav_uid(cache_item, sdk_item):
+    try:
+        if sdk_item.deleted:
+            return
+        uid = get_uid_from_object(vobject.readOne(sdk_item.content.decode())) or ""
+    except Exception:
+        # Invalid remote content remains cached; the ordinary DAV parser reports it.
+        return
+    models.ItemEntity.update(dav_uid=uid).where(
+        (models.ItemEntity.id == cache_item.id)
+        & (models.ItemEntity.eb_item == cache_item.eb_item)
+    ).execute()
 
 
 def is_safe_dav_href(href):
@@ -542,15 +578,12 @@ def ensure_dav_href(
         # lets attacker-controlled encrypted href metadata exhaust Python's call
         # stack; this loop is bounded by the number of collection items and
         # resolves every retained/legacy claimant, not only the first row.
-        item_count = models.ItemEntity.select().where(
-            models.ItemEntity.collection == cache_item.collection_id
-        ).count()
-        max_steps = max(32, item_count * 8)
+        max_steps = None
         steps = 0
         stack = [("assign", cache_item, mapper, candidate, frozenset())]
         while stack:
             steps += 1
-            if steps > max_steps:
+            if max_steps is not None and steps > max_steps:
                 raise RuntimeError("DAV href allocation did not converge")
             operation, target_item, target_mapper, href, excluded = stack.pop()
             if operation == "persist":
@@ -563,6 +596,11 @@ def ensure_dav_href(
                 continue
             if strict:
                 raise ValueError("DAV href already exists")
+            if max_steps is None:
+                item_count = models.ItemEntity.select().where(
+                    models.ItemEntity.collection == cache_item.collection_id
+                ).count()
+                max_steps = max(32, item_count * 8)
 
             claimants = [(target_item, target_mapper)] + [
                 (conflict_mapper.content, conflict_mapper)
@@ -850,6 +888,40 @@ class Etebase:
                             unresolved,
                         )
         _restrict_cache_database_files(getattr(database, "database", None))
+
+        if hasattr(self, "etebase"):
+            self.prepare_dav_uid_index()
+
+    def prepare_dav_uid_index(self):
+        """Parse only unknown rows outside each short conditional update."""
+        with db.atomic_connection():
+            collections = list(self.user.collections.where(~models.CollectionEntity.deleted))
+        manager = self.etebase.get_collection_manager()
+        for collection in collections:
+            item_manager = None
+            with db.atomic_connection():
+                pending = list(models.ItemEntity.select().where(
+                    (models.ItemEntity.collection == collection)
+                    & ~models.ItemEntity.deleted
+                    & models.ItemEntity.dav_uid.is_null(True)
+                ))
+            for item in pending:
+                if item_manager is None:
+                    item_manager = manager.get_item_manager(manager.cache_load(collection.eb_col))
+                try:
+                    content = item_manager.cache_load(item.eb_item).content.decode()
+                    uid = get_uid_from_object(vobject.readOne(content)) or ""
+                except Exception:
+                    # Keep unreadable rows unindexed; they cannot prove UID absence.
+                    continue
+                with db.database_proxy.atomic("IMMEDIATE"):
+                    models.ItemEntity.update(dav_uid=uid).where(
+                        (models.ItemEntity.id == item.id)
+                        & (models.ItemEntity.eb_item == item.eb_item)
+                        & (models.ItemEntity.collection == collection)
+                        & ~models.ItemEntity.deleted
+                        & models.ItemEntity.dav_uid.is_null(True)
+                    ).execute()
 
     def _init_db(self, db_path):
         _ensure_private_cache_dir(db_path)
@@ -1387,6 +1459,7 @@ class Etebase:
             cache_item.eb_item = item_mgr.cache_save(item)
             cache_item.deleted = item.deleted
             cache_item.save()
+            _store_dav_uid(cache_item, item)
 
             href_mapper = models.HrefMapper.get_or_none(
                 models.HrefMapper.content == cache_item
@@ -1670,6 +1743,7 @@ class Etebase:
                                 models.ItemEntity.new,
                             ]
                         )
+                        _store_dav_uid(local_item, replacement)
                         current_unresolved.delete_instance()
                         reanchor_dav_state(cache_col, previous_state_hash)
                         continue
@@ -1735,6 +1809,7 @@ class Etebase:
                             models.ItemEntity.deleted,
                         ]
                     )
+                    _store_dav_uid(local_item, item)
                     href_mapper = models.HrefMapper.get_or_none(
                         models.HrefMapper.content == local_item
                     )
@@ -1957,7 +2032,7 @@ class Etebase:
                 for original, item in pairs:
                     item_id, original_envelope, original_dirty, original_new = original
                     uploaded_envelope = item_mgr.cache_save(item)
-                    (
+                    acknowledged = (
                         models.ItemEntity.update(
                             eb_item=uploaded_envelope,
                             dirty=False,
@@ -1971,6 +2046,8 @@ class Etebase:
                         )
                         .execute()
                     )
+                    if acknowledged:
+                        _store_dav_uid(SimpleNamespace(id=item_id, eb_item=uploaded_envelope), item)
                 reanchor_dav_state(cache_col, previous_state_hash)
 
     @staticmethod
@@ -2071,6 +2148,7 @@ class Etebase:
                         models.ItemEntity.new,
                     ]
                 )
+                _store_dav_uid(current, remote)
                 mapper = models.HrefMapper.get_or_none(
                     models.HrefMapper.content == current
                 )
@@ -2101,6 +2179,7 @@ class Etebase:
                     new=True,
                     dirty=True,
                 )
+                _store_dav_uid(copy_row, copy_item)
                 models.HrefMapper.create(content=copy_row, href=copy_href)
                 record_dav_change(
                     cache_col,
@@ -2307,3 +2386,4 @@ class Item:
             self.cache_item.eb_item = self.item_mgr.cache_save(self.item)
             self.cache_item.dirty = True
             self.cache_item.save()
+            _store_dav_uid(self.cache_item, self.item)

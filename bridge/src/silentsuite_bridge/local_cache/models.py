@@ -31,6 +31,7 @@ class CollectionEntity(db.BaseModel):
     local_stoken = pw.CharField(null=True, default=None)
     dav_revision = pw.IntegerField(null=False, default=0)
     dav_href = pw.CharField(null=True, default=None)
+    dav_state_generation = pw.IntegerField(null=False, default=0, constraints=[pw.SQL("DEFAULT 0")])
 
     class Meta:
         indexes = (
@@ -49,11 +50,13 @@ class ItemEntity(db.BaseModel):
     dirty = pw.BooleanField(null=False, default=False)
     deleted = pw.BooleanField(null=False, default=False)
     remote_uid = pw.CharField(null=True, default=None)
+    dav_uid = pw.CharField(null=True, default=None)
 
     class Meta:
         indexes = (
             (("collection", "uid"), True),
             (("collection", "remote_uid"), True),
+            (("collection", "deleted", "dav_uid"), False),
         )
 
 
