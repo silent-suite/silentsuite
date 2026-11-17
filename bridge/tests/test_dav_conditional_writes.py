@@ -12,6 +12,7 @@ from radicale.app import Application as RadicaleApplication
 from silentsuite_bridge import local_cache
 from silentsuite_bridge.local_cache import models
 from silentsuite_bridge.radicale import storage
+from silentsuite_bridge.radicale import etesync_cache
 from tests.dav_fixtures import SdkItem, dav_world  # noqa: F401
 from tests.test_carddav_remote_delete_convergence import _vcard
 from tests.test_dav_collection_paths import PATCH, PROPS
@@ -114,6 +115,20 @@ def test_pulled_revision_precedes_conditional_mutation(dav_world, monkeypatch):
         response = pending.result(timeout=10)
     assert response.status == 412, response.body
     assert "Remote revision" in world.collection()._get("contact-1.vcf").serialize()
+
+
+def test_initialized_session_can_open_while_another_writer_is_active(dav_world):
+    world = dav_world
+    col = world.add_collection()
+    world.add_item(col)
+    world.database.timeout = 0.025
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with world.database.atomic("IMMEDIATE"):
+            pending = pool.submit(etesync_cache._etesync_cache.fresh_for_user,
+                                  USERNAME, read_only=False)
+            session, created = pending.result(timeout=5)
+            assert created and session.user.id == world.user.id
+            assert session._session_is_current()
 
 
 @pytest.mark.parametrize("method", ["PUT", "DELETE"])

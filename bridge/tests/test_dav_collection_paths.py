@@ -109,13 +109,27 @@ def test_logical_collection_deletion_releases_alias(dav_world, retire):
     else:
         obj = world.remote.store.load(row.eb_col)
         obj.deleted = retire == "remote"
-        from types import SimpleNamespace
-        page = SimpleNamespace(data=[obj] if retire == "remote" else [],
-                               removed_memberships=[row.uid] if retire == "membership" else [],
-                               stoken="collection-page-after")
-        world.service()._apply_collection_list_page(world.remote.col_mgr, page)
+        world.remote.queue_collection_page(*([obj] if retire == "remote" else []),
+                                            stoken="collection-page-after")
+        page = world.remote.collection_pages.popleft()
+        page.removed_memberships = [row.uid] if retire == "membership" else []
+        assert world.service()._apply_collection_list_page(world.remote.col_mgr, page) == (
+            True, "collection-page-after",
+        )
     retired = models.CollectionEntity.get_by_id(row.id)
     assert retired.deleted and retired.dav_href is None
+    assert create(world).status == 201
+
+
+def test_initialization_releases_alias_left_on_deleted_collection(dav_world):
+    world = dav_world
+    row = world.add_collection()
+    models.CollectionEntity.update(deleted=True, dav_href="chosen").where(
+        models.CollectionEntity.id == row.id
+    ).execute()
+    from silentsuite_bridge import local_cache
+    local_cache._ensure_cache_tables(world.database)
+    assert models.CollectionEntity.get_by_id(row.id).dav_href is None
     assert create(world).status == 201
 
 

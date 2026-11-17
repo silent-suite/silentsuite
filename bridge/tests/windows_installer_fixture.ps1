@@ -69,7 +69,8 @@ try {
 
     $Tokens = $null
     $Errors = $null
-    $Ast = [System.Management.Automation.Language.Parser]::ParseFile($Installer,[ref]$Tokens,[ref]$Errors)
+    $InstallerText = [IO.File]::ReadAllText($Installer, [Text.Encoding]::UTF8)
+    $Ast = [System.Management.Automation.Language.Parser]::ParseInput($InstallerText,[ref]$Tokens,[ref]$Errors)
     if ($Errors.Count -ne 0) { throw 'Installer did not parse' }
     foreach ($Statement in $Ast.EndBlock.Statements) {
         if ($Statement -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
@@ -137,6 +138,9 @@ try {
     }
 
     try { Invoke-SilentSuiteBridgeInstall } catch { $Failed = $true }
+    if ($Mode -in @('swap-failed','backup-failed','start-failed')) {
+        if (-not $ReadyEvent.WaitOne(10000)) { throw 'Restored process did not acknowledge startup' }
+    }
     $Old.Refresh()
     $Other.Refresh()
     $InstalledHash = if (Test-Path $ExePath) { (Get-FileHash $ExePath -Algorithm SHA256).Hash } else { '' }

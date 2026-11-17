@@ -22,7 +22,10 @@ BINARY = ["C:\\Users\\Test User\\AppData\\Local\\SilentSuite\\silentsuite-bridge
 def test_windows_installer_replaces_only_its_running_target(tmp_path, mode):
     fixture = Path(__file__).with_name("windows_installer_fixture.ps1")
     installer = Path(__file__).resolve().parents[1] / "install.ps1"
-    env = {**os.environ, "TEMP": str(tmp_path), "TMP": str(tmp_path), "CI": "1"}
+    # A pwsh parent exports its module path; the child uses Windows PowerShell 5.1.
+    env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+    env.update(TEMP=str(tmp_path), TMP=str(tmp_path), CI="1")
+    env["PSModulePath"] = str(Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "Modules")
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
          "-File", str(fixture), "-Installer", str(installer), "-Root", str(tmp_path), "-Mode", mode],
@@ -31,6 +34,7 @@ def test_windows_installer_replaces_only_its_running_target(tmp_path, mode):
     assert result.returncode == 0, result.stdout + result.stderr
     receipt = json.loads((tmp_path / "result.json").read_text(encoding="utf-8-sig"))
     assert receipt["OtherAlive"], "a different installation must remain running"
+    assert receipt["Failed"] == (mode != "success"), receipt
     if mode == "success":
         assert not receipt["Failed"], "upgrade failed while the installed executable was running"
         assert receipt["OldExited"] and receipt["InstalledNew"] and receipt["TargetRunning"], receipt
@@ -38,6 +42,10 @@ def test_windows_installer_replaces_only_its_running_target(tmp_path, mode):
         assert receipt["RestoreFailures"] >= 2, receipt
         assert receipt["OldBackupRetained"], "failed restoration must retain the previous executable"
     else:
+        if mode in {"swap-failed", "backup-failed"}:
+            assert receipt["Injected"] and receipt["OldExited"], receipt
+        elif mode == "stop-failed":
+            assert not receipt["OldExited"], receipt
         assert receipt["InstalledOld"], "a failed replacement must leave the previous bytes installed"
         assert receipt["TargetRunning"], "restore the previously running bridge after rollback"
 
