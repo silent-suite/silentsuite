@@ -684,7 +684,14 @@ export function generateVCard(vcard: VCard): string {
     lines.push(vcard.bdayIsText === true ? foldRetainedLine(bdayLine) : foldLine(bdayLine));
   }
   if (vcard.photo) {
-    if (vcard.photo.startsWith('data:') || vcard.photo.startsWith('http://') || vcard.photo.startsWith('https://')) {
+    // vCard 3.0 has no data: URIs, and Android reads PHOTO;VALUE=URI as a link to
+    // download (#1127), so embedded images are written inline. Only image types the
+    // parser maps back are inlined, so the round trip stays exact.
+    const inline = /^data:image\/(jpeg|jpg|png|gif|webp);base64,([A-Za-z0-9+/]+=*)$/i.exec(vcard.photo);
+    if (inline) {
+      const type = inline[1]!.toUpperCase() === 'JPG' ? 'JPEG' : inline[1]!.toUpperCase();
+      lines.push(foldLine(`PHOTO;ENCODING=b;TYPE=${type}:${inline[2]}`));
+    } else if (vcard.photo.startsWith('data:') || vcard.photo.startsWith('http://') || vcard.photo.startsWith('https://')) {
       lines.push(foldLine(`PHOTO;VALUE=URI:${vcard.photo}`));
     } else {
       lines.push(foldLine(`PHOTO;ENCODING=b;TYPE=JPEG:${vcard.photo}`));
