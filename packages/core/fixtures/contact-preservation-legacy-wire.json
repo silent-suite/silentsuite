@@ -23,11 +23,12 @@
     {
       "name": "emoji",
       "input": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:legacy-emoji\r\nFN:é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 \r\nN:Legacy;Golden;;;\r\nNOTE:é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 \r\nEND:VCARD",
-      "wire": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:legacy-emoji\r\nFN:é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 \r\n é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é\r\n 中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é\r\n 中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 \r\nN:Legacy;Golden;;;\r\nNOTE:é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中\ud83d\r\n \ude42 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中\ud83d\r\n \ude42 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中\ud83d\r\n \ude42 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 \r\nREV:20261024T072232Z\r\nEND:VCARD",
-      "utf8_wire_base64": "QkVHSU46VkNBUkQNClZFUlNJT046My4wDQpVSUQ6bGVnYWN5LWVtb2ppDQpGTjrDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiANCiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqQ0KIOS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqQ0KIOS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiANCk46TGVnYWN5O0dvbGRlbjs7Ow0KTk9URTrDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit77+9DQog77+9IMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3vv70NCiDvv70gw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4re+/vQ0KIO+/vSDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiANClJFVjoyMDI2MTAyNFQwNzIyMzJaDQpFTkQ6VkNBUkQ=",
-      "sha256": "979b26409076f5bb79826fd8ae5b719b943ac7d5775e0a53348a201bf4b75cd2",
+      "wire": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:legacy-emoji\r\nFN:é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é\r\n 中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中\r\n 🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂\r\n  é中🙂 é中🙂 \r\nN:Legacy;Golden;;;\r\nNOTE:é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 \r\n é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é\r\n 中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中🙂 é中\r\n 🙂 é中🙂 é中🙂 \r\nREV:20261024T072232Z\r\nEND:VCARD",
+      "utf8_wire_base64": "QkVHSU46VkNBUkQNClZFUlNJT046My4wDQpVSUQ6bGVnYWN5LWVtb2ppDQpGTjrDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6kNCiDkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5LitDQog8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYINCiAgw6nkuK3wn5mCIMOp5Lit8J+ZgiANCk46TGVnYWN5O0dvbGRlbjs7Ow0KTk9URTrDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgDQogw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOpDQog5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rfCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiDDqeS4rQ0KIPCfmYIgw6nkuK3wn5mCIMOp5Lit8J+ZgiANClJFVjoyMDI2MTAyNFQwNzIyMzJaDQpFTkQ6VkNBUkQ=",
+      "sha256": "fad031bce023bad6518d413c6d28b6e561f0fd1e1ed478a4eea7fdca2f81241c",
       "model_roundtrip_stable": true,
-      "utf8_encoded_roundtrip_stable": true
+      "utf8_encoded_roundtrip_stable": true,
+      "wireUpdatedFor": "Code-point-safe UTF-8 folding"
     }
   ]
 }
