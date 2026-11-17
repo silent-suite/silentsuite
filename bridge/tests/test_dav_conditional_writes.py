@@ -315,7 +315,8 @@ def test_collection_import_uses_independent_item_transactions(dav_world, monkeyp
         return original(collection, href, item)
 
     def parent(app, environ, base_prefix, path, user):
-        items = [Item(vobject_item=vobject.readOne(_vcard(uid, uid)), href=uid + ".vcf")
+        items = [Item(vobject_item=vobject.readOne(_vcard(uid, uid)), href=uid + ".vcf",
+                      collection_path=path.strip("/"))
                  for uid in ("first", "second")]
         with app._storage.acquire_lock("w", user):
             try:

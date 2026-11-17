@@ -111,7 +111,8 @@ def test_logical_collection_deletion_releases_alias(dav_world, retire):
         obj.deleted = retire == "remote"
         from types import SimpleNamespace
         page = SimpleNamespace(data=[obj] if retire == "remote" else [],
-                               removed_memberships=[row.uid] if retire == "membership" else [])
+                               removed_memberships=[row.uid] if retire == "membership" else [],
+                               stoken="collection-page-after")
         world.service()._apply_collection_list_page(world.remote.col_mgr, page)
     retired = models.CollectionEntity.get_by_id(row.id)
     assert retired.deleted and retired.dav_href is None

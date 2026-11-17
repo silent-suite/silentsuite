@@ -25,12 +25,13 @@ using System.Reflection;
 using System.Threading;
 namespace NAMESPACE {
   public class Program {
+    private static readonly string Version = "VERSION";
     public static int Main(string[] args) {
       string arg = args.Length == 0 ? "--serve" : args[0];
-      if (arg == "--version") { Console.WriteLine("VERSION"); return 0; }
+      if (arg == "--version") { Console.WriteLine(Version); return 0; }
       if (arg == "--login" || arg == "--install-autostart") return 0;
       if (arg == "--background") {
-        if ("VERSION" == "new" && Environment.GetEnvironmentVariable("SS_FAIL_NEW_START") == "1") return 1;
+        if (Version == "new" && Environment.GetEnvironmentVariable("SS_FAIL_NEW_START") == "1") return 1;
         var start = new ProcessStartInfo(Assembly.GetExecutingAssembly().Location, "--serve");
         start.UseShellExecute = false; start.CreateNoWindow = true;
         Process.Start(start); return 0;

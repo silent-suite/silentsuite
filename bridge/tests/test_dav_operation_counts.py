@@ -271,14 +271,14 @@ def test_uid_index_change_after_preparation_defers_the_write(dav_world, monkeypa
 def test_cache_creation_sets_explicit_five_second_timeout(dav_world, monkeypatch, tmp_path):
     import playhouse.sqlite_ext
 
-    original = playhouse.sqlite_ext.SqliteExtDatabase
+    original = playhouse.sqlite_ext.SqliteExtDatabase.__init__
     observed = []
 
-    def create(*args, **kwargs):
+    def create(database, *args, **kwargs):
         observed.append(kwargs.get("timeout"))
-        return original(*args, **kwargs)
+        original(database, *args, **kwargs)
 
-    monkeypatch.setattr(playhouse.sqlite_ext, "SqliteExtDatabase", create)
+    monkeypatch.setattr(playhouse.sqlite_ext.SqliteExtDatabase, "__init__", create)
     try:
         database, initialized = local_cache._init_cache_database(str(tmp_path / "separate.sqlite"))
         assert initialized
