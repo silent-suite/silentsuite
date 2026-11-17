@@ -132,8 +132,8 @@ function Restore-BridgeBinary($State) {
     }
     if ($State.WasRunning -and (Test-Path -LiteralPath $State.Target)) {
         if (@(Get-InstalledBridgeProcesses $State.Target).Count -eq 0) {
-            & $State.Target --background | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'The previous executable was restored but could not be restarted.' }
+            # Earlier releases may not implement the detached-start flag.
+            Start-Process -FilePath $State.Target -ArgumentList '--no-tray' -WindowStyle Hidden -ErrorAction Stop
         }
     }
 }
@@ -333,8 +333,11 @@ function Invoke-SilentSuiteBridgeInstall {
             Write-InstallLog "bridge --background failed: $_"
         }
 
-        if ($BackgroundExit -ne 0 -or -not (Test-BridgeDashboardReady -TimeoutSeconds 20)) {
-            throw "The replacement bridge did not become ready. Check $BridgeLog."
+        if ($BackgroundExit -ne 0) {
+            throw "The replacement bridge did not start (exit code $BackgroundExit). Check $BridgeLog."
+        }
+        if (-not (Test-BridgeDashboardReady -TimeoutSeconds 20)) {
+            throw "The replacement bridge dashboard did not respond yet. Check $BridgeLog."
         }
         if ((Get-FileHash -LiteralPath $ExePath -Algorithm SHA256).Hash -ne $ExpectedHash -or
             @(Get-InstalledBridgeProcesses $ExePath).Count -eq 0) {
