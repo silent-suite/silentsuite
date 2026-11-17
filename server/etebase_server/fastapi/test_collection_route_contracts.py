@@ -370,6 +370,22 @@ class CollectionRouteContractTests(TransactionTestCase):
         )
         assert response.status_code == 404, response.content
 
+    def test_item_get_missing_uid_is_404(self):
+        response = self._get(
+            f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/{_uid('item-missing')}/",
+            self.alice_token,
+        )
+        assert response.status_code == 404, response.content
+        assert msgpack_decode(response.content)["code"] == "does_not_exist"
+
+    def test_item_get_uid_in_another_collection_is_404(self):
+        item = _add_item(self.col_a, _uid("item-only-a"), _uid("rev-only-a"))
+        response = self._get(
+            f"{COLLECTION_PREFIX}/{self.col_b.uid}/item/{item.uid}/", self.alice_token
+        )
+        assert response.status_code == 404, response.content
+        assert msgpack_decode(response.content)["code"] == "does_not_exist"
+
     def test_fetch_updates_is_scoped_to_the_prefix_collection(self):
         expected = {self.col_a.uid: self.rev_a, self.col_b.uid: self.rev_b}
         for col_uid, revision_uid in expected.items():

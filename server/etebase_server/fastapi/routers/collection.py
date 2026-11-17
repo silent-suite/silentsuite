@@ -435,7 +435,7 @@ def item_get(
     user: UserType = Depends(get_authenticated_user),
     prefetch: Prefetch = PrefetchQuery,
 ):
-    obj = queryset.get(uid=item_uid)
+    obj = get_object_or_404(queryset, uid=item_uid)
     return MsgpackResponse(CollectionItemOut.from_orm_context(obj, Context(user, prefetch)))
 
 
