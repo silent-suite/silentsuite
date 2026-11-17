@@ -184,7 +184,6 @@ def _bridge(tmp_path, monkeypatch):
         ]
     )
     models.Config.create(db_version=1)
-    local_cache_module._ensure_cache_tables(database)
     user = models.User.create(username=USERNAME)
     remote = _RemoteAccount()
 

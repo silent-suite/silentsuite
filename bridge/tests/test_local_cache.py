@@ -1087,7 +1087,6 @@ def test_remote_tombstone_without_name_reuses_remote_identity_and_original_href(
         ]
     )
     models.Config.create(db_version=1)
-    local_cache_module._ensure_cache_tables(database)
 
     mock_account = MagicMock()
     mock_col_mgr = MagicMock()
@@ -1348,9 +1347,6 @@ def test_v1_cache_is_migrated_additively_without_bumping_legacy_version(tmp_path
 def test_revision_ledger_activation_rolls_back_marker_when_token_deletion_fails(
     mem_db, user, monkeypatch
 ):
-    models.SchemaMigration.delete().where(
-        models.SchemaMigration.name == "dav-revision-chain-v3"
-    ).execute()
     cache_col = CollectionEntity.create(
         local_user=user,
         uid="contacts",
@@ -3100,7 +3096,6 @@ def test_unmatched_identityless_tombstone_is_quarantined_without_duplicate(tmp_p
         ]
     )
     models.Config.create(db_version=1)
-    local_cache_module._ensure_cache_tables(database)
     user_obj = User.create(username="unresolved@example.com")
     cache_col = CollectionEntity.create(
         local_user=user_obj,
@@ -3204,7 +3199,6 @@ def test_corrupt_quarantine_row_does_not_block_fresh_collection_sync(tmp_path):
         ]
     )
     models.Config.create(db_version=1)
-    local_cache_module._ensure_cache_tables(database)
     user = User.create(username="corrupt-quarantine@example.com")
     cache_col = CollectionEntity.create(
         local_user=user,

@@ -17,7 +17,7 @@ from unittest.mock import patch
 import peewee as pw
 import pytest
 
-from silentsuite_bridge.local_cache import db, models, _ensure_cache_tables
+from silentsuite_bridge.local_cache import db, models
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,6 @@ def mem_db():
         safe=True,
     )
     models.Config.get_or_create(defaults={"db_version": 1})
-    _ensure_cache_tables(database)
     yield database
     database.close()
 
