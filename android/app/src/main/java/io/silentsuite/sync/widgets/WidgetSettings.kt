@@ -10,9 +10,13 @@ import android.content.Context
 import android.content.pm.PackageManager
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.R
+import java.util.concurrent.atomic.AtomicLong
 
 /** Shared opt-in and component gate. Add future widget providers to [providers]. */
 object WidgetSettings {
+    // A refresh invalidates factory snapshots immediately, without AccountManager IPC per row.
+    internal val dataRevision = AtomicLong()
+
     enum class State { READY, NO_ACCOUNT, OFF, PERMISSION_REQUIRED }
     data class Access(val state: State, val accounts: List<Account>)
 

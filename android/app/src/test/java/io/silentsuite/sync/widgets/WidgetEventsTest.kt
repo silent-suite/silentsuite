@@ -101,4 +101,28 @@ class WidgetEventsTest {
             assertTrue(WidgetEvents.group(listOf(before, after), first, 7, ZoneId.of(zone)).all { it.events.isEmpty() })
         }
     }
+
+    @Test fun `display range preserves point events as one instant`() {
+        val point = event(1, "2026-11-17T10:00:00Z", "2026-11-17T10:00:00Z")
+        val range = WidgetEvents.timedRange(point, first, utc)
+        assertEquals(point.begin, range.first)
+        assertEquals(range.first, range.last)
+    }
+
+    @Test fun `display range clips a multi day event at each local midnight`() {
+        val span = event(1, "2026-11-17T22:00:00Z", "2026-11-19T09:00:00Z")
+        val start = WidgetEvents.timedRange(span, first, utc)
+        val middle = WidgetEvents.timedRange(span, first.plusDays(1), utc)
+        val end = WidgetEvents.timedRange(span, first.plusDays(2), utc)
+        assertEquals(millis("2026-11-17T22:00:00Z")..millis("2026-11-18T00:00:00Z"), start)
+        assertEquals(millis("2026-11-18T00:00:00Z")..millis("2026-11-19T00:00:00Z"), middle)
+        assertEquals(millis("2026-11-19T00:00:00Z")..millis("2026-11-19T09:00:00Z"), end)
+    }
+
+    @Test fun `display range follows a 23 hour DST day instead of a fixed duration`() {
+        val span = event(1, "2026-03-08T00:00:00Z", "2026-03-10T00:00:00Z")
+        val range = WidgetEvents.timedRange(span, LocalDate.of(2026, 3, 8), ZoneId.of("America/New_York"))
+        assertEquals(millis("2026-03-08T05:00:00Z")..millis("2026-03-09T04:00:00Z"), range)
+    }
+
 }

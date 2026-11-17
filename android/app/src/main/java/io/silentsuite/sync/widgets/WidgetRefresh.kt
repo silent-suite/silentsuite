@@ -86,8 +86,8 @@ object WidgetRefresh {
         val zone = ZoneId.systemDefault()
         val nextMidnight = LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
         // No exact-alarm permission: Android may batch this while idle. Widget periodic updates
-        // and time/date broadcasts provide recovery after reboot or a timezone change.
-        alarms.set(AlarmManager.RTC, nextMidnight, midnight)
+        // and time-change broadcasts provide recovery after reboot or a timezone change.
+        alarms.setWindow(AlarmManager.RTC, nextMidnight, 10 * 60 * 1_000L, midnight)
     }
 }
 

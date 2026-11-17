@@ -26,7 +26,8 @@ class WidgetActionActivity : ComponentActivity() {
             try {
                 val access = WidgetSettings.access(this@WidgetActionActivity)
                 if (access.state == WidgetSettings.State.PERMISSION_REQUIRED) {
-                    startActivity(Intent(this@WidgetActionActivity, PermissionsActivity::class.java))
+                    startActivity(Intent(this@WidgetActionActivity, PermissionsActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     return@launch
                 }
                 if (access.state != WidgetSettings.State.READY) {
@@ -57,7 +58,7 @@ class WidgetActionActivity : ComponentActivity() {
                     }
                     else -> return@launch
                 }
-                startActivity(target)
+                startActivity(target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             } catch (_: ActivityNotFoundException) {
                 Toast.makeText(this@WidgetActionActivity, R.string.widget_no_calendar_app, Toast.LENGTH_LONG).show()
             } catch (_: SecurityException) {

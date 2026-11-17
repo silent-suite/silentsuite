@@ -42,6 +42,11 @@ object WidgetEvents {
         }
     }
 
+    /** Clip a timed instance to one displayed day; equal endpoints represent a point event. */
+    fun timedRange(event: WidgetEvent, day: LocalDate, zone: ZoneId): LongRange =
+        maxOf(event.begin, day.atStartOfDay(zone).toInstant().toEpochMilli())..
+            minOf(event.end, day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli())
+
     /** Query both local timed boundaries and UTC all-day boundaries; grouping clips the excess. */
     fun queryBounds(firstDay: LocalDate, days: Int, zone: ZoneId): LongRange {
         require(days in 1..62)

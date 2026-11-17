@@ -353,7 +353,6 @@
             android:permission="android.permission.BIND_JOB_SERVICE" />
         <receiver android:name=".widgets.WidgetRefreshReceiver" android:exported="false">
             <intent-filter>
-                <action android:name="android.intent.action.DATE_CHANGED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
@@ -361,7 +360,7 @@
             </intent-filter>
         </receiver>
         <activity android:name=".widgets.WidgetActionActivity" android:exported="false"
-            android:excludeFromRecents="true" android:theme="@style/Theme.Transparent" />
+            android:excludeFromRecents="true" android:taskAffinity="" android:theme="@style/Theme.Transparent" />
     </application>
 
 </manifest>

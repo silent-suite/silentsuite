@@ -41,6 +41,7 @@ class AgendaWidgetProvider : AppWidgetProvider() {
             val manager = AppWidgetManager.getInstance(context)
             val ids = manager.getAppWidgetIds(ComponentName(context, AgendaWidgetProvider::class.java))
             if (ids.isEmpty()) return
+            WidgetSettings.dataRevision.incrementAndGet()
             val state = WidgetSettings.access(context).state
             for (id in ids) {
                 val views = RemoteViews(context.packageName, R.layout.widget_agenda)
