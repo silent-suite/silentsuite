@@ -336,7 +336,8 @@ function Invoke-SilentSuiteBridgeInstall {
         if ($BackgroundExit -ne 0) {
             throw "The replacement bridge did not start (exit code $BackgroundExit). Check $BridgeLog."
         }
-        if (-not (Test-BridgeDashboardReady -TimeoutSeconds 20)) {
+        $DashboardReady = Test-BridgeDashboardReady -TimeoutSeconds 20
+        if (-not $DashboardReady -and $Replacement.HadTarget) {
             throw "The replacement bridge dashboard did not respond yet. Check $BridgeLog."
         }
         if ((Get-FileHash -LiteralPath $ExePath -Algorithm SHA256).Hash -ne $ExpectedHash -or
@@ -347,10 +348,18 @@ function Invoke-SilentSuiteBridgeInstall {
             if (-not $Previous.HasExited) { throw 'The previous bridge is still running.' }
         }
         if ($Replacement.BackedUp) {
-            Remove-Item -LiteralPath $Replacement.Backup -Force -ErrorAction Stop
-            $Replacement.BackedUp = $false
+            try {
+                Remove-Item -LiteralPath $Replacement.Backup -Force -ErrorAction Stop
+                $Replacement.BackedUp = $false
+            } catch {
+                Write-Warn "The verified bridge is running, but its previous backup could not be removed: $($Replacement.Backup)"
+            }
         }
-        Write-Ok "Bridge is running in the background. Closing this window does not stop it. Dashboard: $BridgeDashboardUrl"
+        if ($DashboardReady) {
+            Write-Ok "Bridge is running in the background. Closing this window does not stop it. Dashboard: $BridgeDashboardUrl"
+        } else {
+            Write-Warn "Bridge started in the background but the dashboard did not respond yet. Open $BridgeDashboardUrl or check $BridgeLog before adding the URL to your calendar app."
+        }
 
         # --- Done ---
         Write-Step "Setup complete!"
