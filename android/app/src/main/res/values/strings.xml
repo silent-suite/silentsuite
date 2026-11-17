@@ -1047,7 +1047,9 @@
     <string name="widget_empty">No events in the next 7 days</string>
     <string name="widget_no_account">Sign in to SilentSuite to use widgets.</string>
     <string name="widget_turned_off">Home screen widgets are turned off.</string>
-    <string name="widget_permission_required">Calendar permission needed. Tap to allow access.</string>
+    <string name="widget_permission_required">Calendar access needed</string>
+    <string name="widget_allow_access">Allow access</string>
+    <string name="widget_no_events_today">No events today</string>
     <string name="widget_read_failed">Could not load events. The agenda will try again on its next refresh.</string>
     <string name="widget_untitled">Untitled event</string>
     <string name="widget_all_day">All day</string>

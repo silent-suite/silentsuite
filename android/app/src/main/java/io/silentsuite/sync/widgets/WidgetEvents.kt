@@ -42,6 +42,11 @@ object WidgetEvents {
         }
     }
 
+    /** Keep today as an empty section when later events exist; an empty window has no sections. */
+    fun agendaDays(days: List<WidgetDay>, today: LocalDate): List<WidgetDay> =
+        if (days.all { it.events.isEmpty() }) emptyList()
+        else days.filter { it.date == today || it.events.isNotEmpty() }
+
     /** Clip a timed instance to one displayed day; equal endpoints represent a point event. */
     fun timedRange(event: WidgetEvent, day: LocalDate, zone: ZoneId): LongRange =
         maxOf(event.begin, day.atStartOfDay(zone).toInstant().toEpochMilli())..

@@ -125,4 +125,25 @@ class WidgetEventsTest {
         assertEquals(millis("2026-03-08T05:00:00Z")..millis("2026-03-09T04:00:00Z"), range)
     }
 
+
+    @Test fun `agenda retains empty today but omits other empty days when future events exist`() {
+        val future = event(1, "2026-11-19T10:00:00Z", "2026-11-19T11:00:00Z")
+        val days = WidgetEvents.agendaDays(WidgetEvents.group(listOf(future), first, 7, utc), first)
+        assertEquals(listOf(first, first.plusDays(2)), days.map { it.date })
+        assertTrue(days.first().events.isEmpty())
+        assertEquals(listOf(future), days.last().events)
+    }
+
+    @Test fun `agenda leaves a fully empty week to the existing window message`() {
+        assertTrue(WidgetEvents.agendaDays(WidgetEvents.group(emptyList(), first, 7, utc), first).isEmpty())
+    }
+
+    @Test fun `agenda preserves every event today instead of replacing past events with an empty row`() {
+        val morning = event(1, "2026-11-17T06:00:00Z", "2026-11-17T07:00:00Z")
+        val evening = event(2, "2026-11-17T21:00:00Z", "2026-11-17T22:00:00Z")
+        val days = WidgetEvents.agendaDays(WidgetEvents.group(listOf(evening, morning), first, 7, utc), first)
+        assertEquals(listOf(first), days.map { it.date })
+        assertEquals(listOf(morning, evening), days.single().events)
+    }
+
 }

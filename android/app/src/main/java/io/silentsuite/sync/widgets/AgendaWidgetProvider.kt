@@ -52,7 +52,9 @@ class AgendaWidgetProvider : AppWidgetProvider() {
                 views.setViewVisibility(R.id.widget_list, if (ready) View.VISIBLE else View.GONE)
                 views.setViewVisibility(R.id.widget_status, if (ready) View.GONE else View.VISIBLE)
                 views.setViewVisibility(R.id.widget_add, if (ready) View.VISIBLE else View.GONE)
-                views.setTextViewText(R.id.widget_status, context.getString(stateMessage(state)))
+                views.setViewVisibility(R.id.widget_permission_action,
+                    if (state == WidgetSettings.State.PERMISSION_REQUIRED) View.VISIBLE else View.GONE)
+                views.setTextViewText(R.id.widget_status_text, context.getString(stateMessage(state)))
                 views.setRemoteAdapter(R.id.widget_list, Intent(context, AgendaWidgetService::class.java).apply {
                     putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
                     data = Uri.parse("silentsuite-widget://agenda/$id")

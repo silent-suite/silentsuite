@@ -32,19 +32,23 @@ private class AgendaFactory(private val context: Context) : RemoteViewsService.R
 
     override fun onDataSetChanged() {
         val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
         val revision = WidgetSettings.dataRevision.get()
         val identity = Binder.clearCallingIdentity()
         val result = try {
-            WidgetEventReader.read(context, LocalDate.now(zone), AgendaWidgetProvider.DAYS, zone)
+            WidgetEventReader.read(context, today, AgendaWidgetProvider.DAYS, zone)
         } finally {
             Binder.restoreCallingIdentity(identity)
         }
+        val agendaDays = WidgetEvents.agendaDays(result.days, today)
         val rows = when {
             result.state != WidgetSettings.State.READY -> listOf(Row.Message(AgendaWidgetProvider.stateMessage(result.state)))
             result.failed -> listOf(Row.Message(R.string.widget_read_failed))
-            result.days.all { it.events.isEmpty() } -> listOf(Row.Message(R.string.widget_empty))
-            else -> result.days.filter { it.events.isNotEmpty() }.flatMap { day ->
-                listOf(Row.Day(day.date)) + day.events.map { Row.Event(day.date, it) }
+            agendaDays.isEmpty() -> listOf(Row.Message(R.string.widget_empty))
+            else -> agendaDays.flatMap { day ->
+                listOf(Row.Day(day.date)) + if (day.events.isEmpty())
+                    listOf(Row.Message(R.string.widget_no_events_today))
+                else day.events.map { Row.Event(day.date, it) }
             }
         }
         snapshot = Snapshot(rows, zone, revision)

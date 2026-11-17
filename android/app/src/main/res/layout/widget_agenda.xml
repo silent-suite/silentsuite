@@ -23,9 +23,18 @@
     </LinearLayout>
     <ListView android:id="@+id/widget_list" android:layout_width="match_parent" android:layout_height="0dp"
         android:layout_weight="1" android:layout_marginTop="8dp" android:divider="@null"
+        android:requiresFadingEdge="vertical" android:fadingEdgeLength="16dp"
         android:scrollbars="none" android:visibility="gone" />
-    <TextView android:id="@+id/widget_status" android:layout_width="match_parent" android:layout_height="0dp"
+    <LinearLayout android:id="@+id/widget_status" android:layout_width="match_parent" android:layout_height="0dp"
         android:layout_weight="1" android:minHeight="48dp" android:gravity="center"
-        android:padding="12dp" android:text="@string/widget_loading" android:textSize="14sp"
-        android:textColor="@color/semantic_on_surface_variant" />
+        android:orientation="vertical" android:padding="12dp" android:screenReaderFocusable="true">
+        <TextView android:id="@+id/widget_status_text" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:gravity="center" android:text="@string/widget_loading" android:textSize="14sp"
+            android:textColor="@color/semantic_on_surface_variant" />
+        <TextView android:id="@+id/widget_permission_action" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:minHeight="48dp" android:layout_marginTop="8dp" android:gravity="center"
+            android:paddingStart="20dp" android:paddingEnd="20dp" android:visibility="gone"
+            android:background="@drawable/widget_add_background" android:text="@string/widget_allow_access"
+            android:textSize="14sp" android:textStyle="bold" android:textColor="@color/semantic_on_primary_container" />
+    </LinearLayout>
 </LinearLayout>
