@@ -203,6 +203,18 @@ describe('photo', () => {
     expect(vcardStr).not.toContain('data:image');
     expect(parseVCard(vcardStr).photo).toBe('data:image/png;base64,iVBORw0KGgo=');
   });
+
+  it('writes the web app JPEG photo inline and reads it back unchanged', () => {
+    const photo = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+    const vcardStr = generateVCard(makeFullVCard({ photo }));
+    expect(vcardStr).toContain('PHOTO;ENCODING=b;TYPE=JPEG:/9j/4AAQSkZJRg==');
+    expect(parseVCard(vcardStr).photo).toBe(photo);
+  });
+
+  it('keeps a data URI the parser cannot map back as VALUE=URI', () => {
+    const photo = 'data:image/svg+xml;base64,PHN2Zy8+';
+    expect(generateVCard(makeFullVCard({ photo }))).toContain(`PHOTO;VALUE=URI:${photo}`);
+  });
 });
 
 // ── Line folding ──
