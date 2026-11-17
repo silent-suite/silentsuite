@@ -33,6 +33,13 @@ class CollectionEntity(db.BaseModel):
     dav_href = pw.CharField(null=True, default=None)
     dav_state_generation = pw.IntegerField(null=False, default=0, constraints=[pw.SQL("DEFAULT 0")])
 
+    def save(self, force_insert=False, only=None):
+        # A detached row must not overwrite the generation advanced by triggers.
+        if self.id is not None and not force_insert:
+            only = [field for field in (self._meta.sorted_fields if only is None else only)
+                    if field.name != "dav_state_generation"]
+        return super().save(force_insert=force_insert, only=only)
+
     class Meta:
         indexes = (
             (("local_user", "uid"), True),
