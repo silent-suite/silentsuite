@@ -146,14 +146,8 @@ describe('FREQ=MONTHLY', () => {
     const range: DateRange = { start: d(2026, 1, 1), end: d(2026, 6, 30) };
 
     const results = expandRecurrence('FREQ=MONTHLY;BYDAY=2MO', start, range);
-    // The source code uses matchesByday which only checks day-of-week, not nth occurrence
-    // So for MONTHLY with BYDAY, it checks that the current date is a Monday
-    // The actual dates will be the same day-of-month each month that falls on Monday
-    // Since the implementation is simplified (doesn't handle nth weekday),
-    // let's verify the dates are all Mondays
-    for (const date of results) {
-      expect(date.getDay()).toBe(1); // Monday
-    }
+    expect(results.map((date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`))
+      .toEqual(['2026-01-12', '2026-02-09', '2026-03-09', '2026-04-13', '2026-05-11', '2026-06-08']);
   });
 
   it('expands simple monthly recurrence (same day each month)', () => {

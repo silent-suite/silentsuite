@@ -31,6 +31,9 @@ interface NewCalendarEvent {
   categories?: string[]
   calendarId?: string
   timezone?: string
+  vtimezones?: string[][]
+  importError?: string
+  unknownComponents?: string[][]
   /** True only for a floating DATE-TIME source (no TZID, no Z); kept so it is written back floating. */
   floating?: true
   /** Original wall clock of a DST-gap TZID DTSTART (YYYYMMDDTHHMMSS); kept so it is written back. */
@@ -718,6 +721,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         categories: ne.categories ?? [],
         calendarId: ne.calendarId ?? defaultCalendarId(),
         timezone: ne.timezone,
+        ...(ne.vtimezones?.length ? { vtimezones: ne.vtimezones } : {}),
+        ...(ne.unknownComponents?.length ? { unknownComponents: ne.unknownComponents } : {}),
         ...(ne.floating === true ? { floating: true as const } : {}),
         ...(ne.startWallClock ? { startWallClock: ne.startWallClock } : {}),
         ...(ne.unknownProperties && ne.unknownProperties.length > 0 ? { unknownProperties: ne.unknownProperties } : {}),
@@ -734,7 +739,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
 
     // Batch sync to Etebase. Input positions the server acknowledged; the rest are rolled back.
     const acknowledged = new Set<number>()
-    let sent = false
+    let uncertain = false
     const etebase = useEtebaseStore.getState()
     if (etebase.account) {
       try {
@@ -745,15 +750,31 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         })
 
         for (const [targetCollectionUid, positions] of groups) {
-          const contents = positions.map((position) => ({
-            content: serializeCalendarEvent(events[position]!),
-            tempId: events[position]!.id,
-          }))
-          sent = true
-          const uids = await etebase.createItemsBatch('calendar', contents, targetCollectionUid)
+          const validPositions: number[] = []
+          const contents: Array<{ content: string; tempId: string }> = []
+          for (const position of positions) {
+            try {
+              if (newEvents[position]?.importError) continue
+              const event = events[position]!
+              if (!Number.isFinite(event.startDate.getTime()) || !Number.isFinite(event.endDate.getTime())) continue
+              contents.push({ content: serializeCalendarEvent(event), tempId: event.id })
+              validPositions.push(position)
+            } catch {
+              // This event is definitely unsaved; valid siblings still reach the batch.
+            }
+          }
+          if (contents.length === 0) continue
+          let uids: Array<string | null>
+          try {
+            uids = await etebase.createItemsBatch('calendar', contents, targetCollectionUid)
+          } catch {
+            uncertain = true
+            continue
+          }
+          if (uids.filter(Boolean).length < contents.length) uncertain = true
           // Each acknowledged event takes its item id for this concrete collection and keeps its own VEVENT UID.
           const itemIds = new Map<string, string>()
-          positions.forEach((position, index) => {
+          validPositions.forEach((position, index) => {
             const itemUid = uids[index]
             if (!itemUid) return
             itemIds.set(events[position]!.id, itemUid)
@@ -780,7 +801,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       const remaining = state.events.filter((e) => !tempIds.has(e.id))
       return remaining.length === state.events.length ? state : { events: remaining }
     })
-    throw new ImportIncompleteError(acknowledged.size, unsaved, sent)
+    throw new ImportIncompleteError(acknowledged.size, unsaved, uncertain)
   },
 
   syncFromRemote: (remoteEvents: CalendarEvent[]) => {

@@ -370,8 +370,8 @@ test('js-yaml counts empty merge mappings against the CPU budget', () => {
 
 test('Next and its ESLint config stay on the patched compatible release', () => {
   const web = requireFrom('apps/web/package.json')
-  assert.equal(web('next/package.json').version, '15.5.28')
-  assert.equal(web('eslint-config-next/package.json').version, '15.5.28')
+  assert.equal(web('next/package.json').version, '15.5.29')
+  assert.equal(web('eslint-config-next/package.json').version, '15.5.29')
   assert.equal(web('@sentry/nextjs/package.json').version, '10.75.2')
 })
 

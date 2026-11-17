@@ -191,7 +191,8 @@ export type { VCard, VCardName, VCardPhone, VCardEmail, VCardAddress } from './u
 
 // Todoist CSV parser
 export { parseTodoistCsv, parseTodoistDate } from './utils/csv-parser.js';
-export { isKnownTimeZone } from './utils/zoned-time.js';
+export { isKnownTimeZone, resolveTimeZone, decodeTimeZone, encodeTimeZone } from './utils/zoned-time.js';
+export { parseICalDurationSeconds } from './utils/ical-duration.js';
 
 // Recurrence expansion
 export { expandRecurrence, untilDateBefore, untilTimeBefore, occurrenceWallClock } from './utils/recurrence.js';
@@ -243,3 +244,5 @@ export type {
   BirthdayPlanResult,
   BirthdayPostCheck,
 } from './birthdays/birthday-calendar.js';
+
+export { WINDOWS_TO_IANA } from './utils/windows-zones.js';

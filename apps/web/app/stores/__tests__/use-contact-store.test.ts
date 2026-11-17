@@ -150,6 +150,18 @@ describe('useContactStore', () => {
     expect(updatedContent).not.toContain('UID:remote-contact-item')
   })
 
+  it('keeps additional names and hidden address components through create and edit', async () => {
+    const { deserializeContact } = await import('@silentsuite/core')
+    const source = ['BEGIN:VCARD', 'VERSION:3.0', 'UID:hidden', 'FN:John Public', 'N:Public;John;Quinlan,James;;', 'ADR;TYPE=home:PO Box 123;Apartment 4;;;;;', 'END:VCARD'].join('\r\n')
+    const { createItem, updateItem } = onlineAccount()
+    await useContactStore.getState().createContact({ ...deserializeContact(source), listId: 'contacts-1' })
+    expect(createItem.mock.calls[0]![1]).toContain('N:Public;John;Quinlan,James;;')
+    const saved = useContactStore.getState().contacts[0]!
+    await useContactStore.getState().updateContact(saved.id, { notes: 'New note' })
+    expect(updateItem.mock.calls[0]![2]).toContain('ADR;TYPE=home:PO Box 123;Apartment 4;;;;;')
+    expect(updateItem.mock.calls[0]![2]).toContain('N:Public;John;Quinlan,James;;')
+  })
+
   it('keeps unsupported properties through import, name/phone edits and a favorite, with the exact stored witness (#865)', async () => {
     const extras = ['X-TESTA:testA', 'X-TestB:testB', 'X-testC:testC', 'X-testd:testD']
     const customLinesOf = (content: string) => content.split('\r\n').filter((line) => /^X-test/i.test(line))
