@@ -14,7 +14,6 @@ from contextlib import contextmanager
 
 from .. import config
 from ..local_cache import Etebase
-from ..local_cache import db, models
 from .creds import Credentials, credentials_locked
 
 logger = logging.getLogger("silentsuite-bridge.cache")
@@ -99,20 +98,11 @@ class EteSyncCache:
                     "Configured account not found in credentials file. "
                     "Please authenticate via the browser first."
                 )
-            initialized = False
-            database = getattr(db.database_proxy, "obj", None)
-            same_database = database is not None and (
-                os.path.abspath(os.path.expanduser(str(database.database)))
-                == os.path.abspath(self.db_path)
-            )
-            if not read_only and same_database:
-                with db.atomic_connection():
-                    initialized = models.User.select().where(models.User.username == user).exists()
             etesync = Etebase(
                 user,
                 stored_session,
                 remote_url,
-                read_only=read_only or initialized,
+                read_only=read_only,
             )
             self._bind_epoch(user, etesync)
             return etesync, True

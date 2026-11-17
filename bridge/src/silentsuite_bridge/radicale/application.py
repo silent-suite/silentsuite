@@ -10,7 +10,6 @@ from radicale.app import Application as RadicaleApplication
 from radicale import httputils
 
 from ..privacy_logging import bounded_exception_class, bounded_identifier
-from ..local_cache import DavUidIndexPending
 
 _MAX_DIAGNOSTIC_LENGTH = 320
 
@@ -393,8 +392,6 @@ class Application(RadicaleApplication):
             environ["wsgi.input"] = body
         try:
             response = super()._handle_request(environ)
-        except DavUidIndexPending:
-            return _busy_response(environ)
         except (pw.OperationalError, sqlite3.OperationalError) as exc:
             if not _sqlite_busy(exc):
                 raise

@@ -38,7 +38,6 @@ from ..local_cache import (
     record_dav_change,
     resolve_dav_collection_uid,
     dav_collection_path,
-    DavUidIndexPending,
     retire_settled_tombstone,
 )
 from ..local_cache.models import (
@@ -825,13 +824,10 @@ class Collection(BaseCollection):
         )
         return token, changed_hrefs
 
-    def _sanitize_href_mappings(self, href=None):
+    def _sanitize_href_mappings(self):
         cache_col = self.collection.cache_col
         replaced = False
-        items = cache_col.items
-        if href is not None:
-            items = items.join(HrefMapper).where(HrefMapper.href == href)
-        for cache_item in items:
+        for cache_item in cache_col.items:
             mapper = HrefMapper.get_or_none(HrefMapper.content == cache_item)
             if mapper is None:
                 continue
@@ -928,13 +924,9 @@ class Collection(BaseCollection):
         return (self._get(href) for href in self._list())
 
     def has_uid(self, uid):
-        items = ItemEntity.select().where(
-            (ItemEntity.collection == self.collection.cache_col) & ~ItemEntity.deleted
-        )
-        if items.where(ItemEntity.dav_uid == uid).exists():
-            return True
-        if items.where(ItemEntity.dav_uid.is_null(True)).exists():
-            raise DavUidIndexPending("DAV UID index changed; retry request")
+        for item in self.get_all():
+            if item.uid == uid:
+                return True
         return False
 
     def _get(self, href):
@@ -1021,7 +1013,7 @@ class Collection(BaseCollection):
             if cache_col.deleted:
                 raise ValueError("collection is unavailable")
             self.collection.cache_col = cache_col
-            self._sanitize_href_mappings(href)
+            self._sanitize_href_mappings()
             previous_state_hash = dav_collection_state_hash(cache_col)
             existing = self._get(href)
             if existing is not None:
@@ -1279,7 +1271,7 @@ class Storage(BaseStorage):
                 return
 
             collection = Collection(self, path)
-        except (pw.OperationalError, DavUidIndexPending):
+        except pw.OperationalError:
             raise
         except Exception:
             return
@@ -1447,8 +1439,6 @@ class Storage(BaseStorage):
             self.user = user
             self.etesync = etesync
             try:
-                if mode == "w":
-                    etesync.prepare_dav_uid_index()
                 database = db.database_proxy.obj
                 owns_connection = database.is_closed()
                 connection = database.connection_context() if owns_connection else nullcontext()
