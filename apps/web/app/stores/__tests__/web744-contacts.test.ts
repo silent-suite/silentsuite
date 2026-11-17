@@ -1,5 +1,6 @@
 // @vitest-environment node
 import 'fake-indexeddb/auto'
+import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { _resetForTests as resetOfflineQueue, insertIfNoOutstanding, replay } from '@/app/lib/offline-queue'
 import { _resetForTests as resetDataCache } from '@/app/lib/data-cache'
@@ -83,9 +84,8 @@ describe('#744 the contact store saves through the captured record base', () => 
     useContactStore.setState({ contacts: [] } as any)
   })
 
-  async function shownSavedContact() {
+  async function shownSavedContact(vcard = contactVcard('vcard-uid-744', BASE_GIVEN)) {
     const probe = await makeSavedContact('')
-    const vcard = contactVcard('vcard-uid-744', BASE_GIVEN)
     const item = await probe.account.getCollectionManager().getItemManager(probe.collection).create({ mtime: 1 }, vcard)
     item.encryptedItem.__markSaved()
     const { account, collection } = probe
@@ -175,6 +175,34 @@ describe('#744 the contact store saves through the captured record base', () => 
     expect(second.map((record) => [record.type, record.rev])).toEqual([['sealed-update', 2]])
     expect(stored(item.uid).favorite).toBe(false)
     expect(JSON.stringify(second)).not.toContain(BASE_GIVEN)
+  })
+
+  it.each([false, true])('handles old emoji wire with a changed revision: %s', async (changedRevision) => {
+    const golden = JSON.parse(readFileSync(new URL('../../../../../packages/core/fixtures/contact-preservation-old-emoji.json', import.meta.url), 'utf8'))
+    const vcard = Buffer.from(golden.utf8_wire_base64, 'base64').toString('utf8')
+    const { account, collection, item } = await shownSavedContact(vcard)
+    if (changedRevision) {
+      const peer = item._clone()
+      await peer.setContent(vcard)
+      await account.getCollectionManager().getItemManager(collection).transaction([peer])
+      useEtebaseStore.setState({ itemCache: new Map([[item.uid, peer]]) })
+    }
+    const before = server.transactions.length
+    const displayName = 'a'.repeat(70) + '🙂'
+    await useContactStore.getState().updateContact(item.uid, { organization: 'New organization', displayName })
+    const saved = (await serverText(account, collection, item.uid))!
+    if (changedRevision) {
+      expect(saved).toBe(vcard)
+      // The first conditional attempt is rejected; the unequal witness prevents a retry.
+      expect(server.transactions.length).toBe(before + 1)
+      expect(useContactStore.getState().contactSaveStates[item.uid]).toBe('refused')
+    } else {
+      expect(deserializeContact(saved).organization).toBe('New organization')
+      expect(deserializeContact(saved).displayName).toBe(displayName)
+      // Previously corrupted characters cannot be recovered, but are not discarded either.
+      expect(deserializeContact(saved).notes).toBe(deserializeContact(vcard).notes)
+      expect(stored(item.uid).revision).toBe((await account.getCollectionManager().getItemManager(collection).fetch(item.uid)).etag)
+    }
   })
 
   it('#744 saves consecutive own edits and favorites and pairs the saved revision', async () => {

@@ -112,32 +112,21 @@ function splitCommaValues(value: string): string[] {
 // ── Line folding ──
 
 function foldLine(line: string): string {
-  const MAX_OCTETS = 75;
-  if (Buffer.byteLength(line, 'utf8') <= MAX_OCTETS) {
-    return line;
-  }
   const parts: string[] = [];
-  let remaining = line;
-  let isFirst = true;
-  while (Buffer.byteLength(remaining, 'utf8') > MAX_OCTETS) {
-    const limit = isFirst ? MAX_OCTETS : MAX_OCTETS - 1;
-    let cutPoint = 0;
-    let byteCount = 0;
-    for (let i = 0; i < remaining.length; i++) {
-      const charBytes = Buffer.byteLength(remaining[i]!, 'utf8');
-      if (byteCount + charBytes > limit) break;
-      byteCount += charBytes;
-      cutPoint = i + 1;
+  let current = '';
+  let octets = 0;
+  for (const character of line) {
+    const size = Buffer.byteLength(character, 'utf8');
+    if (octets + size > 75) {
+      parts.push(current);
+      current = ' '; // The continuation marker counts towards the next line's limit.
+      octets = 1;
     }
-    if (cutPoint === 0) cutPoint = 1;
-    parts.push(remaining.slice(0, cutPoint));
-    remaining = remaining.slice(cutPoint);
-    isFirst = false;
+    current += character;
+    octets += size;
   }
-  if (remaining.length > 0) {
-    parts.push(remaining);
-  }
-  return parts.join('\r\n ');
+  parts.push(current);
+  return parts.join('\r\n');
 }
 
 function unfoldLines(text: string): string {
@@ -320,7 +309,7 @@ function isRetainable(line: string, prop: ParsedProperty, consumedLabelGroups: S
   return true;
 }
 
-/** Fold a kept line at code-point boundaries. The legacy foldLine stays in use
+/** Fold a kept line at code-point boundaries. The ordinary foldLine stays in use
  *  for owned fields so their wire bytes are unchanged. QP lines, folds whose
  *  continuation a line-trimming importer would read as a card boundary, and
  *  lines that cannot be cut outside a run of '=', are emitted unfolded. */
