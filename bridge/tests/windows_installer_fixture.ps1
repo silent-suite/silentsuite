@@ -31,10 +31,34 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 namespace NAMESPACE {
   public class Program {
     private static readonly string Version = "VERSION";
+    [StructLayout(LayoutKind.Sequential)]
+    public struct StartupInfo {
+      public int Size;
+      public IntPtr Reserved, Desktop, Title;
+      public int X, Y, XSize, YSize, XCountChars, YCountChars, FillAttribute, Flags;
+      public short ShowWindow, ReservedSize;
+      public IntPtr ReservedBytes, StandardInput, StandardOutput, StandardError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ProcessInformation {
+      public IntPtr Process, Thread;
+      public int ProcessId, ThreadId;
+    }
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateProcessW(
+      string application, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes,
+      [MarshalAs(UnmanagedType.Bool)] bool inheritHandles, uint flags, IntPtr environment,
+      string directory, ref StartupInfo startup, out ProcessInformation process);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
     private static void Trace(string message) {
       string file = Path.Combine(Environment.GetEnvironmentVariable("SS_INSTALL_TRACE_DIR"),
                                  "process-" + Process.GetCurrentProcess().Id + ".log");
@@ -49,15 +73,21 @@ namespace NAMESPACE {
         if (Version == "new" && Environment.GetEnvironmentVariable("SS_FAIL_NEW_START") == "1") {
           Trace("exit 1 --background"); return 1;
         }
-        var start = new ProcessStartInfo(Assembly.GetExecutingAssembly().Location, "--serve");
-        start.UseShellExecute = false; start.CreateNoWindow = true;
-        // The server must not retain PowerShell's captured native-command pipes.
-        start.RedirectStandardInput = true;
-        start.RedirectStandardOutput = true;
-        start.RedirectStandardError = true;
-        Trace("child.start.begin");
-        var child = Process.Start(start);
-        Trace("child.start.return pid=" + child.Id);
+        string executable = Assembly.GetExecutingAssembly().Location;
+        var command = new StringBuilder("\"" + executable + "\" --serve");
+        var startup = new StartupInfo();
+        startup.Size = Marshal.SizeOf(typeof(StartupInfo));
+        ProcessInformation child;
+        // .NET Framework Process.Start inherits unrelated handles even with redirected streams.
+        Trace("child.start.begin inheritHandles=False");
+        if (!CreateProcessW(executable, command, IntPtr.Zero, IntPtr.Zero, false,
+                            0x08000000u | 0x00000200u, IntPtr.Zero, null, ref startup, out child)) {
+          int error = Marshal.GetLastWin32Error();
+          Trace("child.start.failed error=" + error);
+          throw new System.ComponentModel.Win32Exception(error);
+        }
+        try { Trace("child.start.return pid=" + child.ProcessId); }
+        finally { CloseHandle(child.Thread); CloseHandle(child.Process); }
         Trace("exit 0 --background"); return 0;
       }
       using (var ready = EventWaitHandle.OpenExisting(Environment.GetEnvironmentVariable("SS_INSTALL_READY")))
