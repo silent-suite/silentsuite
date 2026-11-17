@@ -255,17 +255,20 @@ def test_history_first_revision_exhausts_budget_but_makes_progress(client, store
 
 
 def test_catch_up_frame_shares_budget(stored):
-    from etebase_server.fastapi.routers.websocket import send_item_updates
+    from etebase_server.fastapi.routers.websocket import TicketInner, TicketRequest, send_item_updates
 
     other = models.CollectionItem.objects.create(uid=uid(), collection=stored.col, version=1)
     revision(other, stored.chunk, copies=6)
     frames = []
 
     class Socket:
+        path_params = {}
+
         async def send_bytes(self, data):
             frames.append(msgpack_decode(data))
 
-    asyncio.run(send_item_updates(Socket(), stored.col, stored.user, None))
+    ticket = TicketInner(user=stored.user.pk, req=TicketRequest(collection=stored.col.uid), token_id=stored.token.pk)
+    asyncio.run(send_item_updates(Socket(), stored.col, stored.user, None, ticket))
     assert len(frames) == 1
     actual = [body for item in frames[0]["data"] for body in bodies(item["content"])]
     assert sum(len(body) for body in actual if body is not None) <= 3 * len(BODY)

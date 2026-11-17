@@ -12,7 +12,7 @@ from etebase_server.django import models
 from etebase_server.myauth.models import UserType
 
 from ..db_hack import django_db_cleanup_decorator
-from ..dependencies import get_collection, get_collection_queryset, get_item_queryset
+from ..dependencies import AuthData, get_auth_data, get_collection, get_collection_queryset, get_item_queryset
 from ..exceptions import HttpError, PermissionDenied, ValidationError, transform_validation_error
 from ..msgpack import MsgpackRequest, MsgpackResponse, MsgpackRoute
 from ..redis import redisw
@@ -499,11 +499,16 @@ def item_list(
 
 @item_router.post("/item/subscription-ticket/", response_model=TicketOut, dependencies=PERMISSIONS_READ)
 async def item_list_subscription_ticket(
-    collection: models.Collection = Depends(get_collection),
-    user: UserType = Depends(get_authenticated_user),
+    collection_uid: str = Path(...),
+    auth_data: AuthData = Depends(get_auth_data),
 ):
     """Get an authentication ticket that can be used with the websocket endpoint"""
-    return MsgpackResponse(await get_ticket(TicketRequest(collection=collection.uid), user))
+    # Reuse the scoped lookup without a second authentication dependency (and
+    # token renewal). Keep all ORM work on the synchronous thread.
+    collection = await sync_to_async(
+        lambda: get_collection(collection_uid, get_collection_queryset(auth_data.user))
+    )()
+    return MsgpackResponse(await get_ticket(TicketRequest(collection=collection.uid), auth_data))
 
 
 def item_bulk_common(
