@@ -57,6 +57,8 @@ def test_windows_installer_replaces_only_its_running_target(tmp_path, mode):
         receipt = json.loads((tmp_path / "result.json").read_text(encoding="utf-8-sig"))
         assert receipt["OtherAlive"], ("a different installation must remain running", receipt)
         assert receipt["Failed"] == (mode not in {"success", "fresh-slow", "cleanup-failed"}), receipt
+        if mode in {"success", "fresh-slow", "upgrade-slow", "cleanup-failed"}:
+            assert receipt["ReadinessTargetPids"], "candidate must outlive the captured background command"
         if mode in {"success", "cleanup-failed"}:
             assert not receipt["Failed"], "upgrade failed while the installed executable was running"
             assert receipt["OldExited"] and receipt["InstalledNew"] and receipt["TargetRunning"], receipt

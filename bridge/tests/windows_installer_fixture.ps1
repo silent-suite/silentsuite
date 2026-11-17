@@ -86,6 +86,7 @@ $Failed = $false
 $InstallerError = $null
 $script:Injected = $false
 $script:RestoreFailures = 0
+$script:ReadinessTargetPids = @()
 
 try {
     if ($Mode -ne 'fresh-slow') {
@@ -152,13 +153,15 @@ try {
     function Test-BridgeDashboardReady {
         param([int]$TimeoutSeconds=20)
         Write-FixtureStep "readiness.begin timeout=$TimeoutSeconds url=$BridgeDashboardUrl"
+        $Ready = $ReadyEvent.WaitOne(5000)
+        $script:ReadinessTargetPids = @(Get-InstalledBridgeProcesses $ExePath | ForEach-Object { $_.Id })
+        Write-FixtureStep "readiness.target-pids $($script:ReadinessTargetPids -join ',')"
         if ($Mode -in @('fresh-slow','upgrade-slow')) {
-            if (-not $ReadyEvent.WaitOne(5000)) { throw 'Slow-start process did not acknowledge startup' }
+            if (-not $Ready) { throw 'Slow-start process did not acknowledge startup' }
             $ReadyEvent.Reset() | Out-Null
             Write-FixtureStep 'readiness.injected-false'
             return $false
         }
-        $Ready = $ReadyEvent.WaitOne(5000)
         Write-FixtureStep "readiness.end result=$Ready"
         return $Ready
     }
@@ -239,6 +242,7 @@ try {
         InstallerError=$InstallerError
         OtherExitCode=$(if ($Other.HasExited) { $Other.ExitCode } else { $null })
         TargetPids=@($AtTarget | ForEach-Object { $_.Id })
+        ReadinessTargetPids=$script:ReadinessTargetPids
         ElapsedMilliseconds=$TraceClock.ElapsedMilliseconds
     } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $Root 'result.json') -Encoding UTF8
     Write-FixtureStep 'receipt.end'
