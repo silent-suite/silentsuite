@@ -1247,7 +1247,7 @@ def test_the_target_is_claimed_only_after_the_registry_image_is_verified(workspa
 # ── Pinned PostgreSQL runtime identity ────────────────────────────────
 
 
-POSTGRES_IMAGE = "postgres@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7"
+POSTGRES_IMAGE = "postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e"
 
 
 def test_a_valid_release_verifies_the_pinned_database_image(workspace):
@@ -1365,7 +1365,7 @@ def test_a_bundle_whose_compose_unpins_the_database_is_rejected(workspace):
 
     compose = (ROOT / "self-host" / "docker-compose.yml").read_text(encoding="utf-8")
     workspace["release"].publish(
-        replace_compose=compose.replace(f"image: {POSTGRES_IMAGE}", "image: postgres:16.9-alpine")
+        replace_compose=compose.replace(f"image: {POSTGRES_IMAGE}", "image: postgres:16.16-alpine")
     )
 
     result = run_installer(workspace)

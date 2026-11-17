@@ -37,7 +37,7 @@ IMAGE_REPOSITORY="ghcr.io/silent-suite/silentsuite-server"
 # manifest field. It is still an immutable digest — the container holds the
 # database password and every account row, so a republished upstream tag must
 # not be able to change what runs.
-POSTGRES_IMAGE="postgres@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7"
+POSTGRES_IMAGE="postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e"
 INSTALL_DIR="${SILENTSUITE_DIR:-silentsuite-server}"
 REQUESTED_VERSION=""
 STAGE_DIR=""

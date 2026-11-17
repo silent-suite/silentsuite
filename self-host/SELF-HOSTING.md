@@ -30,7 +30,7 @@ You provide your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) to
 | Service | Image | Role |
 |---------|-------|------|
 | **SilentSuite Server** | `ghcr.io/silent-suite/silentsuite-server`, pinned to the immutable OCI index digest of the release you installed | Sync server (Etebase protocol). All data is E2E encrypted. |
-| **PostgreSQL** | `postgres`, pinned to the immutable OCI index digest of 16.9-alpine | Database for encrypted sync data and user accounts. |
+| **PostgreSQL** | `postgres`, pinned to the immutable OCI index digest of 16.16-alpine | Database for encrypted sync data and user accounts. Existing installations keep the digest in their installed Compose file. |
 
 ## Prerequisites
 
