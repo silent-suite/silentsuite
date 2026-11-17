@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/semantic_selected_container">
     <item android:id="@android:id/mask">
-        <shape><solid android:color="@android:color/white" /><corners android:radius="8dp" /></shape>
+        <!-- A ripple mask uses only alpha; this semantic role is opaque in both themes. -->
+        <shape><solid android:color="@color/semantic_on_surface" /><corners android:radius="8dp" /></shape>
     </item>
 </ripple>

@@ -154,8 +154,15 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 200, f"expected 200 Android resource XML files, found {len(files)}"
-    assert {"drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml"} <= {
+    assert len(files) == 210, f"expected 210 Android resource XML files, found {len(files)}"
+    assert {
+        "drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml",
+        "drawable/ic_widget_add.xml", "drawable/widget_add_background.xml",
+        "drawable/widget_background.xml", "drawable/widget_touch_background.xml",
+        "layout/widget_agenda.xml", "layout/widget_agenda_day.xml",
+        "layout/widget_agenda_event.xml", "layout/widget_agenda_message.xml",
+        "layout/widget_agenda_preview.xml", "xml/widget_agenda_info.xml",
+    } <= {
         path.relative_to(RES).as_posix() for path in files
     }
     return files
