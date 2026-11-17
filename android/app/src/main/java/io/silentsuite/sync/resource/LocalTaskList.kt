@@ -55,7 +55,7 @@ class LocalTaskList private constructor(
                 = AndroidTaskList.find(account, provider, factory, TaskLists._SYNC_ID + "==?", arrayOf(name)).firstOrNull()
 
 
-        private fun valuesFromCachedCollection(cachedCollection: CachedCollection, withColor: Boolean): ContentValues {
+        internal fun valuesFromCachedCollection(cachedCollection: CachedCollection, withColor: Boolean): ContentValues {
             val col = cachedCollection.col
             val meta = cachedCollection.meta
             val values = ContentValues(3)
@@ -63,7 +63,7 @@ class LocalTaskList private constructor(
             values.put(TaskLists.LIST_NAME, meta.name)
 
             if (withColor)
-                values.put(TaskLists.LIST_COLOR, LocalCalendar.parseColor(meta.color))
+                values.put(TaskLists.LIST_COLOR, LocalCalendar.parseColorOrNull(meta.color) ?: LocalCalendar.defaultColor)
 
             return values
         }
