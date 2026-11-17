@@ -202,6 +202,22 @@ def test_state_fingerprint_rolls_back_and_old_inserts_get_defaults(dav_world):
     assert local_cache.dav_collection_state_hash(col) == before
 
 
+def test_stale_collection_save_does_not_reset_database_generation(dav_world):
+    world = dav_world
+    col = world.add_collection()
+    world.add_item(col)
+    collection = world.collection()
+    token, _ = collection.sync()
+    before = local_cache.dav_collection_state_hash(col)
+    world.database.execute_sql("UPDATE itementity SET dirty=1 WHERE collection_id=?", (col.id,))
+    changed = local_cache.dav_collection_state_hash(col)
+    assert changed != before
+    col.save()
+    assert local_cache.dav_collection_state_hash(col) == changed
+    with pytest.raises(ValueError, match="sync token"):
+        collection.sync(token)
+
+
 def test_uid_conflict_uses_rendered_uid_after_older_write(dav_world):
     world = dav_world
     col = world.add_collection()
