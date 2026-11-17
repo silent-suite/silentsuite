@@ -34,6 +34,10 @@ namespace NAMESPACE {
         if (Version == "new" && Environment.GetEnvironmentVariable("SS_FAIL_NEW_START") == "1") return 1;
         var start = new ProcessStartInfo(Assembly.GetExecutingAssembly().Location, "--serve");
         start.UseShellExecute = false; start.CreateNoWindow = true;
+        // The server must not retain PowerShell's captured native-command pipes.
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
         Process.Start(start); return 0;
       }
       using (var ready = EventWaitHandle.OpenExisting(Environment.GetEnvironmentVariable("SS_INSTALL_READY")))

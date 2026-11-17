@@ -33,7 +33,7 @@ def test_windows_installer_replaces_only_its_running_target(tmp_path, mode):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     receipt = json.loads((tmp_path / "result.json").read_text(encoding="utf-8-sig"))
-    assert receipt["OtherAlive"], "a different installation must remain running"
+    assert receipt["OtherAlive"], ("a different installation must remain running", receipt)
     assert receipt["Failed"] == (mode != "success"), receipt
     if mode == "success":
         assert not receipt["Failed"], "upgrade failed while the installed executable was running"

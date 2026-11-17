@@ -117,10 +117,12 @@ def test_pulled_revision_precedes_conditional_mutation(dav_world, monkeypatch):
     assert "Remote revision" in world.collection()._get("contact-1.vcf").serialize()
 
 
-def test_initialized_session_can_open_while_another_writer_is_active(dav_world):
+def test_fully_migrated_session_can_open_while_another_writer_is_active(dav_world):
     world = dav_world
     col = world.add_collection()
     world.add_item(col)
+    # Complete the token-index migration that follows first creation of DAV tables.
+    local_cache._ensure_cache_tables(world.database)
     world.database.timeout = 0.025
     with ThreadPoolExecutor(max_workers=1) as pool:
         with world.database.atomic("IMMEDIATE"):
@@ -129,6 +131,19 @@ def test_initialized_session_can_open_while_another_writer_is_active(dav_world):
             session, created = pending.result(timeout=5)
             assert created and session.user.id == world.user.id
             assert session._session_is_current()
+
+
+def test_current_schema_migration_issues_only_reads(dav_world, monkeypatch):
+    world = dav_world
+    local_cache._ensure_cache_tables(world.database)
+    execute = world.database.execute_sql
+
+    def read_sql(sql, *args, **kwargs):
+        assert sql.lstrip().split(None, 1)[0].upper() in {"SELECT", "PRAGMA"}, sql
+        return execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(world.database, "execute_sql", read_sql)
+    local_cache._migrate_cache_schema(world.database)
 
 
 @pytest.mark.parametrize("method", ["PUT", "DELETE"])
