@@ -3,6 +3,7 @@ import logging
 import typing as t
 from datetime import datetime
 
+import msgpack
 import nacl
 import nacl.encoding
 import nacl.hash
@@ -90,7 +91,11 @@ class Authentication(BaseModel):
 class Login(Authentication):
     @cached_property
     def response_data(self) -> LoginResponse:
-        return LoginResponse(**msgpack_decode(self.response))
+        try:
+            return LoginResponse(**msgpack_decode(self.response))
+        except (msgpack.UnpackException, ValueError, TypeError):
+            # Pydantic validation errors are ValueErrors too.
+            raise HttpError("invalid_response", "Invalid authentication response.") from None
 
 
 class ChangePasswordResponse(LoginResponse):
@@ -101,7 +106,10 @@ class ChangePasswordResponse(LoginResponse):
 class ChangePassword(Authentication):
     @cached_property
     def response_data(self) -> ChangePasswordResponse:
-        return ChangePasswordResponse(**msgpack_decode(self.response))
+        try:
+            return ChangePasswordResponse(**msgpack_decode(self.response))
+        except (msgpack.UnpackException, ValueError, TypeError):
+            raise HttpError("invalid_response", "Invalid authentication response.") from None
 
 
 class UserSignup(BaseModel):
