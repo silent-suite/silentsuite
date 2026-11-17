@@ -202,8 +202,14 @@ def login_challenge(user: UserType = Depends(get_login_user)):
 def login(data: Login, request: Request):
     user = get_login_user(request, LoginChallengeIn(username=data.response_data.username))
     host = request.headers.get("Host")
+    # Reject bad proofs without queuing unauthenticated traffic on the row lock.
     validate_login_request(data.response_data, data, user, "login", host)
-    ret = LoginOut.from_orm(user)
+    with transaction.atomic():
+        # Password changes take the same lock. Replace get_login_user's cached
+        # reverse relation before checking again and issuing a token.
+        user.userinfo = UserInfo.objects.select_for_update().get(owner=user)
+        validate_login_request(data.response_data, data, user, "login", host)
+        ret = LoginOut.from_orm(user)
     user_logged_in.send(sender=user.__class__, request=None, user=user)
     return MsgpackResponse(ret)
 
@@ -215,10 +221,14 @@ def logout(auth_data: AuthData = Depends(get_auth_data)):
 
 
 @authentication_router.post("/change_password/", status_code=status.HTTP_204_NO_CONTENT, responses=permission_responses)
-def change_password(data: ChangePassword, request: Request, user: UserType = Depends(get_authenticated_user)):
+def change_password(data: ChangePassword, request: Request, auth_data: AuthData = Depends(get_auth_data)):
+    user = auth_data.user
     host = request.headers.get("Host")
-    validate_login_request(data.response_data, data, user, "changePassword", host)
-    save_changed_password(data, user)
+    with transaction.atomic():
+        user.userinfo = UserInfo.objects.select_for_update().get(owner=user)
+        validate_login_request(data.response_data, data, user, "changePassword", host)
+        save_changed_password(data, user)
+        AuthToken.objects.filter(user=user).exclude(pk=auth_data.token.pk).delete()
 
 
 @authentication_router.post("/dashboard_url/", responses=permission_responses)
