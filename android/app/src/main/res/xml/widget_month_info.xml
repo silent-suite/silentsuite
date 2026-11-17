@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="280dp"
+    android:minHeight="300dp"
+    android:minResizeWidth="250dp"
+    android:minResizeHeight="280dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="4"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_month"
+    android:description="@string/widget_month_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

@@ -1036,4 +1036,16 @@
     <string name="report_problem_error_characters">Contains characters that can\'t be sent</string>
     <string name="report_problem_error_email">Enter a valid email address or leave this empty</string>
     <string name="report_problem_clip_label">SilentSuite problem report</string>
+    <!-- Month home-screen widget -->
+    <string name="widget_month_name">Month</string>
+    <string name="widget_month_description">A month of your SilentSuite calendar</string>
+    <string name="widget_month_previous">Previous month</string>
+    <string name="widget_month_next">Next month</string>
+    <string name="widget_month_today">Today</string>
+    <string name="widget_month_return_today">Back to this month</string>
+    <string name="widget_month_add_event">Add event</string>
+    <string name="widget_month_has_events">Has events</string>
+    <string name="widget_month_permission">Allow calendar access in SilentSuite to see your month.</string>
+    <string name="widget_month_no_calendar">Open SilentSuite to add or show a calendar.</string>
+    <string name="widget_month_unavailable">Open SilentSuite to view your calendars.</string>
 </resources>
