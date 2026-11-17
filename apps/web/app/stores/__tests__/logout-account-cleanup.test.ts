@@ -1,11 +1,11 @@
 // Logout / invalid-session cleanup with the real auth store, the real Etebase
 // store destroy(), real account epochs and real secure-storage, offline-queue
-// and data-cache on fake-indexeddb. Only billing /auth/ and /subscription
-// fetches and the toast module are stubbed; persistence functions are wrapped
+// and data-cache on fake-indexeddb. Network calls, the build-mode flag and the
+// toast module are stubbed; persistence functions are wrapped
 // to observe or inject account switches after the real call completes. All
 // data is synthetic.
 import 'fake-indexeddb/auto'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Each hook runs while the real call it is attached to is still pending.
 const hooks = vi.hoisted(() => ({
@@ -14,6 +14,12 @@ const hooks = vi.hoisted(() => ({
   duringSecureClear: null as null | (() => Promise<void>),
   duringMigration: null as null | (() => Promise<void>),
 }))
+const buildMode = vi.hoisted(() => ({ selfHosted: false }))
+
+vi.mock('@/app/lib/self-hosted', async importOriginal => {
+  const real = await importOriginal<typeof import('@/app/lib/self-hosted')>()
+  return { ...real, get isSelfHosted() { return buildMode.selfHosted } }
+})
 
 vi.mock('@/app/stores/use-toast-store', () => ({ showErrorToast: vi.fn() }))
 vi.mock('@/app/lib/data-cache', async (importOriginal) => {
@@ -43,7 +49,7 @@ import { getMountedNoteEditor, getNoteObligation, markNoteObligation, registerNo
 import { getContactOwner, hasContactFieldDraft, registerContactOwner, resetContactLifecycle, setContactFieldDraft } from '../use-contact-store'
 import { useCalendarStore } from '../use-calendar-store'
 import { usePreferencesStore } from '../use-preferences-store'
-import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import { bumpAccountEpoch, establishLogoutGeneration, getAccountEpoch, LOGOUT_GENERATION_KEY } from '@/app/lib/account-epoch'
 import { secureClear, secureGet, secureSet } from '@/app/lib/secure-storage'
 import { clearAll as clearQueue, enqueue, getAll, _resetForTests as resetQueue } from '@/app/lib/offline-queue'
 import { clearAll as clearCache, getMeta, putMeta } from '@/app/lib/data-cache'
@@ -58,10 +64,12 @@ const userA = { id: 'synthetic-user-A', email: 'a@synthetic.invalid', planId: 'p
 const userB = { ...userA, id: 'synthetic-user-B', email: 'b@synthetic.invalid' }
 
 const fetchMock = vi.fn()
+const syncLogoutMock = vi.fn()
 const realFetch = globalThis.fetch
-// Only billing /auth/ and /subscription calls are stubbed; module/WASM loading keeps the real loader.
+// Module/WASM loading keeps the real loader; only explicit network routes are stubbed.
 vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input)
+  if (url.endsWith('/api/v1/authentication/logout/')) return syncLogoutMock(input, init)
   return url.includes('/auth/') || url.endsWith('/subscription') ? fetchMock(input, init) : realFetch(input, init)
 })
 vi.stubGlobal('BroadcastChannel', undefined)
@@ -100,7 +108,9 @@ function signInA() {
 }
 
 beforeEach(async () => {
+  buildMode.selfHosted = false
   fetchMock.mockReset()
+  syncLogoutMock.mockReset().mockResolvedValue(new Response(null, { status: 204 }))
   hooks.duringCacheClear = null
   hooks.duringQueueClear = null
   hooks.duringSecureClear = null
@@ -114,13 +124,163 @@ beforeEach(async () => {
   await clearQueue()
   await clearCache()
   await secureClear()
-  useEtebaseStore.setState({ syncEngine: null })
+  useEtebaseStore.setState({ syncEngine: null, account: null })
   useNoteStore.setState({ notes: [] })
   expect(await persisted()).toEqual(CLEARED)
   // S2b: also clear the not-yet-declared hostedAccess field (test-local cast; no app stub).
   useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false, error: null, pendingSignup: null, subscriptionStatus: null, ...{ hostedAccess: null } } as Partial<ReturnType<typeof useAuthStore.getState>>)
   await seed(SESSION_A, FP_A, 'note-a')
   expect(await persisted()).toEqual(RETAINED_A)
+})
+
+describe('sync server sign-out', () => {
+  const accountA = () => ({ serverUrl: 'https://sync.synthetic.invalid/base/', authToken: 'synthetic-token-A' })
+
+  beforeEach(() => {
+    signInA()
+    useEtebaseStore.setState({ account: accountA() })
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+  })
+
+  afterEach(() => vi.useRealTimers())
+
+  it.each(['https://sync.synthetic.invalid/base', 'https://sync.synthetic.invalid/base/'])(
+    'revokes the departing token once at its server before teardown: %s', async serverUrl => {
+      const departing = { ...accountA(), serverUrl }
+      useEtebaseStore.setState({ account: departing })
+      syncLogoutMock.mockImplementation(async (_input, init) => {
+        expect(useAuthStore.getState().isAuthenticated).toBe(false)
+        expect(useEtebaseStore.getState().account).toBe(departing)
+        expect(new Headers(init.headers).get('Authorization')).toBe('Token synthetic-token-A')
+        expect(init.method).toBe('POST')
+        expect(init.credentials).toBe('omit')
+        return new Response(null, { status: 204 })
+      })
+
+      await useAuthStore.getState().logout()
+
+      expect(syncLogoutMock).toHaveBeenCalledTimes(1)
+      expect(String(syncLogoutMock.mock.calls[0][0])).toBe('https://sync.synthetic.invalid/base/api/v1/authentication/logout/')
+      expect(await persisted()).toEqual(CLEARED)
+    },
+  )
+
+  it.each(['reject', 'throw'] as const)('still clears local material when revocation fails: %s', async failure => {
+    syncLogoutMock.mockImplementation(() => {
+      if (failure === 'throw') throw new TypeError('synthetic offline failure')
+      return Promise.reject(new TypeError('synthetic offline failure'))
+    })
+    await useAuthStore.getState().logout()
+    expect(syncLogoutMock).toHaveBeenCalledTimes(1)
+    expect(await persisted()).toEqual(CLEARED)
+  })
+
+  it('revokes a self-hosted build session without contacting billing', async () => {
+    buildMode.selfHosted = true
+    await useAuthStore.getState().logout()
+    expect(syncLogoutMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await persisted()).toEqual(CLEARED)
+  })
+
+  it('bounds a hanging revocation, handles its late rejection and invalidates hosted restore', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let rejectRequest!: (reason: Error) => void
+    syncLogoutMock.mockImplementation(() => new Promise((_resolve, reject) => { rejectRequest = reject }))
+    const logout = useAuthStore.getState().logout()
+    await vi.waitFor(() => expect(syncLogoutMock).toHaveBeenCalledTimes(1))
+    const signal = syncLogoutMock.mock.calls[0][1].signal as AbortSignal
+    await vi.advanceTimersByTimeAsync(2000)
+    await logout
+    expect(signal.aborted).toBe(true)
+    expect(await persisted()).toEqual(CLEARED)
+    expect(localStorage.getItem(INVALIDATED)).not.toBeNull()
+    rejectRequest(new Error('synthetic late failure'))
+    await Promise.resolve()
+    fetchMock.mockClear()
+    await useAuthStore.getState().restoreSession()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+  })
+
+  it('bounds an aborted hosted DELETE and still blocks reuse of its server session', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    fetchMock.mockImplementation(() => new Promise(() => {}))
+    const logout = useAuthStore.getState().logout()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const signal = fetchMock.mock.calls[0][1].signal as AbortSignal
+    await vi.advanceTimersByTimeAsync(2000)
+    await logout
+    expect(signal.aborted).toBe(true)
+    expect(await persisted()).toEqual(CLEARED)
+    expect(localStorage.getItem(INVALIDATED)).not.toBeNull()
+    fetchMock.mockReset().mockResolvedValue(new Response(JSON.stringify({ ...userA, rememberDevice: true })))
+    await useAuthStore.getState().restoreSession()
+    expect(await useAuthStore.getState().refreshSession()).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps the newer account while the departing token request is pending', async () => {
+    let finish!: (value: Response) => void
+    syncLogoutMock.mockImplementation(() => new Promise<Response>(resolve => { finish = resolve }))
+    const logout = useAuthStore.getState().logout()
+    await vi.waitFor(() => expect(syncLogoutMock).toHaveBeenCalledTimes(1))
+    await secureClear()
+    await clearQueue()
+    await establishB()
+    const accountB = { serverUrl: 'https://other.synthetic.invalid', authToken: 'synthetic-token-B' }
+    useEtebaseStore.setState({ account: accountB })
+    finish(new Response(null, { status: 204 }))
+    await logout
+    expect(syncLogoutMock).toHaveBeenCalledTimes(1)
+    expect(new Headers(syncLogoutMock.mock.calls[0][1].headers).get('Authorization')).toBe('Token synthetic-token-A')
+    expect(useEtebaseStore.getState().account).toBe(accountB)
+    expect(accountB.authToken).toBe('synthetic-token-B')
+    expect(await persisted()).toEqual(B_PERSISTED)
+    expect(localStorage.getItem(INVALIDATED)).toBeNull()
+  })
+
+  it('does not revoke a replacement account published by a signed-out subscriber', async () => {
+    const accountB = { serverUrl: 'https://other.synthetic.invalid', authToken: 'synthetic-token-B' }
+    const unsubscribe = useAuthStore.subscribe(state => {
+      if (state.user !== null) return
+      unsubscribe()
+      bumpAccountEpoch()
+      useEtebaseStore.setState({ account: accountB })
+      useAuthStore.setState({ user: userB, isAuthenticated: true })
+    })
+    try {
+      await useAuthStore.getState().logout()
+      expect(syncLogoutMock).not.toHaveBeenCalled()
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(useEtebaseStore.getState().account).toBe(accountB)
+      expect(useAuthStore.getState().user).toBe(userB)
+    } finally { unsubscribe() }
+  })
+
+  it.each(['account', 'token'] as const)('skips revocation when the departing %s is missing and still clears locally', async missing => {
+    useEtebaseStore.setState({ account: missing === 'account' ? null : { ...accountA(), authToken: null } })
+    await useAuthStore.getState().logout()
+    expect(syncLogoutMock).not.toHaveBeenCalled()
+    expect(await persisted()).toEqual(CLEARED)
+  })
+
+  it('does not revoke from a tab whose logout generation was superseded', async () => {
+    establishLogoutGeneration(localStorage.getItem(LOGOUT_GENERATION_KEY))
+    localStorage.setItem(LOGOUT_GENERATION_KEY, 'synthetic-newer-logout-generation')
+    await useAuthStore.getState().logout()
+    await vi.waitFor(() => expect(useEtebaseStore.getState().account).toBeNull())
+    expect(syncLogoutMock).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await persisted()).toEqual(RETAINED_A)
+  })
+
+  it('does not revoke the sync token during invalid-hosted-auth cleanup', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 401 }))
+    expect(await useAuthStore.getState().refreshSession()).toBe(false)
+    expect(syncLogoutMock).not.toHaveBeenCalled()
+    expect(await persisted()).toEqual(CLEARED)
+  })
 })
 
 describe('logout cleanup with real Etebase teardown', () => {
