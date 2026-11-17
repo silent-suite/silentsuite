@@ -538,6 +538,7 @@ class TestWebsocketRevocation:
 
     @pytest.mark.parametrize("change", ["deleted_user", "deleted_token", "legacy_ticket", "wrong_user"])
     def test_ticket_state_is_rechecked_before_catch_up(self, ws_client, fake_redis, membership, user_factory, change):
+        from etebase_server.django import models
         from etebase_server.django.token_auth.models import AuthToken
         from etebase_server.fastapi.utils import msgpack_encode
 
@@ -547,6 +548,8 @@ class TestWebsocketRevocation:
         assert stored_ticket["token_id"] == token.pk
         assert "key" not in stored_ticket
         if change == "deleted_user":
+            # Remove the membership protecting the user's collection type before its owner.
+            models.CollectionMember.objects.filter(user=membership.user).delete()
             membership.user.delete()
         elif change == "deleted_token":
             token.delete()
