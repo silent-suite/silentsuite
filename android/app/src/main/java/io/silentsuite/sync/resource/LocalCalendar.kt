@@ -94,7 +94,7 @@ class LocalCalendar private constructor(
         fun findByName(account: Account, provider: ContentProviderClient, factory: Factory, name: String): LocalCalendar?
             = AndroidCalendar.find(account, provider, factory, Calendars.NAME + "==?", arrayOf(name)).firstOrNull()
 
-        private fun valuesFromCachedCollection(cachedCollection: CachedCollection, withColor: Boolean): ContentValues {
+        internal fun valuesFromCachedCollection(cachedCollection: CachedCollection, withColor: Boolean): ContentValues {
             val values = ContentValues()
             val col = cachedCollection.col
             val meta = cachedCollection.meta
@@ -102,7 +102,7 @@ class LocalCalendar private constructor(
             values.put(Calendars.CALENDAR_DISPLAY_NAME, meta.name)
 
             if (withColor)
-                values.put(Calendars.CALENDAR_COLOR, parseColor(meta.color))
+                values.put(Calendars.CALENDAR_COLOR, parseColorOrNull(meta.color) ?: defaultColor)
 
             putAccessLevel(values, col.accessLevel, cachedBirthdaysActive(cachedCollection))
 

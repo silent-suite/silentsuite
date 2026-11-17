@@ -5,16 +5,19 @@ import typing as t
 import nacl.encoding
 import nacl.utils
 from asgiref.sync import sync_to_async
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
+from django.utils import timezone
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
 from redis import asyncio as aioredis
 from redis.exceptions import ConnectionError
 
 from etebase_server.django import models
+from etebase_server.django.token_auth.models import AuthToken
 from etebase_server.django.utils import CallbackContext, get_user_queryset
 from etebase_server.myauth.models import UserType, get_typed_user_model
 
-from ..dependencies import get_collection_queryset, get_item_queryset
+from ..db_hack import django_db_cleanup_decorator
+from ..dependencies import AuthData, get_collection_queryset, get_item_queryset
 from ..exceptions import NotSupported
 from ..msgpack import MsgpackRoute, msgpack_decode, msgpack_encode
 from ..redis import redisw
@@ -40,18 +43,19 @@ class TicketOut(BaseModel):
 class TicketInner(BaseModel):
     user: int
     req: TicketRequest
+    token_id: t.Optional[int] = None
 
 
 async def get_ticket(
     ticket_request: TicketRequest,
-    user: UserType,
+    auth_data: AuthData,
 ):
     """Get an authentication ticket that can be used with the websocket endpoint for authentication"""
     if not redisw.is_active:
         raise NotSupported(detail="This end-point requires Redis to be configured")
 
     uid = nacl.encoding.URLSafeBase64Encoder.encode(nacl.utils.random(32))
-    ticket_model = TicketInner(user=user.id, req=ticket_request)
+    ticket_model = TicketInner(user=auth_data.user.id, req=ticket_request, token_id=auth_data.token.pk)
     ticket_raw = msgpack_encode(ticket_model.dict())
     # `ex` is in seconds.
     await redisw.redis.set(uid, ticket_raw, ex=TICKET_VALIDITY_SECONDS)
@@ -73,7 +77,29 @@ def get_websocket_user(websocket: WebSocket, ticket_model: t.Optional[TicketInne
     if ticket_model is None:
         return None
     user_queryset = get_user_queryset(User.objects.all(), CallbackContext(websocket.path_params))
-    return user_queryset.get(id=ticket_model.user)
+    return user_queryset.filter(id=ticket_model.user).first()
+
+
+@django_db_cleanup_decorator
+def websocket_can_read(websocket: WebSocket, ticket: TicketInner) -> bool:
+    if ticket.token_id is None:
+        return False
+    users = get_user_queryset(User.objects.all(), CallbackContext(websocket.path_params))
+    user = users.filter(id=ticket.user).first()
+    if user is None or not user.is_active:
+        return False
+    if not AuthToken.objects.filter(pk=ticket.token_id, user=user).filter(
+        Q(expiry__isnull=True) | Q(expiry__gte=timezone.now())
+    ).exists():
+        return False
+    return models.CollectionMember.objects.filter(user=user, collection__uid=ticket.req.collection).exists()
+
+
+async def verify_websocket_access(websocket: WebSocket, ticket: TicketInner) -> bool:
+    if await sync_to_async(websocket_can_read)(websocket, ticket):
+        return True
+    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    return False
 
 
 @websocket_router.websocket("/{ticket}/")
@@ -84,6 +110,8 @@ async def websocket_endpoint(
     ticket_model: TicketInner = Depends(load_websocket_ticket),
 ):
     if user is None:
+        if ticket_model is not None:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     if not user.is_active:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -97,18 +125,24 @@ async def send_item_updates(
     collection: models.Collection,
     user: UserType,
     stoken: t.Optional[str],
-):
+    ticket_model: TicketInner,
+) -> bool:
     from .collection import item_list_common
 
     done = False
     while not done:
+        if not await verify_websocket_access(websocket, ticket_model):
+            return False
         queryset = await sync_to_async(get_item_queryset)(collection)
         response = await sync_to_async(item_list_common)(queryset, user, stoken, limit=50, prefetch="auto")
         done = response.done
         # Continue the next page after this one, or the first page repeats forever.
         stoken = response.stoken
         if len(response.data) > 0:
+            if not await verify_websocket_access(websocket, ticket_model):
+                return False
             await websocket.send_bytes(msgpack_encode(response.dict()))
+    return True
 
 
 async def close_pubsub(pubsub: aioredis.client.PubSub):
@@ -130,6 +164,8 @@ async def redis_connector(websocket: WebSocket, ticket_model: TicketInner, user:
             await pubsub.subscribe(channel_name)
 
             # Send missing items if we are not up to date
+            if not await verify_websocket_access(websocket, ticket_model):
+                return
             queryset: QuerySet[models.Collection] = get_collection_queryset(user)
             collection: t.Optional[models.Collection] = await sync_to_async(
                 queryset.filter(uid=ticket_model.req.collection).first
@@ -137,13 +173,17 @@ async def redis_connector(websocket: WebSocket, ticket_model: TicketInner, user:
             if collection is None:
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
-            await send_item_updates(websocket, collection, user, stoken)
+            if not await send_item_updates(websocket, collection, user, stoken, ticket_model):
+                return
 
             async def handle_message():
                 # redis-py returns a dict per message; the published payload is in "data".
                 msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=20)
                 if msg is not None and msg["type"] == "message":
+                    if not await verify_websocket_access(ws, ticket_model):
+                        return False
                     await ws.send_bytes(msg["data"])
+                return True
 
             # We wait on the websocket so we fail if web sockets fail or get data
             receive = asyncio.create_task(websocket.receive())
@@ -162,7 +202,8 @@ async def redis_connector(websocket: WebSocket, ticket_model: TicketInner, user:
                         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                         return
                     # Re-raise errors from reading or forwarding the message.
-                    message.result()
+                    if not message.result():
+                        return
 
             except ConnectionError:
                 await websocket.close(code=status.WS_1012_SERVICE_RESTART)

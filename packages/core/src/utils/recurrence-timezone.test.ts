@@ -52,15 +52,15 @@ describe('UTC-anchored (Z) series repeat at a fixed UTC time', () => {
     ]);
   });
 
-  it('monthly from the 31st keeps the existing month-end clamp at 18:00Z', () => {
+  it('monthly from the 31st skips missing dates and keeps 18:00Z', () => {
     const e = vevent('DTSTART:20260131T180000Z', 'DTEND:20260131T190000Z', 'RRULE:FREQ=MONTHLY;COUNT=4');
     const out = zoned(e, 'UTC');
     expect(out).toHaveLength(4);
     expect(out).toEqual([
       '2026-01-31T18:00:00.000Z',
-      '2026-02-28T18:00:00.000Z',
       '2026-03-31T18:00:00.000Z',
-      '2026-04-30T18:00:00.000Z',
+      '2026-05-31T18:00:00.000Z',
+      '2026-07-31T18:00:00.000Z',
     ]);
   });
 });

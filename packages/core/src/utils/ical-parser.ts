@@ -1,3 +1,4 @@
+import { decodeTimeZone, encodeTimeZone, isKnownTimeZone, resolveTimeZone } from './zoned-time.js';
 /**
  * Lightweight iCalendar (RFC 5545) parser/generator.
  * Supports VEVENT components with common properties.
@@ -5,6 +6,10 @@
 
 export interface VEvent {
   uid: string;
+  /** File-import context; supplied definitions travel with each stored item. */
+  vtimezones?: string[][];
+  overrides?: string[][];
+  importError?: string;
   dtstart: string;
   dtend?: string;
   duration?: string;
@@ -64,6 +69,9 @@ export interface VAlarm {
   action: string;
   trigger: string;
   description?: string;
+  triggerParams?: Record<string, string>;
+  /** Complete source block, retained only while its editable fields still match. */
+  source?: string[];
 }
 
 // ── Escaping ──
@@ -106,33 +114,21 @@ function splitCommaValues(value: string): string[] {
 // ── Line folding ──
 
 function foldLine(line: string): string {
-  const MAX_OCTETS = 75;
-  if (Buffer.byteLength(line, 'utf8') <= MAX_OCTETS) {
-    return line;
-  }
   const parts: string[] = [];
-  let remaining = line;
-  let isFirst = true;
-  while (Buffer.byteLength(remaining, 'utf8') > MAX_OCTETS) {
-    // For continuation lines, we prepend a space which takes 1 octet
-    const limit = isFirst ? MAX_OCTETS : MAX_OCTETS - 1;
-    let cutPoint = 0;
-    let byteCount = 0;
-    for (let i = 0; i < remaining.length; i++) {
-      const charBytes = Buffer.byteLength(remaining[i]!, 'utf8');
-      if (byteCount + charBytes > limit) break;
-      byteCount += charBytes;
-      cutPoint = i + 1;
+  let current = '';
+  let octets = 0;
+  for (const character of line) {
+    const size = Buffer.byteLength(character, 'utf8');
+    if (octets + size > 75) {
+      parts.push(current);
+      current = ' '; // The continuation marker counts towards the next line's limit.
+      octets = 1;
     }
-    if (cutPoint === 0) cutPoint = 1; // at least one char
-    parts.push(remaining.slice(0, cutPoint));
-    remaining = remaining.slice(cutPoint);
-    isFirst = false;
+    current += character;
+    octets += size;
   }
-  if (remaining.length > 0) {
-    parts.push(remaining);
-  }
-  return parts.join('\r\n ');
+  parts.push(current);
+  return parts.join('\r\n');
 }
 
 function unfoldLines(text: string): string {
@@ -220,12 +216,16 @@ function parseVAlarmBlock(block: string[]): VAlarm {
         break;
       case 'TRIGGER':
         alarm.trigger = prop.value;
+        if (Object.keys(prop.params).length) alarm.triggerParams = prop.params;
         break;
       case 'DESCRIPTION':
         alarm.description = unescapeText(prop.value);
         break;
     }
   }
+  const canonical = ['BEGIN:VALARM', `ACTION:${alarm.action}`, `TRIGGER:${alarm.trigger}`,
+    ...(alarm.description ? [`DESCRIPTION:${escapeText(alarm.description)}`] : []), 'END:VALARM'];
+  if (block.join('\r\n') !== canonical.join('\r\n')) alarm.source = [...block];
   return alarm;
 }
 
@@ -376,7 +376,7 @@ export function generateVEvent(event: VEvent): string {
   // DTSTART
   if (event.dtstartParams && Object.keys(event.dtstartParams).length > 0) {
     const paramStr = Object.entries(event.dtstartParams)
-      .map(([k, v]) => `${k}=${v}`)
+      .map(([k, v]) => `${k}=${k.toUpperCase() === 'TZID' ? encodeTimeZone(decodeTimeZone(v)) : v}`)
       .join(';');
     lines.push(foldLine(`DTSTART;${paramStr}:${event.dtstart}`));
   } else {
@@ -387,7 +387,7 @@ export function generateVEvent(event: VEvent): string {
   if (event.dtend) {
     if (event.dtendParams && Object.keys(event.dtendParams).length > 0) {
       const paramStr = Object.entries(event.dtendParams)
-        .map(([k, v]) => `${k}=${v}`)
+        .map(([k, v]) => `${k}=${k.toUpperCase() === 'TZID' ? encodeTimeZone(decodeTimeZone(v)) : v}`)
         .join(';');
       lines.push(foldLine(`DTEND;${paramStr}:${event.dtend}`));
     } else {
@@ -403,7 +403,7 @@ export function generateVEvent(event: VEvent): string {
 
   if (event.exdate && event.exdate.length > 0) {
     if (event.exdateParams?.TZID) {
-      lines.push(foldLine(`EXDATE;TZID=${event.exdateParams.TZID}:${event.exdate.join(',')}`));
+      lines.push(foldLine(`EXDATE;TZID=${encodeTimeZone(decodeTimeZone(event.exdateParams.TZID))}:${event.exdate.join(',')}`));
     } else {
       lines.push(foldLine(`EXDATE:${event.exdate.join(',')}`));
     }
@@ -423,9 +423,19 @@ export function generateVEvent(event: VEvent): string {
 
   if (event.valarms) {
     for (const alarm of event.valarms) {
+      if (alarm.source && isRetainableComponent(alarm.source, TODO_FORBIDDEN_COMPONENTS, 'VALARM')) {
+        const original = parseVAlarmBlock(alarm.source);
+        if (original.action === alarm.action && original.trigger === alarm.trigger
+          && original.description === alarm.description
+          && JSON.stringify(original.triggerParams) === JSON.stringify(alarm.triggerParams)) {
+          lines.push(...alarm.source.map(foldRetainedLine));
+          continue;
+        }
+      }
       lines.push('BEGIN:VALARM');
       lines.push(foldLine(`ACTION:${alarm.action}`));
-      lines.push(foldLine(`TRIGGER:${alarm.trigger}`));
+      const params = Object.entries(alarm.triggerParams ?? {}).map(([key, value]) => `;${key}=${value}`).join('');
+      lines.push(foldLine(`TRIGGER${params}:${alarm.trigger}`));
       if (alarm.description) lines.push(foldLine(`DESCRIPTION:${escapeText(alarm.description)}`));
       lines.push('END:VALARM');
     }
@@ -826,9 +836,9 @@ export function generateRetainedComponent(block: readonly string[], top: 'VEVENT
   return block.map(foldRetainedLine).join('\r\n');
 }
 
-/** Fold a retained line at code-point boundaries: at most 75 UTF-8 octets per
- *  physical line, counting the leading space of each continuation line. */
-function foldRetainedLine(line: string): string {
+/** Fold a logical content line at code-point boundaries without validating its content:
+ *  at most 75 UTF-8 octets per physical line, including the continuation space. */
+export function foldRetainedLine(line: string): string {
   const parts: string[] = [];
   let current = '';
   let octets = 0;
@@ -902,27 +912,52 @@ export function generateVTodo(todo: VTodo): string {
 }
 
 /**
- * Parse a full VCALENDAR document and extract all VEVENT components.
+ * Parse a file into import units: one master and its overrides per UID, or separate orphan overrides.
  */
 export function parseVCalendar(ical: string): VEvent[] {
   const unfolded = unfoldLines(ical);
   const lines = unfolded.split(/\r?\n/);
   const events: VEvent[] = [];
-
-  let inEvent = false;
-  let eventLines: string[] = [];
-
+  const vtimezones = splitCalendarItem(ical)?.vtimezones ?? [];
+  const groups = new Map<string, string[][]>();
+  let eventLines: string[] | undefined;
   for (const line of lines) {
-    if (line.trim() === 'BEGIN:VEVENT') {
-      inEvent = true;
-      eventLines = ['BEGIN:VEVENT'];
-    } else if (line.trim() === 'END:VEVENT') {
-      eventLines.push('END:VEVENT');
-      events.push(parseVEvent(eventLines.join('\r\n')));
-      inEvent = false;
-      eventLines = [];
-    } else if (inEvent) {
+    if (/^BEGIN:VEVENT\s*$/i.test(line)) eventLines = ['BEGIN:VEVENT'];
+    else if (eventLines) {
       eventLines.push(line);
+      if (/^END:VEVENT\s*$/i.test(line)) {
+        // Missing UIDs must not accidentally join otherwise unrelated events.
+        const uid = topLevelProperty(eventLines, 'UID')?.value;
+        const key = uid ? `uid:${uid}` : `missing:${groups.size}`;
+        const group = groups.get(key) ?? [];
+        group.push(eventLines);
+        groups.set(key, group);
+        eventLines = undefined;
+      }
+    }
+  }
+  for (const blocks of groups.values()) {
+    const masters = blocks.filter(block => !topLevelProperty(block, 'RECURRENCE-ID'));
+    // Without a master each detached occurrence is an independent import unit.
+    const units = masters.length ? masters : blocks;
+    for (const main of units) {
+      try {
+        if (masters.length > 1) throw new Error('Multiple masters share a UID');
+        const overrides = masters.length ? blocks.filter(block => block !== main).map(block => block
+          .filter(line => line.trim().length > 0)
+          .map(line => /^(BEGIN|END):/i.test(line) ? line.trim() : line)) : [];
+        for (const block of [main, ...overrides]) {
+          // Masters are regenerated by the parser; only verbatim overrides need raw validation.
+          if (block !== main && generateRetainedComponent(block, 'VEVENT') === null) throw new Error('Invalid event component');
+          for (const line of block) mapTimeZoneParameters(line, zone => zone);
+        }
+        const event = parseVEvent(main.join('\r\n'));
+        if (vtimezones.length) event.vtimezones = vtimezones;
+        if (overrides.length) event.overrides = overrides;
+        events.push(normalizeImportTimeZones(event));
+      } catch {
+        events.push({ uid: topLevelProperty(main, 'UID')?.value ?? '', dtstart: topLevelProperty(main, 'DTSTART')?.value ?? '', summary: topLevelProperty(main, 'SUMMARY')?.value, importError: 'This event has an invalid or undefined time zone, or invalid calendar data.' });
+      }
     }
   }
 
@@ -944,4 +979,43 @@ export function generateVCalendar(events: VEvent[]): string {
 
   lines.push('END:VCALENDAR');
   return lines.join('\r\n');
+}
+
+/** Rewrite only TZID parameters; every other parameter/value retains its spelling. */
+export function mapTimeZoneParameters(line: string, map: (zone: string) => string): string {
+  const colon = findPropertyColon(line);
+  const left = line.slice(0, colon);
+  const parts = splitParams(left);
+  return parts.map((part, index) => {
+    const eq = part.indexOf('=');
+    if (index === 0 || eq < 0 || part.slice(0, eq).toUpperCase() !== 'TZID') return part;
+    const zone = decodeTimeZone(part.slice(eq + 1));
+    encodeTimeZone(zone); // Reject invalid identifiers before invoking the mapping.
+    return `${part.slice(0, eq)}=${encodeTimeZone(map(zone))}`;
+  }).join(';') + line.slice(colon);
+}
+
+/** File admission only. Ordinary saves retain existing zone labels, even unknown ones. */
+export function normalizeImportTimeZones(event: VEvent): VEvent {
+  if (event.importError) return event;
+  const definitions = (event.vtimezones ?? []).filter(block => generateRetainedComponent(block, 'VTIMEZONE') !== null);
+  const names = new Set(definitions.map(block => topLevelProperty(block, 'TZID')?.value));
+  const used = new Set<string>();
+  const rewrite = (line: string) => mapTimeZoneParameters(line, zone => {
+    let target = zone;
+    if (!names.has(zone) && !isKnownTimeZone(zone)) {
+      const resolved = resolveTimeZone(zone);
+      if (!resolved) throw new Error('Time zone has no definition');
+      target = resolved;
+    }
+    used.add(target);
+    return target;
+  });
+  const normalized = parseVEvent(unfoldLines(generateVEvent(event)).split('\r\n').map(rewrite).join('\r\n'));
+  const overrides = event.overrides?.map(block => block.map(rewrite));
+  return {
+    ...normalized,
+    ...(overrides?.length ? { overrides } : {}),
+    ...(definitions.length ? { vtimezones: definitions.filter(block => used.has(topLevelProperty(block, 'TZID')?.value ?? '')) } : {}),
+  };
 }

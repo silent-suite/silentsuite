@@ -40,7 +40,7 @@ const SERIES_ICS = [
 ].join('\r\n')
 
 const postMessage = vi.fn()
-const showNotification = vi.fn(async () => undefined)
+const showNotification = vi.fn(async (..._args: unknown[]) => undefined)
 const notificationConstructed = vi.fn()
 
 class FakeNotification {
@@ -182,4 +182,62 @@ describe('NotificationProvider schedules zone-correct alarms for a UTC-anchored 
 
     view!.unmount()
   })
+  it.each([
+    ['TRIGGER:-PT1H30M', '2026-11-17T13:30:00Z', 'Event in 1.5 hour(s)'],
+    ['TRIGGER:PT0S', '2026-11-17T15:00:00Z', 'Reminder title'],
+    ['TRIGGER:PT15M', '2026-11-17T15:15:00Z', 'Reminder title'],
+    ['TRIGGER;RELATED=END:-PT15M', '2026-11-17T15:45:00Z', 'Reminder title'],
+    ['TRIGGER;VALUE=DATE-TIME:20261117T090000Z', '2026-11-17T09:00:00Z', 'Reminder title'],
+  ])('schedules %s at its actual anchor', async (trigger, expected, title) => {
+    vi.setSystemTime(new Date('2026-11-17T08:00:00Z'))
+    state.events = [deserializeCalendarEvent(['BEGIN:VEVENT', 'UID:anchored', 'SUMMARY:Reminder title', 'DTSTART:20261117T150000Z', 'DTEND:20261117T160000Z',
+      'RRULE:FREQ=DAILY;COUNT=3', 'BEGIN:VALARM', 'ACTION:DISPLAY', trigger, 'END:VALARM', 'END:VEVENT'].join('\r\n'))]
+    const view = render(<NotificationProvider>{null}</NotificationProvider>)
+    await flushAsync()
+    const alarms = scheduleMessages().at(-1)!
+    expect(alarms[0]?.triggerAt).toBe(ms(expected))
+    if (trigger.includes('DATE-TIME')) expect(alarms).toHaveLength(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(ms(expected) - Date.now()) })
+    expect(showNotification).toHaveBeenCalledTimes(1)
+    expect(showNotification.mock.calls[0]?.[0]).toBe(title)
+    view.unmount()
+  })
+
+  it('schedules an absolute reminder without an occurrence in range and does not repeat after rerender', async () => {
+    vi.setSystemTime(new Date('2026-11-17T08:00:00Z'))
+    state.events = [deserializeCalendarEvent(['BEGIN:VEVENT', 'UID:absolute', 'DTSTART:20270101T150000Z', 'DTEND:20270101T160000Z',
+      'RRULE:FREQ=DAILY', 'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER;VALUE=DATE-TIME:20261117T090000Z', 'END:VALARM', 'END:VEVENT'].join('\r\n'))]
+    const view = render(<NotificationProvider>{null}</NotificationProvider>)
+    await flushAsync()
+    expect(scheduleMessages().at(-1)).toHaveLength(1)
+    state.events = [...state.events]
+    view.rerender(<NotificationProvider>{null}</NotificationProvider>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(3600000) })
+    expect(showNotification).toHaveBeenCalledTimes(1)
+    state.events = [...state.events]
+    view.rerender(<NotificationProvider>{null}</NotificationProvider>)
+    await flushAsync()
+    expect(scheduleMessages().at(-1)).toHaveLength(0)
+    view.unmount()
+  })
+
+  it('finds an end reminder after the start has passed and uses nominal duration over DST', async () => {
+    vi.setSystemTime(new Date('2026-03-08T12:00:00Z'))
+    state.events = [deserializeCalendarEvent(['BEGIN:VEVENT', 'UID:nominal', 'DTSTART;TZID=America/New_York:20260307T100000', 'DURATION:P1D',
+      'RRULE:FREQ=DAILY;COUNT=2', 'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER;RELATED=END:-PT15M', 'END:VALARM', 'END:VEVENT'].join('\r\n'))]
+    const view = render(<NotificationProvider>{null}</NotificationProvider>)
+    await flushAsync()
+    expect(scheduleMessages().at(-1)?.map(a => a.triggerAt)).toEqual([ms('2026-03-08T13:45:00Z'), ms('2026-03-09T13:45:00Z')])
+    view.unmount()
+  })
+
+  it('does not turn an email alarm into a browser notification', async () => {
+    vi.setSystemTime(new Date('2026-03-09T12:00:00Z'))
+    state.events = [deserializeCalendarEvent(SERIES_ICS.replace('ACTION:DISPLAY', 'ACTION:EMAIL'))]
+    const view = render(<NotificationProvider>{null}</NotificationProvider>)
+    await flushAsync()
+    expect(scheduleMessages().at(-1)).toEqual([])
+    view.unmount()
+  })
+
 })

@@ -1,11 +1,12 @@
 import { checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, cleanup, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import { act, cleanup, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { emulateInert, type InertEmulation } from '@/app/lib/__tests__/inert-test-utils'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import SubscriptionPage from '../page'
+import { renderWithIntl as render } from '@/src/__tests__/render-with-intl'
 
 vi.mock('next/dynamic', () => ({
   default: () => function MockStripePaymentForm({ mode, submitLabel, onSuccess }: { mode: string; submitLabel: string; onSuccess?: () => Promise<void> | void }) {
@@ -870,6 +871,65 @@ describe('SubscriptionPage S2b confirmation ownership and store refresh', () => 
     vi.unstubAllGlobals()
     seedAccount(null)
     inert.restore()
+  })
+
+  it.each([400, 401])('shows cancellation detail for HTTP %i and clears it on reopen', async (status) => {
+    routeBilling([() => json(baseSubscription)], () => ({ ok: false, status, json: async () => ({ detail: 'Cancellation could not be completed.' }) }))
+    render(<SubscriptionPage />)
+    await confirmCancellation()
+    const dialog = screen.getByRole('dialog', { name: /cancel your subscription/i })
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Cancellation could not be completed.')
+    expect(within(dialog).getByRole('button', { name: /^cancel subscription$/i })).toBeEnabled()
+    fireEvent.click(within(dialog).getByRole('button', { name: /keep subscription/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^cancel subscription$/i }))
+    expect(within(screen.getByRole('dialog')).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it.each(['network', 'non-JSON', 'non-string', 'blank'])('shows the translated fallback for a %s cancellation failure', async (kind) => {
+    routeBilling([() => json(baseSubscription)], () => {
+      if (kind === 'network') throw new TypeError('synthetic network failure')
+      return { ok: false, json: async () => {
+        if (kind === 'non-JSON') throw new SyntaxError('synthetic malformed body')
+        return { detail: kind === 'blank' ? ' ' : { nested: 'message' } }
+      } }
+    })
+    render(<SubscriptionPage />)
+    await confirmCancellation()
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('An unexpected error occurred. Check your connection and try again.')
+  })
+
+  it('clears cancellation errors before retry and keeps the existing success refresh', async () => {
+    const retry = gate(json({}))
+    let attempts = 0
+    const calls = routeBilling([() => json(baseSubscription), () => json(cancelScheduled)], () => ++attempts === 1
+      ? { ok: false, json: async () => ({ detail: 'Try again.' }) } : retry.promise)
+    render(<SubscriptionPage />)
+    await confirmCancellation()
+    const dialog = screen.getByRole('dialog')
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Try again.')
+    fireEvent.click(within(dialog).getByRole('button', { name: /^cancel subscription$/i }))
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+    retry.release(json({}))
+    await settle()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(calls.gets).toBe(2)
+  })
+
+  it.each(['fetch', 'JSON'])('does not publish a cancellation failure after account takeover during %s', async (stage) => {
+    const pending = gate({ detail: 'Previous account message' })
+    const readBody = vi.fn(() => pending.promise)
+    const calls = routeBilling([() => json(baseSubscription)], () => stage === 'fetch'
+      ? pending.promise.then(() => ({ ok: false, json: readBody })) : { ok: false, json: readBody })
+    render(<SubscriptionPage />)
+    await confirmCancellation()
+    await settle()
+    takeOver(ACCOUNT_B)
+    pending.release({ detail: 'Previous account message' })
+    await settle()
+    expect(screen.queryByText('Previous account message')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    if (stage === 'fetch') expect(readBody).not.toHaveBeenCalled()
+    expect(calls.gets).toBe(1)
   })
 
   it('[RED] a confirmed payment for the current account starts one account-bound store refresh that publishes the real tuple', async () => {
