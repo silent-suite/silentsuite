@@ -421,6 +421,36 @@ class CollectionRouteContractTests(TransactionTestCase):
     def _batch_body(self, item_uid: str, revision_uid: str, chunks=()) -> dict:
         return {"items": [self._item_body(item_uid, revision_uid, chunks)], "deps": None}
 
+    def test_collection_create_duplicate_revision_returns_field_error_and_rolls_back(self):
+        new_uid = _uid("col-duplicate-rev")
+        tracked_models = (
+            models.Collection, models.CollectionItem, models.CollectionItemRevision,
+            models.CollectionMember, models.CollectionType, models.Stoken,
+            models.CollectionItemChunk, models.RevisionChunkRelation,
+        )
+        before = {model: set(model.objects.values_list("pk", flat=True)) for model in tracked_models}
+        response = self._post(
+            f"{COLLECTION_PREFIX}/",
+            self.alice_token,
+            {
+                "item": self._item_body(new_uid, self.rev_a),
+                "collectionKey": b"\x01" * 32,
+                "collectionType": b"duplicate-revision-type",
+            },
+        )
+        assert response.status_code == 400, response.content
+        error = msgpack_decode(response.content)
+        assert error["code"] == "field_errors"
+        assert error["detail"] == "Field validations failed."
+        assert len(error["errors"]) == 1
+        assert error["errors"][0]["field"] == "content.uid"
+        assert error["errors"][0]["code"] == "unique"
+        assert error["errors"][0]["detail"]
+        for model in tracked_models:
+            assert set(model.objects.values_list("pk", flat=True)) == before[model]
+        assert not models.Collection.objects.filter(uid=new_uid).exists()
+        assert not models.CollectionItem.objects.filter(uid=new_uid).exists()
+
     def test_item_batch_writes_into_the_prefix_collection(self):
         new_uid = _uid("item-batch-new")
         response = self._post(

@@ -354,8 +354,10 @@ def _create(data: CollectionIn, user: UserType):
         instance.main_item = main_item
         instance.save()
 
-        # TODO
-        process_revisions_for_item(main_item, data.item.content)
+        try:
+            process_revisions_for_item(main_item, data.item.content)
+        except django_exceptions.ValidationError as e:
+            transform_validation_error("content", e)
 
         try:
             collection_type_obj, _ = models.CollectionType.objects.get_or_create(uid=data.collectionType, owner=user)
