@@ -556,6 +556,23 @@ def ensure_dav_href(
     cache_item, preferred_href, suffix, *, strict=False, replace_existing=False
 ):
     """Return one collection-unique href, including retained tombstones."""
+    def conflicts_for(item, href):
+        return list(
+            models.HrefMapper.select(models.HrefMapper)
+            .join(models.ItemEntity)
+            .where(
+                (models.HrefMapper.href == href)
+                & (models.ItemEntity.collection == item.collection_id)
+                & (models.HrefMapper.content != item.id)
+            )
+            .order_by(models.ItemEntity.remote_uid, models.ItemEntity.uid)
+        )
+
+    if not replace_existing:
+        mapper = models.HrefMapper.get_or_none(models.HrefMapper.content == cache_item)
+        if mapper is not None and is_safe_dav_href(mapper.href) and not conflicts_for(cache_item, mapper.href):
+            return mapper
+
     with _dav_href_writer_lock(cache_item):
         mapper = models.HrefMapper.get_or_none(
             models.HrefMapper.content == cache_item
@@ -582,18 +599,6 @@ def ensure_dav_href(
                 identity(item),
                 str(item.remote_uid or ""),
                 str(item.uid or ""),
-            )
-
-        def conflicts_for(item, href):
-            return list(
-                models.HrefMapper.select(models.HrefMapper)
-                .join(models.ItemEntity)
-                .where(
-                    (models.HrefMapper.href == href)
-                    & (models.ItemEntity.collection == item.collection_id)
-                    & (models.HrefMapper.content != item.id)
-                )
-                .order_by(models.ItemEntity.remote_uid, models.ItemEntity.uid)
             )
 
         def fallback_candidates(item):
@@ -1188,6 +1193,7 @@ class Etebase:
                         & (models.CollectionEntity.dav_href == col.uid)
                         & (models.CollectionEntity.uid != col.uid)
                     ).exists():
+                        logger.warning("Collection list rejected (dav_collection_path_conflict)")
                         raise DavCollectionPathError("ambiguous DAV collection path")
                     collection = models.CollectionEntity.get_or_none(
                         local_user=self.user, uid=col.uid
