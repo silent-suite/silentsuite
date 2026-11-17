@@ -1,3 +1,4 @@
+import os
 import typing as t
 
 from asgiref.sync import sync_to_async
@@ -62,11 +63,33 @@ class CollectionItemRevisionInOut(BaseModel):
         chunks: t.List[ChunkType] = []
         for chunk_relation in obj.chunks_relation.all():
             chunk_obj = chunk_relation.chunk
+            content = None
             if context.prefetch == "auto":
-                with open(chunk_obj.chunkFile.path, "rb") as f:
-                    chunks.append((chunk_obj.uid, f.read()))
-            else:
-                chunks.append((chunk_obj.uid, None))
+                seen = context.prefetched_chunks.get(chunk_obj.pk)
+                # SDKs deduplicate data chunks, then append one mapping header.
+                # Allow its possible duplicate only in the first revision seen.
+                uncharged = seen is None or seen == (obj.pk, False)
+                if seen is None:
+                    context.prefetched_chunks[chunk_obj.pk] = (obj.pk, False)
+                elif uncharged:
+                    context.prefetched_chunks[chunk_obj.pk] = (obj.pk, True)
+
+                remaining = context.repeated_chunk_bytes_left
+                if uncharged or remaining > 0:
+                    with open(chunk_obj.chunkFile.path, "rb") as f:
+                        if uncharged:
+                            content = f.read()
+                        elif os.fstat(f.fileno()).st_size <= remaining:
+                            content = f.read(remaining + 1)
+                            if len(content) > remaining:
+                                content = None
+                if not uncharged:
+                    if content is None:
+                        context.repeated_chunk_bytes_left = 0
+                        context.chunk_budget_omitted = True
+                    else:
+                        context.repeated_chunk_bytes_left -= len(content)
+            chunks.append((chunk_obj.uid, content))
         return cls(uid=obj.uid, meta=bytes(obj.meta), deleted=obj.deleted, chunks=chunks)
 
 
@@ -546,8 +569,18 @@ def item_revisions(
         result = result[:-1]
 
     context = Context(user, prefetch)
-    ret_data = [CollectionItemRevisionInOut.from_orm_context(revision, context) for revision in result]
-    iterator = ret_data[-1].uid if len(result) > 0 else None
+    ret_data = []
+    for revision in result:
+        candidate = CollectionItemRevisionInOut.from_orm_context(revision, context)
+        if context.chunk_budget_omitted:
+            # Keep normal history bodies complete, retrying this candidate on
+            # the next page. One anomalous revision must still make progress.
+            if not ret_data:
+                ret_data.append(candidate)
+            done = done and len(ret_data) == len(result)
+            break
+        ret_data.append(candidate)
+    iterator = ret_data[-1].uid if ret_data else None
 
     return MsgpackResponse(
         CollectionItemRevisionListResponse(
