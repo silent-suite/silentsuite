@@ -5,18 +5,19 @@ import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
-import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.os.CancellationSignal
-import android.provider.CalendarContract
 import android.text.format.DateFormat
 import android.view.View
 import android.widget.RemoteViews
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.AccountActivity
+import io.silentsuite.sync.widgets.WidgetActionActivity
+import io.silentsuite.sync.widgets.WidgetEventReader
+import io.silentsuite.sync.widgets.WidgetRefresh
+import io.silentsuite.sync.widgets.WidgetSettings
 import java.text.NumberFormat
 import java.time.Clock
 import java.time.LocalDate
@@ -39,9 +40,7 @@ class MonthWidgetProvider : AppWidgetProvider() {
                 manager.updateAppWidgetOptions(id, Bundle().apply { putString(OPTION_MONTH, target) })
                 // Updating options delivers onAppWidgetOptionsChanged, which refreshes once.
             }
-            ACTION_REFRESH, Intent.ACTION_TIME_CHANGED,
-            Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_LOCALE_CHANGED,
-            Intent.ACTION_MY_PACKAGE_REPLACED -> refreshAsync(context)
+            ACTION_REFRESH, Intent.ACTION_LOCALE_CHANGED -> refreshAsync(context)
             else -> super.onReceive(context, intent)
         }
     }
@@ -51,9 +50,10 @@ class MonthWidgetProvider : AppWidgetProvider() {
     override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, appWidgetId: Int, newOptions: Bundle) =
         refreshAsync(context)
 
-    override fun onDisabled(context: Context) = MonthWidgetRefresh.cancel(context)
+    override fun onDisabled(context: Context) = WidgetRefresh.schedule(context)
 
     private fun refreshAsync(context: Context) {
+        WidgetRefresh.schedule(context)
         val pending = goAsync()
         val app = context.applicationContext
         executor.execute {
@@ -70,7 +70,7 @@ class MonthWidgetProvider : AppWidgetProvider() {
         private const val ACTION_MONTH = "io.silentsuite.sync.widget.month.MONTH"
         private const val EXTRA_MONTH = "month"
         private const val OPTION_MONTH = "io.silentsuite.sync.widget.month.displayed"
-        internal val executor = Executors.newSingleThreadExecutor()
+        private val executor = Executors.newSingleThreadExecutor()
 
         /** Refresh entry point for the shared permission/settings flow after access changes. */
         @JvmStatic
@@ -85,29 +85,30 @@ class MonthWidgetProvider : AppWidgetProvider() {
             YearMonth.parse(value).takeIf { it.year in 1..9999 }
         } catch (_: java.time.DateTimeException) { null }
 
-        internal fun updateAll(context: Context, cancellation: CancellationSignal? = null) {
+        // Cache only dates for this render; event titles and instances stay in the shared reader.
+        private data class Snapshot(
+            val state: WidgetSettings.State,
+            val failed: Boolean,
+            val markedDays: Set<LocalDate>
+        )
+
+        private fun updateAll(context: Context) {
             val widgetIds = ids(context)
-            if (widgetIds.isEmpty()) {
-                MonthWidgetRefresh.cancel(context)
-                return
-            }
-            // Arm before reading so a provider change during the read causes a subsequent update.
-            MonthWidgetRefresh.schedule(context)
+            if (widgetIds.isEmpty()) return
             val manager = AppWidgetManager.getInstance(context)
             val clock = Clock.systemDefaultZone()
             val todayMonth = YearMonth.now(clock)
             val locale = context.resources.configuration.locales[0]
-            val results = mutableMapOf<YearMonth, MonthEventReader.Result>()
+            val results = mutableMapOf<YearMonth, Snapshot>()
             for (id in widgetIds) {
-                if (cancellation?.isCanceled == true) return
                 val options = manager.getAppWidgetOptions(id)
                 val month = parseMonth(options.getString(OPTION_MONTH).orEmpty()) ?: todayMonth
                 val days = MonthGrid.days(month, MonthGrid.firstDay(locale), clock)
-                val result = if (MonthWidgetGate.areWidgetsEnabled(context)) {
-                    results.getOrPut(month) {
-                        MonthEventReader.read(context, days.first().date, days.size, clock.zone, cancellation)
-                    }
-                } else MonthEventReader.Result(MonthEventReader.State.UNAVAILABLE)
+                val result = results.getOrPut(month) {
+                    val read = WidgetEventReader.read(context, days.first().date, days.size, clock.zone)
+                    Snapshot(read.state, read.failed,
+                        read.days.filter { it.events.isNotEmpty() }.mapTo(mutableSetOf()) { it.date })
+                }
                 val views = RemoteViews(context.packageName, R.layout.widget_month)
                 views.setTextViewText(R.id.widget_month_title,
                     month.format(DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "LLLLyyyy"), locale)))
@@ -118,7 +119,7 @@ class MonthWidgetProvider : AppWidgetProvider() {
                 views.setViewVisibility(R.id.widget_month_today, if (month == todayMonth) View.GONE else View.VISIBLE)
                 views.setOnClickPendingIntent(R.id.widget_month_today, monthIntent(context, id, "", todayMonth))
                 views.setOnClickPendingIntent(R.id.widget_month_add, calendarIntent(context, null))
-                if (result.state != MonthEventReader.State.READY) {
+                if (result.state != WidgetSettings.State.READY || result.failed) {
                     views.setViewVisibility(R.id.widget_month_content, View.GONE)
                     views.setTextViewText(R.id.widget_month_title, context.getString(R.string.widget_month_name))
                     views.setViewVisibility(R.id.widget_month_today, View.GONE)
@@ -127,12 +128,15 @@ class MonthWidgetProvider : AppWidgetProvider() {
                     views.setViewVisibility(R.id.widget_month_add, View.GONE)
                     views.setViewVisibility(R.id.widget_month_message, View.VISIBLE)
                     val message = when (result.state) {
-                        MonthEventReader.State.PERMISSION_REQUIRED -> R.string.widget_month_permission
-                        MonthEventReader.State.NO_CALENDAR -> R.string.widget_month_no_calendar
+                        WidgetSettings.State.PERMISSION_REQUIRED -> R.string.widget_month_permission
+                        WidgetSettings.State.NO_ACCOUNT -> R.string.widget_no_account
+                        WidgetSettings.State.OFF -> R.string.widget_turned_off
                         else -> R.string.widget_month_unavailable
                     }
                     views.setTextViewText(R.id.widget_month_message, context.getString(message))
-                    views.setOnClickPendingIntent(R.id.widget_month_root, appIntent(context))
+                    views.setOnClickPendingIntent(R.id.widget_month_root,
+                        if (result.state == WidgetSettings.State.PERMISSION_REQUIRED)
+                            actionIntent(context, WidgetActionActivity.PERMISSION) else appIntent(context))
                 } else {
                     // Hosts may reapply a full RemoteViews update onto the old layout.
                     views.setViewVisibility(R.id.widget_month_content, View.VISIBLE)
@@ -186,7 +190,6 @@ class MonthWidgetProvider : AppWidgetProvider() {
                         views.addView(R.id.widget_month_weeks, row)
                     }
                 }
-                if (cancellation?.isCanceled == true) return
                 manager.updateAppWidget(id, views)
             }
         }
@@ -201,14 +204,16 @@ class MonthWidgetProvider : AppWidgetProvider() {
             return PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
 
-        /** Kept here for the later swap to the shared calendar-routing Activity. */
-        private fun calendarIntent(context: Context, day: LocalDate?): PendingIntent {
-            val intent = if (day == null) {
-                Intent(Intent.ACTION_INSERT, CalendarContract.Events.CONTENT_URI)
-            } else {
-                val millis = day.atStartOfDay(Clock.systemDefaultZone().zone).toInstant().toEpochMilli()
-                Intent(Intent.ACTION_VIEW, ContentUris.withAppendedId(
-                    CalendarContract.CONTENT_URI.buildUpon().appendPath("time").build(), millis))
+        private fun calendarIntent(context: Context, day: LocalDate?): PendingIntent =
+            actionIntent(context, if (day == null) WidgetActionActivity.ADD else WidgetActionActivity.DAY, day)
+
+        private fun actionIntent(context: Context, action: String, day: LocalDate? = null): PendingIntent {
+            val intent = Intent(context, WidgetActionActivity::class.java).setAction(action).apply {
+                if (day != null) {
+                    // Extras do not identify a PendingIntent: give each date its own identity.
+                    data = Uri.parse("silentsuite-month://day/$day")
+                    putExtra(WidgetActionActivity.DATE, day.toString())
+                }
             }
             return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }

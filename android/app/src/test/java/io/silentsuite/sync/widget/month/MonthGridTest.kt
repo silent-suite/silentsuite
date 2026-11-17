@@ -3,7 +3,6 @@ package io.silentsuite.sync.widget.month
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Clock
 import java.time.DayOfWeek
@@ -17,9 +16,6 @@ import java.util.Locale
 class MonthGridTest {
     private val clock = Clock.fixed(Instant.parse("2026-11-17T12:00:00Z"), ZoneOffset.UTC)
     private fun date(value: String) = LocalDate.parse(value)
-    private fun millis(value: String) = Instant.parse(value).toEpochMilli()
-    private fun event(begin: String, end: String, allDay: Boolean = false) =
-        MonthGrid.EventRange(millis(begin), millis(end), allDay)
 
     @Test fun `locale controls the first weekday including Saturday`() {
         assertEquals(DayOfWeek.MONDAY, MonthGrid.firstDay(Locale.UK))
@@ -62,40 +58,5 @@ class MonthGridTest {
                 Clock.fixed(instant, ZoneId.of(zone)))
             assertEquals(listOf(date(expected)), days.filter { it.isToday }.map { it.date })
         }
-    }
-
-    @Test fun `timed events mark every local day but not an exclusive midnight end`() {
-        val events = listOf(event("2026-11-17T22:00:00Z", "2026-11-20T00:00:00Z"))
-        assertEquals(setOf(date("2026-11-17"), date("2026-11-18"), date("2026-11-19")),
-            MonthGrid.markedDays(events, date("2026-11-01"), date("2026-11-30"), ZoneOffset.UTC))
-        assertEquals(setOf(date("2026-11-18"), date("2026-11-19"), date("2026-11-20")),
-            MonthGrid.markedDays(events, date("2026-11-01"), date("2026-11-30"), ZoneId.of("Asia/Tokyo")))
-    }
-
-    @Test fun `all day and multiday dates stay on UTC calendar dates in both timezone directions`() {
-        val events = listOf(event("2026-11-17T00:00:00Z", "2026-11-18T00:00:00Z", true),
-            event("2026-11-19T00:00:00Z", "2026-11-21T00:00:00Z", true))
-        for (zone in listOf("America/Los_Angeles", "Pacific/Kiritimati")) {
-            assertEquals(setOf(date("2026-11-17"), date("2026-11-19"), date("2026-11-20")),
-                MonthGrid.markedDays(events, date("2026-11-01"), date("2026-11-30"), ZoneId.of(zone)))
-        }
-    }
-
-    @Test fun `day mapping clips long events deduplicates and handles zero duration`() {
-        val events = listOf(event("2026-01-01T12:00:00Z", "2027-01-01T12:00:00Z"),
-            event("2026-11-17T12:00:00Z", "2026-11-17T12:00:00Z"))
-        val first = date("2026-11-16")
-        val last = date("2026-11-18")
-        assertEquals(setOf(first, date("2026-11-17"), last), MonthGrid.markedDays(events, first, last, ZoneOffset.UTC))
-        assertEquals(setOf(date("2026-11-17")), MonthGrid.markedDays(events.takeLast(1), first, last, ZoneOffset.UTC))
-        assertTrue(MonthGrid.markedDays(emptyList(), first, last, ZoneOffset.UTC).isEmpty())
-        assertTrue(MonthGrid.markedDays(listOf(event("2026-11-18T12:00:00Z", "2026-11-17T12:00:00Z")),
-            first, last, ZoneOffset.UTC).isEmpty())
-    }
-
-    @Test fun `timed days follow daylight saving transitions`() {
-        val events = listOf(event("2026-03-08T07:30:00Z", "2026-03-09T04:00:00Z"))
-        assertEquals(setOf(date("2026-03-07"), date("2026-03-08")), MonthGrid.markedDays(
-            events, date("2026-03-01"), date("2026-03-31"), ZoneId.of("America/Los_Angeles")))
     }
 }

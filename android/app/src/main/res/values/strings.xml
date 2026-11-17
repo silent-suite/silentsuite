@@ -1070,7 +1070,6 @@
     <string name="widget_month_add_event">Add event</string>
     <string name="widget_month_has_events">Has events</string>
     <string name="widget_month_permission">Allow calendar access in SilentSuite to see your month.</string>
-    <string name="widget_month_no_calendar">Open SilentSuite to add or show a calendar.</string>
     <string name="widget_month_unavailable">Open SilentSuite to view your calendars.</string>
     <!-- Fixed illustrative weekday labels in the widget picker sample. -->
     <string name="widget_month_preview_sun" translatable="false">S</string>
