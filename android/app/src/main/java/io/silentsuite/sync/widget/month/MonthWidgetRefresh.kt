@@ -16,7 +16,7 @@ internal object MonthWidgetRefresh {
     private const val JOB_ID = 0x4d4f4e54
 
     fun schedule(context: Context, replaceContentJob: Boolean = false): Boolean {
-        val scheduler = context.getSystemService(JobScheduler::class.java)
+        val scheduler = requireNotNull(context.getSystemService(JobScheduler::class.java))
         val scheduled = if (replaceContentJob || scheduler.getPendingJob(JOB_ID) == null) {
             scheduler.schedule(JobInfo.Builder(JOB_ID, ComponentName(context, MonthWidgetRefreshJob::class.java))
                 .addTriggerContentUri(JobInfo.TriggerContentUri(CalendarContract.CONTENT_URI,
@@ -28,14 +28,14 @@ internal object MonthWidgetRefresh {
         val midnight = ZonedDateTime.now().toLocalDate().plusDays(1)
             .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         // Inexact: no exact-alarm permission. Android may defer this during idle/battery saving.
-        context.getSystemService(AlarmManager::class.java).setAndAllowWhileIdle(
+        requireNotNull(context.getSystemService(AlarmManager::class.java)).setAndAllowWhileIdle(
             AlarmManager.RTC, midnight, alarm(context))
         return scheduled
     }
 
     fun cancel(context: Context) {
-        context.getSystemService(JobScheduler::class.java).cancel(JOB_ID)
-        context.getSystemService(AlarmManager::class.java).cancel(alarm(context))
+        requireNotNull(context.getSystemService(JobScheduler::class.java)).cancel(JOB_ID)
+        requireNotNull(context.getSystemService(AlarmManager::class.java)).cancel(alarm(context))
     }
 
     private fun alarm(context: Context): PendingIntent = PendingIntent.getBroadcast(context, 0,
