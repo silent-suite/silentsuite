@@ -16,6 +16,7 @@ import ezvcard.parameter.EmailType
 import ezvcard.parameter.ImageType
 import ezvcard.parameter.TelephoneType
 import ezvcard.property.*
+import ezvcard.util.DataUri
 import ezvcard.util.PartialDate
 import org.apache.commons.lang3.StringUtils
 import org.apache.commons.lang3.builder.HashCodeBuilder
@@ -124,6 +125,32 @@ class Contact {
         const val DATE_PARAMETER_OMIT_YEAR = "X-APPLE-OMIT-YEAR"
         const val DATE_PARAMETER_OMIT_YEAR_DEFAULT = 1604
 
+        /** Largest embedded (data: URI) photo accepted; the same cap the app applies to downloaded photos. */
+        private const val MAX_EMBEDDED_PHOTO_BYTES = 5 * 1024 * 1024
+
+        /**
+         * Decodes a photo embedded as a `data:` URI, as the web app writes it in vCard 3.0
+         * (PHOTO;VALUE=URI:data:image/jpeg;base64,...). Returns null for anything unusable or too
+         * large. The URI is contact data, so neither it nor the parser's message is logged.
+         */
+        private fun decodeEmbeddedPhoto(uri: String): ByteArray? {
+            // Base64 needs 4 characters per 3 bytes; anything much longer cannot fit the cap.
+            if (uri.length > MAX_EMBEDDED_PHOTO_BYTES / 3 * 4 + 1024) {
+                Constants.log.warning("Ignoring embedded photo: too large")
+                return null
+            }
+            val data = try {
+                DataUri.parse(uri).data
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+            if (data == null || data.isEmpty() || data.size > MAX_EMBEDDED_PHOTO_BYTES) {
+                Constants.log.warning("Ignoring embedded photo: not usable image data")
+                return null
+            }
+            return data
+        }
+
 
         /**
          * Parses an InputStream that contains a vCard.
@@ -225,7 +252,9 @@ class Contact {
                     is Related -> StringUtils.trimToNull(prop.text)?.let { c.relations += prop }
                     is Photo ->
                         c.photo = prop.data ?: prop.url?.let { url ->
-                            downloader?.let {
+                            if (url.startsWith("data:", ignoreCase = true))
+                                decodeEmbeddedPhoto(url)
+                            else downloader?.let {
                                 Constants.log.info("Downloading photo")  // not the URL: it comes from the contact
                                 it.download(url, "image/*")
                             }

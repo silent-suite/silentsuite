@@ -11,6 +11,7 @@ import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/lib/server-url'
+import { safeReturnTo } from '@/app/lib/login-return'
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -18,14 +19,6 @@ const loginSchema = z.object({
 })
 
 type LoginFormData = z.infer<typeof loginSchema>
-
-function safeReturnTo(raw: string | null): string {
-  if (!raw || !raw.startsWith('/') || raw.includes('://') || raw.includes('//')) return '/calendar'
-
-  // Never bounce back into login after a successful unlock. That can strand a
-  // direct-link user on the unlock route even after valid credentials.
-  return raw === '/login' || raw.startsWith('/login?') || raw.startsWith('/login/') ? '/calendar' : raw
-}
 
 export default function LoginPage() {
   const router = useRouter()
