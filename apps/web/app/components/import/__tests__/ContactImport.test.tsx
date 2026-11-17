@@ -69,6 +69,18 @@ describe('ContactImport categories normalization', () => {
     expect(payload[0]!.favorite).toBe(true)
   })
 
+  it('carries hidden name and address components from a file into its import payload', async () => {
+    const { container } = renderWithIntl(<ContactImport onImportComplete={mocks.onImportComplete} />)
+    const source = ['BEGIN:VCARD', 'VERSION:3.0', 'UID:hidden', 'FN:John Public', 'N:Public;John;Quinlan,James;;', 'ADR;TYPE=home:PO Box 123;Apartment 4;;;;;', 'END:VCARD'].join('\r\n')
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File([source], 'hidden.vcf', { type: 'text/vcard' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: /Import 1 contacts/ }))
+    await waitFor(() => expect(mocks.importContacts).toHaveBeenCalledTimes(1))
+    const payload = mocks.importContacts.mock.calls[0]![0][0]
+    const wire = serializeContact({ ...deserializeContact(source), ...payload, phones: payload.phones ?? [], emails: payload.emails ?? [] })
+    expect(wire).toContain('N:Public;John;Quinlan,James;;')
+    expect(wire).toContain('ADR;TYPE=home:PO Box 123;Apartment 4;;;;;')
+  })
+
   it('imports legacy text and labels through the real parser and serializer', async () => {
     const { container } = renderWithIntl(<ContactImport onImportComplete={mocks.onImportComplete} />)
     const source = [

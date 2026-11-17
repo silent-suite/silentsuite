@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { NOTIFICATION_LOOKAHEAD_MS, NOTIFICATION_MAX_FUTURE_MS, MS_PER_MINUTE } from '@/app/lib/constants'
-import { expandEventRecurrence } from '@silentsuite/core'
+import { resolveTimeZone, expandEventRecurrence, occurrenceEnd, parseICalDurationSeconds } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
 
 interface NotificationContextValue {
@@ -19,21 +19,6 @@ const NotificationContext = createContext<NotificationContextValue>({
 
 export function useNotifications() {
   return useContext(NotificationContext)
-}
-
-/** Parse a VALARM trigger like '-PT15M', '-PT1H', '-P1D' into milliseconds */
-function parseTriggerMs(trigger: string): number {
-  if (trigger.startsWith('-P')) {
-    const dayMatch = trigger.match(/-P(\d+)D/)
-    if (dayMatch) return parseInt(dayMatch[1]!, 10) * 24 * 60 * 60 * 1000
-
-    const hourMatch = trigger.match(/-PT(\d+)H/)
-    if (hourMatch) return parseInt(hourMatch[1]!, 10) * 60 * 60 * 1000
-
-    const minMatch = trigger.match(/-PT(\d+)M/)
-    if (minMatch) return parseInt(minMatch[1]!, 10) * 60 * 1000
-  }
-  return 0
 }
 
 function formatNotificationTime(date: Date): string {
@@ -119,7 +104,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
     const now = Date.now()
     const LOOKAHEAD_MS = NOTIFICATION_LOOKAHEAD_MS
-    const range = { start: new Date(now), end: new Date(now + NOTIFICATION_MAX_FUTURE_MS) }
 
     // Collect alarm data for service worker
     const swAlarmData: Array<{
@@ -133,32 +117,49 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     for (const event of events) {
       if (!event.alarms || event.alarms.length === 0) continue
 
-      // Expand recurring events into individual occurrences
-      let occurrences: Date[]
-      if (event.recurrenceRule) {
-        try {
-          occurrences = expandEventRecurrence(event, range)
-        } catch {
+      for (const [alarmIndex, alarm] of event.alarms.entries()) {
+        if (alarm.action.toUpperCase() !== 'DISPLAY') continue
+        const param = (key: string) => alarm.triggerParams?.[key]?.replace(/^"(.*)"$/, '$1').toUpperCase()
+        const absolute = param('VALUE') === 'DATE-TIME'
+        if (!absolute && event.timezone && !resolveTimeZone(event.timezone)) continue
+        const relatedEnd = param('RELATED') === 'END'
+        const seconds = absolute ? null : parseICalDurationSeconds(alarm.trigger)
+        if (!absolute && seconds === null) continue
+        const offset = (seconds ?? 0) * 1000
+        let occurrences: Date[]
+        let absoluteAt = NaN
+        if (absolute) {
+          const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(alarm.trigger)
+          if (!match) continue
+          absoluteAt = Date.UTC(+match[1]!, +match[2]! - 1, +match[3]!, +match[4]!, +match[5]!, +match[6]!)
+          if (new Date(absoluteAt).toISOString().replace(/[-:]/g, '').replace('.000', '') !== alarm.trigger) continue
+          occurrences = [event.startDate]
+        } else if (event.recurrenceRule) {
+          // End anchors may belong to starts before the window. Nominal durations can vary
+          // across offset transitions; the margin covers those without a second expander.
+          const length = relatedEnd ? event.endDate.getTime() - event.startDate.getTime() : 0
+          const margin = relatedEnd ? 2 * 86400000 : 0
+          const start = now - offset - length - margin
+          const end = now + NOTIFICATION_MAX_FUTURE_MS - offset - length + margin
+          if (!Number.isFinite(start) || !Number.isFinite(end) || Math.abs(start) > 8.64e15 || Math.abs(end) > 8.64e15) continue
+          try {
+            occurrences = expandEventRecurrence(event, { start: new Date(start), end: new Date(end) })
+          } catch {
+            occurrences = [event.startDate]
+          }
+        } else {
           occurrences = [event.startDate]
         }
-      } else {
-        occurrences = [event.startDate]
-      }
-
-      for (const occStart of occurrences) {
-        for (const alarm of event.alarms) {
-          const triggerMs = parseTriggerMs(alarm.trigger)
-          if (triggerMs === 0) continue
-
-          const alarmTime = occStart.getTime() - triggerMs
-
+        for (const occStart of occurrences) {
+          const alarmTime = absolute ? absoluteAt : (relatedEnd ? occurrenceEnd(event, occStart) : occStart).getTime() + offset
+          const timerId = absolute ? `${event.id}_absolute_${alarmIndex}_${alarm.trigger}`
+            : `${event.id}_${occStart.getTime()}_${alarm.trigger}${relatedEnd ? `_end_${alarmIndex}` : alarmIndex ? `_${alarmIndex}` : ''}`
+          const notificationTitle = !absolute && !relatedEnd && offset < 0 ? `Event in ${formatTimeLabel(-offset)}` : event.title
           // Only schedule if in the future and within lookahead window
           if (alarmTime > now && alarmTime < now + LOOKAHEAD_MS) {
             const delay = alarmTime - now
-            const timerId = `${event.id}_${occStart.getTime()}_${alarm.trigger}`
-            const timeLabel = formatTimeLabel(triggerMs)
             const eventTitle = event.title
-            const eventTimeStr = formatNotificationTime(occStart)
+            const eventTimeStr = formatNotificationTime(absolute ? new Date(alarmTime) : occStart)
 
             const timer = setTimeout(async () => {
               // Play notification sound if enabled
@@ -170,7 +171,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
               if ('serviceWorker' in navigator) {
                 try {
                   const registration = await navigator.serviceWorker.ready
-                  await registration.showNotification(`Event in ${timeLabel}`, {
+                  await registration.showNotification(notificationTitle, {
                     body: `${eventTitle} · ${eventTimeStr}`,
                     icon: '/icon-192.svg',
                     tag: timerId,
@@ -190,7 +191,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
                   })
                 } catch {
                   // Fallback to basic Notification API
-                  new Notification(`Event in ${timeLabel}`, {
+                  new Notification(notificationTitle, {
                     body: `${eventTitle} · ${eventTimeStr}`,
                     icon: '/icon-192.svg',
                     tag: timerId,
@@ -198,7 +199,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
                   })
                 }
               } else {
-                new Notification(`Event in ${timeLabel}`, {
+                new Notification(notificationTitle, {
                   body: `${eventTitle} · ${eventTimeStr}`,
                   icon: '/icon-192.svg',
                   tag: timerId,
@@ -215,9 +216,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           // Collect alarm data for service worker (broader window for background checks)
           if (alarmTime > now && alarmTime < now + NOTIFICATION_MAX_FUTURE_MS) {
             swAlarmData.push({
-              id: `${event.id}_${occStart.getTime()}_${alarm.trigger}`,
+              id: timerId,
               title: event.title,
-              time: formatNotificationTime(occStart),
+              time: formatNotificationTime(absolute ? new Date(alarmTime) : occStart),
               triggerAt: alarmTime,
               triggerLabel: alarm.trigger,
             })

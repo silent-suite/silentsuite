@@ -25,6 +25,7 @@ import pytest
 from playhouse.sqlite_ext import SqliteExtDatabase
 
 from silentsuite_bridge.local_cache import (
+    _ensure_cache_tables,
     DAV_UNRESOLVED_RETRY_LIMIT,
     DavUnresolvedItemsError,
     Etebase,
@@ -71,6 +72,7 @@ def cache_db(tmp_path):
     )
     models.Config.create(db_version=1)
     models.SchemaMigration.create(name="dav-revision-v1", applied_at=0)
+    _ensure_cache_tables(database)
     yield database
     database.close()
 

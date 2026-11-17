@@ -23,7 +23,7 @@ ENV_EXAMPLE = SELF_HOST / ".env.example"
 EFFECTIVE_CHECK = ROOT / "scripts" / "self-host-compose-effective-check.sh"
 SELF_HOSTING = SELF_HOST / "SELF-HOSTING.md"
 
-POSTGRES_IMAGE = "postgres@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7"
+POSTGRES_IMAGE = "postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e"
 MANAGED_IMAGE = "${SILENTSUITE_SERVER_IMAGE:?Set by the verified SilentSuite installer or updater}"
 IMAGE_REPOSITORY = "ghcr.io/silent-suite/silentsuite-server"
 
@@ -213,7 +213,7 @@ def test_postgres_runs_an_immutable_index_digest_not_a_tag():
 
     image = COMPOSE_DOCUMENT["services"]["postgres"]["image"]
     assert image == POSTGRES_IMAGE
-    assert "@sha256:" in image and ":16.9-alpine" not in image
+    assert "@sha256:" in image and ":16.16-alpine" not in image
     assert "${" not in image, "the database identity is fixed source, not release or env data"
 
 
@@ -241,10 +241,10 @@ def test_the_pinned_postgres_digest_is_traceable_to_its_source_tag():
     """The digest is unreadable on its own; the source comment is the provenance."""
 
     source = COMPOSE_SOURCE
-    assert "docker.io/library/postgres:16.9-alpine" in source
+    assert "docker.io/library/postgres:16.16-alpine" in source
     for child in (
-        "sha256:b441677c946de564fe88ae4245ba80fe84a69485b22bf560e9c7c3710cd5e21d",
-        "sha256:a833a42d2f60170d90d8fb46b99e80f29b083a173c85ffd1e7e366730dc5529c",
+        "sha256:a2f7e20374cd8fd8ed4a588b79549e10589bea7b1686e77922f5ac741b80b8a1",
+        "sha256:40e58641410e030f5769096bca8372f68f243e1859c8ecdf11f227da390d514d",
     ):
         assert child in source, "both platform children stay recorded beside the index digest"
 

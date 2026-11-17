@@ -3,11 +3,14 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import test from 'node:test'
+import { picomatchPaths, verifyPicomatchToolingExposure } from './verify-picomatch-tooling-exposure.mjs'
 import { patchDigest } from './braces-byte-preflight.mjs'
 import {
   forbiddenRuntimeModules,
   lockedBracesFailure,
+  namesConsumer,
   productionInputs,
   runtimePreload,
   toleratedSignatureFiles,
@@ -48,7 +51,7 @@ test('fails a changed nft bundle, another compiled path, or an application chunk
     { file: nft.file, signature: 'rangeLimit' },
     { file: `${compiled}micromatch/index.js`, signature: 'rangeLimit', sha256: nft.sha256 },
     { file: `${compiled}@vercel/nft/other.js`, signature: 'rangeLimit', sha256: nft.sha256 },
-    { file: nft.file.replace('next@15.5.28_', 'next@15.5.29_'), signature: 'rangeLimit', sha256: nft.sha256 },
+    { file: nft.file.replace('next@15.5.29_', 'next@15.5.28_'), signature: 'rangeLimit', sha256: nft.sha256 },
     { file: 'apps/web/.next/standalone/apps/web/.next/server/chunks/123.js', signature: 'exceeds max characters (', sha256: nft.sha256 },
     { file: 'apps/web/.next/static/chunks/app/page.js', signature: 'rangeLimit', sha256: nft.sha256 },
   ]) {
@@ -126,4 +129,68 @@ test('preload blocks direct DNS resolution and custom resolvers before their tra
     assert.deepEqual(record.blockedOutbound, ['example.invalid'])
     assert.equal(existsSync(join(dir, 'forwarded')), false)
   }
+})
+
+const webRequire = createRequire(new URL('../apps/web/package.json', import.meta.url))
+const picomatchLockText = readFileSync(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8')
+const parseLock = () => webRequire('yaml').parse(picomatchLockText)
+const reviewedPicomatchPaths = JSON.parse(readFileSync(new URL('./test-fixtures/audit-high-critical/picomatch-reviewed-paths.json', import.meta.url), 'utf8'))
+
+test('checks all 78 locked picomatch paths independently of the single registry path', () => {
+  assert.equal(reviewedPicomatchPaths.length, 78)
+  assert.deepEqual(picomatchPaths(parseLock()), reviewedPicomatchPaths)
+  assert.equal(verifyPicomatchToolingExposure().ok, true)
+})
+
+test('detects new runtime, optional and transitive consumers, removed paths and changed dependency kinds', () => {
+  for (const mutate of [
+    lock => { lock.importers['apps/web'].dependencies.picomatch = { version: '4.0.4' } },
+    lock => { lock.importers['apps/web'].dependencies.matcher = { version: 'picomatch@4.0.4' } },
+    lock => { lock.importers['packages/ui'].optionalDependencies = { picomatch: { version: '4.0.4' } } },
+    lock => {
+      const sdk = Object.keys(lock.snapshots).find(id => id.startsWith('etebase@'))
+      lock.snapshots[sdk].dependencies.picomatch = '4.0.4'
+    },
+    lock => { delete lock.importers['apps/docs'].devDependencies.vitepress },
+    lock => { lock.importers['packages/core'].dependencies.vitest = lock.importers['packages/core'].devDependencies.vitest; delete lock.importers['packages/core'].devDependencies.vitest },
+  ]) {
+    const lock = parseLock()
+    mutate(lock)
+    assert.notDeepEqual(picomatchPaths(lock), reviewedPicomatchPaths)
+    const directory = mkdtempSync(join(tmpdir(), 'picomatch-closure-'))
+    try {
+      writeFileSync(join(directory, 'pnpm-lock.yaml'), webRequire('yaml').stringify(lock))
+      assert.equal(verifyPicomatchToolingExposure({ root: directory }).ok, false)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+})
+
+test('rejects a second locked picomatch version, malformed or missing lock data', () => {
+  const lock = parseLock()
+  lock.snapshots['picomatch@4.0.7'] = {}
+  assert.throws(() => picomatchPaths(lock))
+  assert.throws(() => picomatchPaths({}))
+  const directory = mkdtempSync(join(tmpdir(), 'picomatch-missing-lock-'))
+  try {
+    assert.equal(verifyPicomatchToolingExposure({ root: directory }).ok, false)
+    writeFileSync(join(directory, 'pnpm-lock.yaml'), 'snapshots: [')
+    assert.equal(verifyPicomatchToolingExposure({ root: directory }).ok, false)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('rejects separately packaged picomatch in the image while allowing Next configuration matching', () => {
+  for (const path of [
+    '/app/node_modules/picomatch/index.js',
+    '/app/node_modules/.pnpm/picomatch@4.0.4/node_modules/picomatch/lib/parse.js',
+  ]) {
+    assert.equal(namesConsumer(path), true)
+    assert.deepEqual(forbiddenRuntimeModules([path]), [path])
+  }
+  const vendored = '/app/node_modules/next/dist/compiled/picomatch/index.js'
+  assert.equal(namesConsumer(vendored), false)
+  assert.deepEqual(forbiddenRuntimeModules([vendored]), [])
 })

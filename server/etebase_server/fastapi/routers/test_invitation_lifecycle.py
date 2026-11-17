@@ -19,6 +19,13 @@ from etebase_server.fastapi.routers.invitation import (
 _COUNTER = itertools.count(1)
 
 
+def _invite(member, recipient):
+    return models.CollectionInvitation.objects.create(
+        uid=_uid("invite"), fromMember=member, user=recipient,
+        signedEncryptionKey=b"synthetic-signed-key", accessLevel=models.AccessLevels.READ_WRITE,
+    )
+
+
 def _uid(prefix: str) -> str:
     nonce = next(_COUNTER)
     return f"{prefix}{nonce:04d}" + "a" * 24
@@ -64,6 +71,83 @@ def _add_member(user, collection, *, access_level=models.AccessLevels.ADMIN, col
 
 @pytest.mark.django_db(transaction=True)
 class TestInvitationLifecycle:
+    def test_accept_clears_other_admin_invites_before_later_removal(self, user_factory):
+        owner = user_factory(username="test_user_multi_owner")
+        admin = user_factory(username="test_user_multi_admin")
+        recipient = user_factory(username="test_user_multi_recipient")
+        other = user_factory(username="test_user_multi_other")
+        col = _make_collection(owner)
+        owner_member = _add_member(owner, col)
+        admin_member = _add_member(admin, col)
+        first, second = _invite(owner_member, recipient), _invite(admin_member, recipient)
+        unrelated_user = _invite(owner_member, other)
+        other_col = _make_collection(owner)
+        unrelated_col = _invite(_add_member(owner, other_col), recipient)
+        data = CollectionInvitationAcceptIn(collectionType=b"etebase.vtodo", encryptionKey=b"accepted-key")
+        incoming_accept(first.uid, data, queryset=models.CollectionInvitation.objects.filter(user=recipient))
+        assert not models.CollectionInvitation.objects.filter(user=recipient, fromMember__collection=col).exists()
+        models.CollectionMember.objects.get(user=recipient, collection=col).revoke()
+        with pytest.raises(HttpError) as rejected:
+            incoming_accept(second.uid, data, queryset=models.CollectionInvitation.objects.filter(user=recipient))
+        assert rejected.value.status_code == 404
+        assert not models.CollectionMember.objects.filter(user=recipient, collection=col).exists()
+        assert set(models.CollectionInvitation.objects.values_list("pk", flat=True)) == {unrelated_user.pk, unrelated_col.pk}
+
+    @pytest.mark.parametrize("removal", ["revoke", "member_delete", "member_leave"])
+    def test_removal_clears_old_invites_only_for_affected_recipient_and_collection(self, user_factory, removal):
+        from etebase_server.fastapi.routers.member import member_delete, member_leave
+
+        owner = user_factory(username="test_user_remove_owner")
+        admin = user_factory(username="test_user_remove_admin")
+        recipient = user_factory(username="test_user_remove_recipient")
+        other = user_factory(username="test_user_remove_other")
+        col = _make_collection(owner)
+        owner_member, admin_member = _add_member(owner, col), _add_member(admin, col)
+        member = _add_member(recipient, col, access_level=models.AccessLevels.READ_WRITE)
+        _invite(owner_member, recipient)
+        stale = _invite(admin_member, recipient)
+        unrelated_user = _invite(owner_member, other)
+        other_col = _make_collection(owner)
+        unrelated_col = _invite(_add_member(owner, other_col), recipient)
+        if removal == "revoke":
+            member.revoke()
+        elif removal == "member_delete":
+            member_delete(obj=member)
+        else:
+            member_leave(user=recipient, collection=col)
+        assert not models.CollectionMember.objects.filter(user=recipient, collection=col).exists()
+        assert models.CollectionMemberRemoved.objects.filter(user=recipient, collection=col).exists()
+        assert set(models.CollectionInvitation.objects.values_list("pk", flat=True)) == {unrelated_user.pk, unrelated_col.pk}
+        with pytest.raises(HttpError) as rejected:
+            incoming_accept(stale.uid, CollectionInvitationAcceptIn(collectionType=b"etebase.vtodo", encryptionKey=b"key"),
+                            queryset=models.CollectionInvitation.objects.filter(user=recipient))
+        assert rejected.value.status_code == 404
+
+    def test_accept_rechecks_invitation_loaded_before_removal(self, user_factory, monkeypatch):
+        from etebase_server.fastapi.routers import invitation as router
+
+        owner = user_factory(username="test_user_stale_lookup_owner")
+        recipient = user_factory(username="test_user_stale_lookup_recipient")
+        col = _make_collection(owner)
+        invitation = _invite(_add_member(owner, col), recipient)
+        original = router.get_object_or_404
+        calls = []
+
+        def removed_between_lookup_and_lock(*args, **kwargs):
+            value = original(*args, **kwargs)
+            calls.append(value.pk)
+            if len(calls) == 1:
+                models.CollectionInvitation.objects.filter(pk=value.pk).delete()
+            return value
+
+        monkeypatch.setattr(router, "get_object_or_404", removed_between_lookup_and_lock)
+        with pytest.raises(HttpError) as rejected:
+            incoming_accept(invitation.uid,
+                            CollectionInvitationAcceptIn(collectionType=b"etebase.vtodo", encryptionKey=b"key"),
+                            queryset=models.CollectionInvitation.objects.filter(user=recipient))
+        assert rejected.value.status_code == 404
+        assert not models.CollectionMember.objects.filter(user=recipient, collection=col).exists()
+
     def test_accept_creates_member_clears_removed_membership_and_lists_collection(self, user_factory):
         owner = user_factory(username="test_user_share_owner", email="owner@example.com")
         invited = user_factory(username="test_user_share_invited", email="invited@example.com")

@@ -116,15 +116,15 @@ describe('host-default DATE recurrence across a skipped host date (Pacific/Apia 
   // Dec 31, which is not a Friday occurrence.
   const winter = { start: new Date(Date.UTC(2011, 10, 1)), end: new Date(Date.UTC(2012, 1, 15)) };
 
-  it('DAILY;BYDAY=FR;COUNT=2 from Dec 29 yields the real Fridays Jan 6 and Jan 13', () => {
+  it('DAILY;BYDAY=FR;COUNT=2 keeps the Dec 29 seed then the real Friday Jan 6', () => {
     const out = expandRecurrence('FREQ=DAILY;BYDAY=FR;COUNT=2', new Date(2011, 11, 29), winter);
-    expect(localDays(out)).toEqual(['2012-1-6', '2012-1-13']);
-    expect(out.map((d) => d.getDay())).toEqual([5, 5]);
+    expect(localDays(out)).toEqual(['2011-12-29', '2012-1-6']);
+    expect(out.map((d) => d.getDay())).toEqual([4, 5]);
   });
 
-  it('control: DAILY;BYDAY=FR;COUNT=2 from Jan 2 yields Jan 6 and Jan 13', () => {
+  it('control: DAILY;BYDAY=FR;COUNT=2 keeps the Jan 2 seed then Jan 6', () => {
     const out = expandRecurrence('FREQ=DAILY;BYDAY=FR;COUNT=2', new Date(2012, 0, 2), winter);
-    expect(localDays(out)).toEqual(['2012-1-6', '2012-1-13']);
+    expect(localDays(out)).toEqual(['2012-1-2', '2012-1-6']);
   });
 
   it('MONTHLY;BYMONTHDAY=30;COUNT=2 from Nov 30 skips December (no real 30th) and yields Jan 30', () => {

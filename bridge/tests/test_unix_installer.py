@@ -44,6 +44,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 case "$url" in
+    http://localhost:37358*|http://127.0.0.1:37358*) printf 'ready\n' ;;
     *api.github.com*/releases*)
         printf '%s\n' '[' '  "browser_download_url": "https://download.test/silentsuite-bridge-linux-x86_64"' ']'
         ;;
@@ -160,3 +161,123 @@ def test_unix_installer_does_not_claim_autostart_when_install_autostart_fails(tm
     assert "Auto-start configured" not in result.stdout
     assert "Auto-start was not confirmed" in result.stdout
     assert "--install-autostart" in result.stdout
+
+
+LIFECYCLE_BINARY = r'''#!/bin/sh
+printf '%s\n' "${1:-}" >> "$LIFECYCLE_LOG"
+case "${1:-}" in
+    --login)
+        [ "$LOGIN_OK" = 1 ] || exit 1
+        : > "$ACCOUNT_FILE"
+        ;;
+    --install-autostart)
+        if [ "$SERVICE_ANSWERS" = 1 ]; then
+            : > "$READY_FILE"
+            if [ -f "$ACCOUNT_FILE" ]; then echo yes; else echo no; fi > "$SERVICE_ACCOUNT"
+        fi
+        [ "$AUTOSTART_OK" = 1 ] || exit 1
+        ;;
+    --no-tray)
+        printf 'fallback\n' >> "$FALLBACK_LOG"
+        [ "$FALLBACK_OK" = 1 ] || exit 1
+        : > "$READY_FILE"
+        if [ -f "$ACCOUNT_FILE" ]; then echo yes; else echo no; fi > "$SERVICE_ACCOUNT"
+        ;;
+esac
+exit 0
+'''
+
+
+def lifecycle_installer(tmp_path, *, login, autostart, responder, fallback):
+    fake_bin = installer_path(tmp_path, verifier="sha256sum")
+    (fake_bin / "sleep").unlink()
+    executable(fake_bin / "sleep", "#!/bin/sh\nexit 0\n")
+    curl = fake_bin / "curl"
+    source = curl.read_text(encoding="utf-8")
+    source = source.replace(
+        'case "$url" in\n',
+        '''case "$url" in
+    http://localhost:37358*|http://127.0.0.1:37358*)
+        printf 'probe\\n' >> "$PROBE_LOG"
+        [ -f "$READY_FILE" ] || exit 7
+        printf 'ready\\n'
+        exit 0
+        ;;
+''',
+        1,
+    )
+    executable(curl, source)
+    # Also provide date if the bounded probe uses a deadline.
+    (fake_bin / "date").symlink_to("/bin/date")
+    home = tmp_path / "home"
+    home.mkdir()
+    install_dir = tmp_path / "install"
+    env = {
+        **os.environ, "PATH": str(fake_bin), "HOME": str(home),
+        "SILENTSUITE_INSTALL_DIR": str(install_dir), "TMPDIR": str(tmp_path),
+        "CHECKSUM_CASE": "valid", "BINARY_BODY": LIFECYCLE_BINARY,
+        "CHECKSUM_BODY": hashlib.sha256(LIFECYCLE_BINARY.encode()).hexdigest()
+        + "  silentsuite-bridge-linux-x86_64\n",
+        "LOGIN_OK": "1" if login == "ok" else "0",
+        "AUTOSTART_OK": str(int(autostart)), "SERVICE_ANSWERS": str(int(responder)),
+        "FALLBACK_OK": str(int(fallback)),
+        "LIFECYCLE_LOG": str(tmp_path / "calls"), "FALLBACK_LOG": str(tmp_path / "fallbacks"),
+        "PROBE_LOG": str(tmp_path / "probes"), "READY_FILE": str(tmp_path / "ready"),
+        "ACCOUNT_FILE": str(tmp_path / "account"), "SERVICE_ACCOUNT": str(tmp_path / "service-account"),
+    }
+    if login != "skip":
+        return subprocess.run(["/bin/sh", str(INSTALLER)], env=env, cwd=ROOT,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+
+    import fcntl
+    import pty
+    import termios
+
+    master, slave = pty.openpty()
+
+    def controlling_terminal():
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+    try:
+        process = subprocess.Popen(["/bin/sh", str(INSTALLER)], env=env, cwd=ROOT,
+                                   stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, preexec_fn=controlling_terminal)
+        os.write(master, b"n\n")
+        try:
+            stdout, stderr = process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise
+        return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+@pytest.mark.parametrize("login", ["ok", "failed", "skip"])
+@pytest.mark.parametrize("autostart,responder,fallback", [
+    (True, True, True), (False, True, True),
+    (False, False, True), (False, False, False),
+], ids=["service", "unconfirmed-running", "fallback", "fallback-failed"])
+def test_unix_installer_orders_login_and_one_observed_start(tmp_path, login, autostart, responder, fallback):
+    result = lifecycle_installer(tmp_path, login=login, autostart=autostart,
+                                responder=responder, fallback=fallback)
+    assert result.returncode == 0, result.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert calls.count("--install-autostart") == 1
+    if login == "skip":
+        assert "--login" not in calls
+    else:
+        assert calls.index("--login") < calls.index("--install-autostart"), calls
+    fallback_calls = (tmp_path / "fallbacks").read_text().splitlines() if (tmp_path / "fallbacks").exists() else []
+    assert len(fallback_calls) == int(not autostart and not responder), calls
+    assert (tmp_path / "probes").exists(), "the final running claim needs an observed listener"
+    if not responder and not fallback:
+        assert "Bridge is running" not in result.stdout
+    if not autostart:
+        assert "Auto-start was not confirmed" in result.stdout
+        assert "Auto-start configured" not in result.stdout
+    if login == "ok" and (responder or fallback):
+        assert (tmp_path / "service-account").read_text().strip() == "yes"

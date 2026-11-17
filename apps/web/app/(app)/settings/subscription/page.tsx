@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { formatDate as formatDateUtil } from '@/app/lib/date'
@@ -160,18 +161,21 @@ function LoadingSkeleton() {
 }
 
 function CancelDialog({
+  error,
   accessUntil,
   cancelling,
   onConfirm,
   onClose,
   restoreFocusTo,
 }: {
+  error: string | null
   accessUntil: string
   cancelling: boolean
   onConfirm: () => void
   onClose: () => void
   restoreFocusTo: HTMLElement | null
 }) {
+  const tError = useTranslations('AppError')
   return (
     <ModalDialog
       title="Cancel your subscription"
@@ -186,6 +190,9 @@ function CancelDialog({
           <p>Your access continues until {accessUntil}. After that, your account becomes read-only.</p>
           <p>Your data stays safe and encrypted. You can export anytime. You can reactivate anytime.</p>
         </div>
+        {error !== null && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error || tError('description')}</p>
+        )}
         <div className="flex gap-3 pt-2">
           <Button
             variant="outline"
@@ -278,6 +285,7 @@ export default function SubscriptionPage() {
   const [offerQuote, setOfferQuote] = useState<{ price: string; owner: OperationOwner; sequence: number } | null>(null)
   const [showCancelDialog, setShowCancelDialog] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [cancelError, setCancelError] = useState<{ owner: OperationOwner; message: string } | null>(null)
   const [showPlanSelection, setShowPlanSelection] = useState(false)
   const [paymentChoiceDismissible, setPaymentChoiceDismissible] = useState(false)
   const [paymentConfirmationPending, setPaymentConfirmationPending] = useState(false)
@@ -546,18 +554,26 @@ export default function SubscriptionPage() {
   async function handleCancel() {
     const owner = captureOwner()
     if (!owner) return
+    setCancelError(null)
     setCancelling(true)
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription/cancel`, {
         method: 'POST',
         credentials: 'include',
       })
-      if (res.ok && ownerCurrent(owner)) {
+      if (!ownerCurrent(owner)) return
+      if (res.ok) {
         setShowCancelDialog(false)
         await fetchSubscription(owner)
+      } else {
+        let detail: unknown
+        try { detail = (await res.json())?.detail } catch { /* Use the translated fallback. */ }
+        if (ownerCurrent(owner)) {
+          setCancelError({ owner, message: typeof detail === 'string' ? detail.trim().slice(0, 500) : '' })
+        }
       }
     } catch {
-      // API may not be running in dev
+      if (ownerCurrent(owner)) setCancelError({ owner, message: '' })
     } finally {
       // Neutral local cleanup for the page's still-current account, so a same-account fresh user
       // object never wedges the dialog; nothing is reset for another account.
@@ -771,7 +787,7 @@ export default function SubscriptionPage() {
                 variant="outline"
                 size="sm"
                 className="w-full sm:w-auto min-h-11 border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10"
-                onClick={() => { captureModalOpener(); setShowCancelDialog(true) }}
+                onClick={() => { captureModalOpener(); setCancelError(null); setShowCancelDialog(true) }}
               >
                 Cancel subscription
               </Button>
@@ -813,10 +829,11 @@ export default function SubscriptionPage() {
 
       {showCancelDialog && (
         <CancelDialog
+          error={cancelError && ownerCurrent(cancelError.owner) ? cancelError.message : null}
           accessUntil={accessUntilFormatted}
           cancelling={cancelling}
           onConfirm={handleCancel}
-          onClose={() => setShowCancelDialog(false)}
+          onClose={() => { setCancelError(null); setShowCancelDialog(false) }}
           restoreFocusTo={modalOpener}
         />
       )}
