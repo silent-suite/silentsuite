@@ -287,18 +287,18 @@ describe('expandEventsForRange', () => {
     ])
   })
 
-  it('preserves end-of-month anchoring for a recurring carry-in occurrence', () => {
+  it('skips a missing monthly day and preserves the next carry-in occurrence', () => {
     const expansion = expandGridEventsForRange([calendarEvent({
       startDate: new Date('2026-01-31T22:00:00.000Z'),
       endDate: new Date('2026-02-02T02:00:00.000Z'),
       recurrenceRule: 'FREQ=MONTHLY;COUNT=4',
     })], {
-      start: new Date('2026-03-01T00:00:00.000Z'),
-      end: new Date('2026-03-02T00:00:00.000Z'),
+      start: new Date('2026-04-01T00:00:00.000Z'),
+      end: new Date('2026-04-02T00:00:00.000Z'),
     })
 
     expect(expansion.events.map((event) => event.startDate.toISOString())).toEqual([
-      '2026-02-28T22:00:00.000Z',
+      '2026-03-31T22:00:00.000Z',
     ])
   })
 })

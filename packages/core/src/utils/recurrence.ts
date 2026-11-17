@@ -27,6 +27,8 @@ interface RRuleParts {
   byday?: string[];
   bymonth?: number[];
   bymonthday?: number[];
+  bysetpos?: number[];
+  wkst?: string;
 }
 
 function parseRRule(rrule: string): RRuleParts {
@@ -61,6 +63,10 @@ function parseRRule(rrule: string): RRuleParts {
     result.bymonthday = parts['BYMONTHDAY'].split(',').map((d) => parseInt(d, 10));
   }
 
+  if (parts['BYSETPOS']) result.bysetpos = parts['BYSETPOS'].split(',').map(Number);
+  result.wkst = parts['WKST']?.toUpperCase() ?? 'MO';
+  result.freq = result.freq.toUpperCase();
+  if (!Number.isSafeInteger(result.interval) || result.interval < 1) result.interval = 1;
   return result;
 }
 
@@ -187,37 +193,6 @@ const DAY_MAP: Record<string, number> = {
   SA: 6,
 };
 
-function matchesByday(civil: Date, byday: string[]): boolean {
-  const dow = civil.getUTCDay();
-  return byday.some((day) => {
-    // Strip any numeric prefix (e.g., "2MO" → "MO")
-    const dayAbbr = day.replace(/^-?\d+/, '');
-    return DAY_MAP[dayAbbr] === dow;
-  });
-}
-
-function addInterval(civil: Date, freq: string, interval: number, civilDtstart: Date): Date {
-  const result = new Date(civil.getTime());
-  switch (freq) {
-    case 'DAILY':
-      result.setUTCDate(result.getUTCDate() + interval);
-      break;
-    case 'WEEKLY':
-      result.setUTCDate(result.getUTCDate() + 7 * interval);
-      break;
-    case 'MONTHLY': {
-      // Clamp to last day of target month to prevent drift (e.g. Jan 31 → Feb 28)
-      const originalDay = civilDtstart.getUTCDate();
-      result.setUTCMonth(result.getUTCMonth() + interval, 1); // Move to 1st of target month
-      const lastDay = new Date(Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)).getUTCDate();
-      result.setUTCDate(Math.min(originalDay, lastDay));
-      break;
-    }
-    // YEARLY is expanded per year from DTSTART by expandYearly.
-  }
-  return result;
-}
-
 /**
  * Civil and instant orderings can disagree only when two values are closer than the largest
  * possible difference of two UTC offsets (-12h..+14h, so 26h). Beyond this margin a civil
@@ -237,109 +212,92 @@ function civilAt(year: number, month: number, day: number, h = 0, mi = 0, s = 0,
   return c.getTime();
 }
 
-/**
- * The candidate civil values of one year of a YEARLY rule, in order, at DTSTART's civil time of
- * day in the expansion zone. Each year is built from DTSTART rather than from the previous
- * occurrence, so a date that does not exist in a year (Feb 29) is skipped instead of moving to
- * Mar 1. With both BYMONTH and BYMONTHDAY, every listed month and day is generated; a negative
- * BYMONTHDAY counts back from the end of the month (-1 is the last day).
- */
-function yearlyCandidates(rule: RRuleParts, civilDtstart: Date, year: number): number[] {
-  const at = (month: number, day: number): number => civilAt(
-    year, month, day,
-    civilDtstart.getUTCHours(), civilDtstart.getUTCMinutes(), civilDtstart.getUTCSeconds(), civilDtstart.getUTCMilliseconds(),
-  );
-  if (rule.bymonth?.length && rule.bymonthday?.length) {
-    const result: number[] = [];
-    const months = [...new Set(rule.bymonth)].filter((m) => m >= 1 && m <= 12).sort((a, b) => a - b);
-    for (const month of months) {
-      const lastDay = new Date(civilAt(year, month, 0)).getUTCDate();
-      const days = rule.bymonthday
-        .map((day) => (day < 0 ? lastDay + 1 + day : day))
-        .filter((day) => day >= 1 && day <= lastDay);
-      for (const day of [...new Set(days)].sort((a, b) => a - b)) result.push(at(month - 1, day));
+/** Calendar-period start, independent of DTSTART's weekday/day of month. */
+function periodStart(rule: RRuleParts, start: Date, index: number): number {
+  const year = start.getUTCFullYear();
+  const month = start.getUTCMonth();
+  const day = start.getUTCDate();
+  const step = index * rule.interval;
+  switch (rule.freq) {
+    case 'YEARLY': return civilAt(year + step, 0, 1);
+    case 'MONTHLY': return civilAt(year, month + step, 1);
+    case 'WEEKLY': {
+      const weekStart = DAY_MAP[rule.wkst ?? 'MO'] ?? 1;
+      return civilAt(year, month, day - (start.getUTCDay() - weekStart + 7) % 7 + step * 7);
     }
-    return result;
+    default: return civilAt(year, month, day + step);
   }
-  const c = at(civilDtstart.getUTCMonth(), civilDtstart.getUTCDate());
-  return new Date(c).getUTCMonth() === civilDtstart.getUTCMonth() ? [c] : [];
 }
 
-/** Values {@link expandWithCivil} has already resolved for the expansion, passed to YEARLY. */
-interface YearlyExpansion {
-  zone: Zone;
-  rule: RRuleParts;
-  dtstart: Date;
-  exdateSet: Set<number>;
-  untilMs: number | undefined;
-  untilCivil: number | undefined;
-  rangeStartMs: number;
-  rangeEndMs: number;
-  rangeStartCivil: number;
-  rangeEndCivil: number;
-  civilDtstart: Date;
-  firstCivil: number;
-  maxIterations: number;
+function matchesWeekday(day: Date, values: string[], ordinalYear: boolean): boolean {
+  return values.some(value => {
+    const match = /^([+-]?\d+)?(SU|MO|TU|WE|TH|FR|SA)$/i.exec(value);
+    if (!match || DAY_MAP[match[2]!.toUpperCase()] !== day.getUTCDay()) return false;
+    if (!match[1]) return true;
+    const ordinal = Number(match[1]);
+    if (!ordinal) return false;
+    const year = day.getUTCFullYear();
+    const first = ordinalYear ? civilAt(year, 0, 1) : civilAt(year, day.getUTCMonth(), 1);
+    const after = ordinalYear ? civilAt(year + 1, 0, 1) : civilAt(year, day.getUTCMonth() + 1, 1);
+    const at = civilAt(year, day.getUTCMonth(), day.getUTCDate());
+    return ordinal > 0 ? Math.floor((at - first) / DAY_MS / 7) + 1 === ordinal
+      : Math.floor((after - DAY_MS - at) / DAY_MS / 7) + 1 === -ordinal;
+  });
 }
 
-/**
- * YEARLY expansion: per-year candidates on the expansion zone's calendar, with the same bounds,
- * first-instant, filter, COUNT and EXDATE handling as the main loop in {@link expandWithCivil}.
- */
-function expandYearly(x: YearlyExpansion): CivilOccurrence[] {
-  const { zone, rule } = x;
-  const results: CivilOccurrence[] = [];
-  const generated = Boolean(rule.bymonth?.length && rule.bymonthday?.length);
-  const interval = rule.interval >= 1 ? rule.interval : 1;
-  let count = 0;
-
-  for (let year = x.civilDtstart.getUTCFullYear(), i = 0; i < x.maxIterations; year += interval, i++) {
-    const yearStart = civilAt(year, 0, 1);
-    if (yearStart > x.rangeEndCivil + CIVIL_MARGIN_MS) break;
-    if (x.untilCivil !== undefined && yearStart > x.untilCivil + CIVIL_MARGIN_MS) break;
-
-    for (const candidate of yearlyCandidates(rule, x.civilDtstart, year)) {
-      // Host calendar: a date the host skipped entirely takes the real date it resolves to,
-      // as in the main loop.
-      const civil = zone === HOST_ZONE && !hostDateExists(candidate)
-        ? HOST_ZONE.toCivil(HOST_ZONE.fromCivil(candidate))
-        : candidate;
-      if (civil < x.firstCivil) continue;
-
-      // The supplied DTSTART instant is the first occurrence (see the main loop).
-      let instant: number | undefined = civil === x.firstCivil ? x.dtstart.getTime() : undefined;
-      const instantOf = (): number => (instant ??= zone.fromCivil(civil));
-
-      // Candidates are in civil order, so the first one past a bound ends the expansion.
-      if (x.untilMs !== undefined && x.untilCivil !== undefined) {
-        if (civil > x.untilCivil + CIVIL_MARGIN_MS) return results;
-        if (civil >= x.untilCivil - CIVIL_MARGIN_MS && instantOf() > x.untilMs) return results;
+/** Sorted, unique candidates for one frequency period; BYSETPOS is applied last. */
+function periodCandidates(rule: RRuleParts, start: Date, first: number, zone: Zone): number[] {
+  const date = new Date(first);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const time = start.getUTCHours() * 3600000 + start.getUTCMinutes() * 60000 + start.getUTCSeconds() * 1000 + start.getUTCMilliseconds();
+  const possible: number[] = [];
+  if (rule.freq === 'YEARLY' || rule.freq === 'MONTHLY') {
+    // Select months and month days before allocating dates or resolving host-zone gaps.
+    // Birthdays anchored decades ago need only one candidate per year.
+    const months = rule.freq === 'MONTHLY' ? [month]
+      : rule.bymonth?.length ? [...new Set(rule.bymonth.filter(value => value >= 1 && value <= 12).map(value => value - 1))].sort((a, b) => a - b)
+        : !rule.byday?.length && !rule.bymonthday?.length ? [start.getUTCMonth()]
+          : Array.from({ length: 12 }, (_, index) => index);
+    for (const candidateMonth of months) {
+      if (rule.bymonth?.length && !rule.bymonth.includes(candidateMonth + 1)) continue;
+      const monthStart = civilAt(year, candidateMonth, 1);
+      const last = new Date(civilAt(year, candidateMonth + 1, 0)).getUTCDate();
+      const days = rule.bymonthday?.length
+        ? [...new Set(rule.bymonthday.map(value => value < 0 ? last + value + 1 : value))].sort((a, b) => a - b)
+        : rule.byday?.length ? Array.from({ length: last }, (_, index) => index + 1) : [start.getUTCDate()];
+      for (const day of days) {
+        if (day >= 1 && day <= last) possible.push(monthStart + (day - 1) * DAY_MS + time);
       }
-      if (civil > x.rangeEndCivil + CIVIL_MARGIN_MS) return results;
-      if (civil >= x.rangeEndCivil - CIVIL_MARGIN_MS && instantOf() > x.rangeEndMs) return results;
-
-      const day = new Date(civil);
-      let matchesRule = true;
-      if (rule.byday && rule.byday.length > 0) matchesRule = matchesByday(day, rule.byday);
-      if (!generated && matchesRule && rule.bymonth && rule.bymonth.length > 0) {
-        matchesRule = rule.bymonth.includes(day.getUTCMonth() + 1);
-      }
-      if (!generated && matchesRule && rule.bymonthday && rule.bymonthday.length > 0) {
-        matchesRule = rule.bymonthday.includes(day.getUTCDate());
-      }
-      if (!matchesRule) continue;
-
-      // As in the main loop: COUNT applies to rule-generated candidates before EXDATE removal,
-      // independent of range.start.
-      count++;
-      if (civil >= x.rangeStartCivil - CIVIL_MARGIN_MS) {
-        const at = instantOf();
-        if (at >= x.rangeStartMs && !x.exdateSet.has(at)) results.push({ at, civil });
-      }
-      if (rule.count !== undefined && count >= rule.count) return results;
     }
+  } else {
+    for (let i = 0; i < (rule.freq === 'WEEKLY' ? 7 : 1); i++) possible.push(first + i * DAY_MS + time);
   }
-  return results;
+  const matches = (at: number): boolean => {
+    const day = new Date(at);
+    if (rule.bymonth?.length && !rule.bymonth.includes(day.getUTCMonth() + 1)) return false;
+    if (rule.freq === 'YEARLY' && !rule.bymonth?.length && !rule.byday?.length && !rule.bymonthday?.length
+      && day.getUTCMonth() !== start.getUTCMonth()) return false;
+    if (rule.bymonthday?.length) {
+      const last = new Date(civilAt(day.getUTCFullYear(), day.getUTCMonth() + 1, 0)).getUTCDate();
+      if (!rule.bymonthday.some(value => (value < 0 ? last + value + 1 : value) === day.getUTCDate())) return false;
+    }
+    if (rule.byday?.length) return matchesWeekday(day, rule.byday, rule.freq === 'YEARLY' && !rule.bymonth?.length);
+    return rule.freq !== 'WEEKLY' || day.getUTCDay() === start.getUTCDay();
+  };
+  const candidates: number[] = [];
+  for (let at of possible) {
+    if (!matches(at)) continue;
+    if (zone === HOST_ZONE && !hostDateExists(at)) {
+      at = HOST_ZONE.toCivil(HOST_ZONE.fromCivil(at));
+      // A skipped civil date may resolve onto a different weekday or month.
+      if (!matches(at)) continue;
+    }
+    candidates.push(at);
+  }
+  if (!rule.bysetpos?.length) return [...new Set(candidates)];
+  return [...new Set(rule.bysetpos.map(position => candidates[position > 0 ? position - 1 : candidates.length + position])
+    .filter((value): value is number => value !== undefined))].sort((a, b) => a - b);
 }
 
 /**
@@ -455,87 +413,39 @@ function expandWithCivil(
       ? suppliedCivil
       : zone.toCivil(dtstart.getTime()),
   );
-  const dtstartDay = Math.floor(civilDtstart.getTime() / DAY_MS);
   const firstCivil = civilDtstart.getTime();
-
-  if (rule.freq === 'YEARLY') {
-    return expandYearly({
-      zone, rule, dtstart, exdateSet, untilMs, untilCivil,
-      rangeStartMs, rangeEndMs, rangeStartCivil, rangeEndCivil,
-      civilDtstart, firstCivil, maxIterations: MAX_ITERATIONS,
-    });
-  }
-
-  let current = new Date(firstCivil);
+  if (!Number.isFinite(firstCivil) || !Number.isFinite(rangeEndCivil)) return [];
+  const supportedFrequency = ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(rule.freq);
   let count = 0;
-  let iterations = 0;
+  let previousCivil: number | undefined;
 
-  while (iterations < MAX_ITERATIONS) {
-    iterations++;
-
-    // Host calendar: a date the host skipped entirely is not a candidate of its own. It takes
-    // the real date the host resolves it to (as native Date stepping does) before filtering,
-    // counting and stepping, so no duplicate or impossible weekday/month-day occurs.
-    if (zone === HOST_ZONE && !hostDateExists(current.getTime())) {
-      current = new Date(HOST_ZONE.toCivil(HOST_ZONE.fromCivil(current.getTime())));
-    }
-
-    const civil = current.getTime();
-    // The supplied DTSTART instant is the first occurrence (an ambiguous local time keeps the
-    // instant given rather than the one its wall clock would resolve to).
-    let instant: number | undefined = civil === firstCivil ? dtstart.getTime() : undefined;
-    const instantOf = (): number => (instant ??= zone.fromCivil(civil));
-
-    // Stop conditions (instant semantics; civil prefilter avoids conversion far from bounds)
-    if (untilMs !== undefined && untilCivil !== undefined) {
-      if (civil > untilCivil + CIVIL_MARGIN_MS) break;
-      if (civil >= untilCivil - CIVIL_MARGIN_MS && instantOf() > untilMs) break;
-    }
-    if (civil > rangeEndCivil + CIVIL_MARGIN_MS) break;
-    if (civil >= rangeEndCivil - CIVIL_MARGIN_MS && instantOf() > rangeEndMs) break;
-
-    let matchesRule = true;
-    if (rule.byday && rule.byday.length > 0) {
-      matchesRule = matchesByday(current, rule.byday);
-    }
-    if (matchesRule && rule.bymonth && rule.bymonth.length > 0) {
-      matchesRule = rule.bymonth.includes(current.getUTCMonth() + 1);
-    }
-    if (matchesRule && rule.bymonthday && rule.bymonthday.length > 0) {
-      matchesRule = rule.bymonthday.includes(current.getUTCDate());
-    }
-
-    if (matchesRule) {
-      // COUNT applies to RRULE-generated candidates before EXDATE removes an
-      // occurrence from the recurrence set. Keep this independent of range.start.
+  for (let period = 0; period < (supportedFrequency ? MAX_ITERATIONS : 1); period++) {
+    const first = periodStart(rule, civilDtstart, period);
+    if (!Number.isFinite(first) || first > rangeEndCivil + CIVIL_MARGIN_MS) break;
+    if (untilCivil !== undefined && first > untilCivil + CIVIL_MARGIN_MS) break;
+    // Preserve the seed-only fallback for frequencies this engine does not expand.
+    const candidates = supportedFrequency ? periodCandidates(rule, civilDtstart, first, zone).filter(civil => civil >= firstCivil) : [firstCivil];
+    // DTSTART always counts first, even when an imported rule does not match its seed.
+    if (period === 0 && !candidates.includes(firstCivil)) candidates.unshift(firstCivil);
+    for (const civil of candidates) {
+      // A date absent from the host calendar is not a second candidate for its next day.
+      if (civil === previousCivil) continue;
+      previousCivil = civil;
+      let instant: number | undefined = civil === firstCivil ? dtstart.getTime() : undefined;
+      const instantOf = (): number => (instant ??= zone.fromCivil(civil));
+      if (untilMs !== undefined && untilCivil !== undefined) {
+        if (civil > untilCivil + CIVIL_MARGIN_MS) return results;
+        if (civil >= untilCivil - CIVIL_MARGIN_MS && instantOf() > untilMs) return results;
+      }
+      if (civil > rangeEndCivil + CIVIL_MARGIN_MS) return results;
+      if (civil >= rangeEndCivil - CIVIL_MARGIN_MS && instantOf() > rangeEndMs) return results;
       count++;
       if (civil >= rangeStartCivil - CIVIL_MARGIN_MS) {
         const at = instantOf();
-        if (at >= rangeStartMs && !exdateSet.has(at)) {
-          results.push({ at, civil });
-        }
+        if (at >= rangeStartMs && !exdateSet.has(at)) results.push({ at, civil });
       }
-      if (rule.count !== undefined && count >= rule.count) break;
-    }
-
-    // Advance based on frequency
-    if (rule.freq === 'WEEKLY' && rule.byday && rule.byday.length > 0) {
-      // For WEEKLY with BYDAY, step one calendar day at a time in the zone's calendar
-      const next = new Date(civil);
-      next.setUTCDate(next.getUTCDate() + 1);
-      // Preserve original time-of-day
-      next.setUTCHours(civilDtstart.getUTCHours(), civilDtstart.getUTCMinutes(), civilDtstart.getUTCSeconds(), 0);
-      // Check if we've completed a week cycle using calendar days
-      const nextDay = Math.floor(next.getTime() / DAY_MS);
-      const daysSinceStart = nextDay - dtstartDay;
-      if (daysSinceStart > 0 && daysSinceStart % 7 === 0 && rule.interval > 1) {
-        next.setUTCDate(next.getUTCDate() + 7 * (rule.interval - 1));
-      }
-      current = next;
-    } else {
-      current = addInterval(current, rule.freq, rule.interval, civilDtstart);
+      if (rule.count !== undefined && count >= rule.count) return results;
     }
   }
-
   return results;
 }
