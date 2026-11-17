@@ -17,7 +17,7 @@ Evidence classes (see S1-MANIFEST.json for the literal node IDs):
 - existence RED: `test_default_limits_are_documented_values`,
   `test_valid_overrides_are_applied`;
 - healthy controls: everything named `*_succeeds`, `*_preserved`, `*_still_*`,
-  `*_unchanged`, `*_not_413` and the nested-error characterization.
+  `*_unchanged`, `*_not_413` and the nested-response validation tests.
 """
 
 from __future__ import annotations
@@ -773,19 +773,42 @@ def test_accept_negotiation_unchanged(client):
     "route",
     [pytest.param("login", id="login"), pytest.param("change_password", id="change-password")],
 )
-def test_nested_malformed_response_characterized(client, user_factory, route):
-    """Characterization only, not a contract: an undecodable nested `response`
-    is decoded inside the endpoint and is not mapped by any handler today.
-    The asserted status is source-predicted and must be confirmed by the first
-    hosted baseline run; this change does not alter it."""
+@pytest.mark.parametrize(
+    "nested_response",
+    [
+        pytest.param(b"\xc1", id="undecodable"),
+        pytest.param(b"\x81", id="incomplete"),
+        pytest.param(b"\x80\x80", id="extra-data"),
+        pytest.param(msgpack_encode([]), id="non-dict"),
+        pytest.param(msgpack_encode({"username": "limits_nested_user"}), id="missing-fields"),
+        pytest.param(msgpack_encode({
+            "username": "limits_nested_user", "challenge": b"unused", "host": "testserver",
+            "action": "invalid", "loginPubkey": b"unused", "encryptedContent": b"unused",
+        }), id="invalid-action"),
+    ],
+)
+def test_nested_malformed_response_returns_400_before_authentication(client, user_factory, route, nested_response):
     username = "limits_nested_user"
     user = user_factory(username=username, email="limits-nested@example.com")
     headers = {}
     if route == "change_password":
         headers["Authorization"] = f"Token {AuthToken.objects.create(user=user).key}"
 
-    response = msgpack_post(
-        client, f"{AUTH_PREFIX}/{route}/", {"response": b"\xc1", "signature": b"\x00" * 64}, headers=headers
-    )
+    original_pubkey = bytes(user.userinfo.loginPubkey)
+    original_content = bytes(user.userinfo.encryptedContent)
+    token_count = AuthToken.objects.filter(user=user).count()
+    with patch("etebase_server.fastapi.routers.authentication.validate_login_request") as validate:
+        response = msgpack_post(
+            client, f"{AUTH_PREFIX}/{route}/",
+            {"response": nested_response, "signature": b"\x00" * 64}, headers=headers,
+        )
 
-    assert response.status_code == 500
+    assert response.status_code == 400, response.content
+    assert decode_response(response) == {
+        "code": "invalid_response", "detail": "Invalid authentication response.", "errors": None,
+    }
+    validate.assert_not_called()
+    user.userinfo.refresh_from_db()
+    assert bytes(user.userinfo.loginPubkey) == original_pubkey
+    assert bytes(user.userinfo.encryptedContent) == original_content
+    assert AuthToken.objects.filter(user=user).count() == token_count

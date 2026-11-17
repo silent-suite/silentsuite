@@ -48,7 +48,7 @@ test('fails a changed nft bundle, another compiled path, or an application chunk
     { file: nft.file, signature: 'rangeLimit' },
     { file: `${compiled}micromatch/index.js`, signature: 'rangeLimit', sha256: nft.sha256 },
     { file: `${compiled}@vercel/nft/other.js`, signature: 'rangeLimit', sha256: nft.sha256 },
-    { file: nft.file.replace('next@15.5.28_', 'next@15.5.29_'), signature: 'rangeLimit', sha256: nft.sha256 },
+    { file: nft.file.replace('next@15.5.29_', 'next@15.5.28_'), signature: 'rangeLimit', sha256: nft.sha256 },
     { file: 'apps/web/.next/standalone/apps/web/.next/server/chunks/123.js', signature: 'exceeds max characters (', sha256: nft.sha256 },
     { file: 'apps/web/.next/static/chunks/app/page.js', signature: 'rangeLimit', sha256: nft.sha256 },
   ]) {

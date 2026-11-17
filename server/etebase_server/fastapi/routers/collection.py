@@ -354,8 +354,10 @@ def _create(data: CollectionIn, user: UserType):
         instance.main_item = main_item
         instance.save()
 
-        # TODO
-        process_revisions_for_item(main_item, data.item.content)
+        try:
+            process_revisions_for_item(main_item, data.item.content)
+        except django_exceptions.ValidationError as e:
+            transform_validation_error("content", e)
 
         try:
             collection_type_obj, _ = models.CollectionType.objects.get_or_create(uid=data.collectionType, owner=user)
@@ -435,7 +437,7 @@ def item_get(
     user: UserType = Depends(get_authenticated_user),
     prefetch: Prefetch = PrefetchQuery,
 ):
-    obj = queryset.get(uid=item_uid)
+    obj = get_object_or_404(queryset, uid=item_uid)
     return MsgpackResponse(CollectionItemOut.from_orm_context(obj, Context(user, prefetch)))
 
 
@@ -573,6 +575,11 @@ def fetch_updates(
         raise HttpError("too_many_items", "Request has too many items.", status_code=status.HTTP_400_BAD_REQUEST)
 
     queryset, stoken_rev = filter_by_stoken(stoken, queryset, models.CollectionItem.stoken_annotation)
+
+    if not data:
+        return MsgpackResponse(
+            CollectionItemListResponse(data=[], stoken=stoken_rev and stoken_rev.uid, done=True)
+        )
 
     uids, etags = zip(*[(item.uid, item.etag) for item in data])
     revs = models.CollectionItemRevision.objects.filter(uid__in=etags, current=True)

@@ -3,6 +3,7 @@ import logging
 import typing as t
 from datetime import datetime
 
+import msgpack
 import nacl
 import nacl.encoding
 import nacl.hash
@@ -90,7 +91,11 @@ class Authentication(BaseModel):
 class Login(Authentication):
     @cached_property
     def response_data(self) -> LoginResponse:
-        return LoginResponse(**msgpack_decode(self.response))
+        try:
+            return LoginResponse(**msgpack_decode(self.response))
+        except (msgpack.UnpackException, ValueError, TypeError):
+            # Pydantic validation errors are ValueErrors too.
+            raise HttpError("invalid_response", "Invalid authentication response.") from None
 
 
 class ChangePasswordResponse(LoginResponse):
@@ -101,7 +106,10 @@ class ChangePasswordResponse(LoginResponse):
 class ChangePassword(Authentication):
     @cached_property
     def response_data(self) -> ChangePasswordResponse:
-        return ChangePasswordResponse(**msgpack_decode(self.response))
+        try:
+            return ChangePasswordResponse(**msgpack_decode(self.response))
+        except (msgpack.UnpackException, ValueError, TypeError):
+            raise HttpError("invalid_response", "Invalid authentication response.") from None
 
 
 class UserSignup(BaseModel):
@@ -310,6 +318,8 @@ def signup_save(data: SignupIn, request: Request) -> UserType:
             raise e
         except django_exceptions.ValidationError as e:
             transform_validation_error("user", e)
+        except django_exceptions.PermissionDenied as e:
+            raise HttpError("signup_disabled", str(e), status.HTTP_403_FORBIDDEN) from None
         except Exception:
             logger.exception("Unexpected signup error while creating user")
             raise HttpError("generic", "An error occurred during signup. Please try again.")
