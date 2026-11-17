@@ -18,9 +18,13 @@ from unittest.mock import patch
 
 import nacl.signing
 import pytest
+from django.core.exceptions import PermissionDenied
 from django.test.utils import override_settings
 from fastapi.testclient import TestClient
 
+from etebase_server.django import app_settings, models
+from etebase_server.django.app_settings_inner import AppSettings
+from etebase_server.django.token_auth.models import AuthToken
 from etebase_server.fastapi.conftest import (
     AUTH_PREFIX,
     build_signed_response,
@@ -224,6 +228,48 @@ class TestSignup:
         assert response.status_code == 409
         assert decode_response(response)["code"] == "user_exists"
 
+    @override_settings(ETEBASE_CREATE_USER_FUNC="etebase_server.django.utils.create_user_blocked")
+    def test_disabled_signup_returns_403_without_writes_or_traceback(
+        self, auth_client, login_pubkey, encryption_pubkey, user_salt
+    ):
+        # ETEBASE_DISABLE_SIGNUP selects this callback at settings startup.
+        # Resolve it afresh because the production AppSettings caches callbacks.
+        callback = AppSettings("ETEBASE_").CREATE_USER_FUNC
+        body = self._signup_body("test_user_closed", "closed@example.com", login_pubkey, encryption_pubkey, user_salt)
+        tracked_models = (get_typed_user_model(), models.UserInfo, AuthToken)
+        before = {model: model.objects.count() for model in tracked_models}
+        with patch.object(app_settings, "CREATE_USER_FUNC", callback), patch(
+            "etebase_server.fastapi.routers.authentication.logger.exception"
+        ) as log_exception:
+            response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
+
+        assert response.status_code == 403
+        assert decode_response(response) == {
+            "code": "signup_disabled",
+            "detail": "Signup is disabled for this server. Please refer to the README for more information.",
+            "errors": None,
+        }
+        log_exception.assert_not_called()
+        for model in tracked_models:
+            assert model.objects.count() == before[model]
+
+    def test_signup_permission_denied_preserves_callback_message(
+        self, auth_client, login_pubkey, encryption_pubkey, user_salt
+    ):
+        body = self._signup_body("test_user_directory", "directory@example.com", login_pubkey, encryption_pubkey, user_salt)
+        with patch(
+            "etebase_server.fastapi.routers.authentication.create_user",
+            side_effect=PermissionDenied("User not in the LDAP directory."),
+        ), patch("etebase_server.fastapi.routers.authentication.logger.exception") as log_exception:
+            response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
+
+        assert response.status_code == 403
+        assert decode_response(response) == {
+            "code": "signup_disabled", "detail": "User not in the LDAP directory.", "errors": None,
+        }
+        log_exception.assert_not_called()
+        assert not get_typed_user_model().objects.filter(username="test_user_directory").exists()
+
     def test_signup_unexpected_creation_error_returns_safe_detail(
         self, auth_client, login_pubkey, encryption_pubkey, user_salt
     ):
@@ -232,7 +278,7 @@ class TestSignup:
         with patch(
             "etebase_server.fastapi.routers.authentication.create_user",
             side_effect=Exception("raw database hostname secret"),
-        ):
+        ), patch("etebase_server.fastapi.routers.authentication.logger.exception") as log_exception:
             response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
 
         decoded = decode_response(response)
@@ -240,6 +286,7 @@ class TestSignup:
         assert decoded["code"] == "generic"
         assert decoded["detail"] == "An error occurred during signup. Please try again."
         assert "raw database hostname secret" not in decoded["detail"]
+        log_exception.assert_called_once_with("Unexpected signup error while creating user")
 
     @override_settings(ETEBASE_BOOTSTRAP_ADMIN_TOKEN="bootstrap-secret")
     def test_first_signup_requires_bootstrap_token_when_configured(

@@ -318,6 +318,8 @@ def signup_save(data: SignupIn, request: Request) -> UserType:
             raise e
         except django_exceptions.ValidationError as e:
             transform_validation_error("user", e)
+        except django_exceptions.PermissionDenied as e:
+            raise HttpError("signup_disabled", str(e), status.HTTP_403_FORBIDDEN) from None
         except Exception:
             logger.exception("Unexpected signup error while creating user")
             raise HttpError("generic", "An error occurred during signup. Please try again.")
