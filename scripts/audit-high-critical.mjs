@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
 import { verifyBracesRemediation } from './braces-byte-preflight.mjs'
+import { verifyPicomatchToolingExposure } from './verify-picomatch-tooling-exposure.mjs'
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -32,10 +33,21 @@ export const bracesRemediation = Object.freeze({
   ]),
 })
 
-function isRemediated(advisory, verification) {
-  const record = bracesRemediation
-  return verification.ok === true
-    && advisory.github_advisory_id === record.githubAdvisoryId
+// Unpatched, owner-approved exception. The quick endpoint reported this exact unversioned path
+// on 2026-11-17. The separate lock-closure check covers the other shared-package consumers.
+// Record: docs/security/picomatch-ghsa-fc5q-39xc-vjpf-exception.md
+export const picomatchException = Object.freeze({
+  githubAdvisoryId: 'GHSA-fc5q-39xc-vjpf',
+  moduleName: 'picomatch',
+  severity: 'high',
+  vulnerableVersions: '<=4.0.7',
+  patchedVersions: '<0.0.0',
+  version: '4.0.4',
+  paths: new Set(['apps__docs>vitepress>vite>picomatch']),
+})
+
+function matchesDisposition(advisory, record) {
+  return advisory.github_advisory_id === record.githubAdvisoryId
     && advisory.url === `https://github.com/advisories/${record.githubAdvisoryId}`
     && advisory.module_name === record.moduleName
     && advisory.severity === record.severity
@@ -48,6 +60,10 @@ function isRemediated(advisory, verification) {
     && advisory.findings[0].paths.length === record.paths.size
     && new Set(advisory.findings[0].paths).size === record.paths.size
     && advisory.findings[0].paths.every((path) => record.paths.has(path))
+}
+
+function isRemediated(advisory, verification) {
+  return verification.ok === true && matchesDisposition(advisory, bracesRemediation)
 }
 
 // pnpm 10.34.9 posts the lockfile tree to the registry's /-/npm/v1/security/audits/quick endpoint
@@ -109,7 +125,8 @@ function validateReport(report) {
   }
 
   // Reconciliation is only required once the disposition could cover a policy-severity record.
-  if (advisories.some((advisory) => advisory.github_advisory_id === bracesRemediation.githubAdvisoryId)) {
+  if (advisories.some((advisory) => [bracesRemediation.githubAdvisoryId, picomatchException.githubAdvisoryId]
+    .includes(advisory.github_advisory_id))) {
     for (const severity of ['critical', 'high']) {
       let findings = 0
       for (const advisory of advisories.filter((candidate) => candidate.severity === severity)) {
@@ -165,17 +182,29 @@ export function runAudit({ spawn = spawnSync, log = console.log, error = console
 
   const advisories = Object.values(report.advisories)
   const remediated = advisories.filter((advisory) => isRemediated(advisory, verification))
+  const picomatch = advisories.filter((advisory) => advisory.module_name === picomatchException.moduleName
+    || advisory.github_advisory_id === picomatchException.githubAdvisoryId)
+  const exposure = picomatch.length > 0 ? verifyPicomatchToolingExposure({ root }) : { ok: true }
+  const excepted = picomatch.length === 1 && exposure.ok
+    && matchesDisposition(picomatch[0], picomatchException) ? picomatch : []
   const highCritical = advisories.filter((advisory) => ['high', 'critical'].includes(advisory.severity)
-    && !remediated.includes(advisory))
+    && !remediated.includes(advisory) && !excepted.includes(advisory))
   const counts = report.metadata.vulnerabilities
 
   log(`Dependency audit summary: ${counts.critical} critical, ${counts.high} high, ${counts.moderate} moderate, ${counts.low} low.`)
   for (const advisory of remediated) {
     log(`Raw finding locally remediated by the verified patch (still counted above): ${advisory.severity}: ${advisory.module_name}@${bracesRemediation.version} — ${advisory.github_advisory_id}`)
   }
+  for (const advisory of excepted) {
+    log(`Raw finding accepted as an exception (still counted above): ${advisory.severity}: ${advisory.module_name}@${picomatchException.version} — ${advisory.github_advisory_id}`)
+  }
   if (!verification.ok) {
     error('The local braces remediation could not be verified:')
     for (const failure of verification.failures) error(`- ${failure}`)
+  }
+  if (picomatch.length > 0 && excepted.length === 0) {
+    error('The picomatch report or dependency closure differs from the reviewed exception.')
+    return 1
   }
 
   if (highCritical.length > 0) {
@@ -186,7 +215,8 @@ export function runAudit({ spawn = spawnSync, log = console.log, error = console
   }
   if (!verification.ok) return 1
 
-  log(remediated.length > 0 ? 'No unremediated high or critical advisories found.' : 'No high or critical advisories found.')
+  log(excepted.length > 0 ? 'No high or critical advisories outside the verified dispositions found.'
+    : remediated.length > 0 ? 'No unremediated high or critical advisories found.' : 'No high or critical advisories found.')
   return 0
 }
 

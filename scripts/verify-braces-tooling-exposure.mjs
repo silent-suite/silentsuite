@@ -17,7 +17,7 @@ import { patchDigest } from './braces-byte-preflight.mjs'
 const root = resolve(import.meta.dirname, '..')
 const nextDir = join(root, 'apps/web/.next')
 const standalone = join(nextDir, 'standalone')
-const consumers = ['braces', 'micromatch', 'fast-glob', 'chokidar', 'tailwindcss', 'tailwindcss-animate',
+const consumers = ['braces', 'picomatch', 'micromatch', 'fast-glob', 'chokidar', 'tailwindcss', 'tailwindcss-animate',
   '@ducanh2912/next-pwa', 'eslint-config-next', '@next/eslint-plugin-next']
 // String literals from braces lib/parse.js and lib/expand.js; minifiers keep string literals
 // and (by default) property names, so these survive bundling of braces source.

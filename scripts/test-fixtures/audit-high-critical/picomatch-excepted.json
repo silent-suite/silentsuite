@@ -1,0 +1,58 @@
+{
+  "actions": [],
+  "advisories": {
+    "1247710": {
+      "findings": [
+        {
+          "version": "4.0.4",
+          "paths": [
+            "apps__docs>vitepress>vite>picomatch"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://nvd.nist.gov/vuln/detail/CVE-2026-112366\n- https://github.com/micromatch/picomatch/pull/194\n- https://github.com/micromatch/picomatch/blob/4.0.7/lib/parse.js#L287-L307\n- https://www.vulncheck.com/advisories/picomatch-through-4.0.7-redos-via-single-branch-repeated-extglob-patterns\n- https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
+      "created": "2026-10-19T18:32:12.000Z",
+      "id": 1247710,
+      "npm_advisory_id": null,
+      "overview": "Picomatch through 4.0.7 contains a regular expression denial of service vulnerability that allows attackers to block the event loop by supplying single-branch repeated extglob patterns. Attackers can provide globs like +(*) or +(*a), which analyzeRepeatedExtglob in lib/parse.js skips, causing exponential backtracking against short crafted strings and denying service to Node.js applications.",
+      "reported_by": null,
+      "title": "picomatch vulnerable to ReDoS through single-branch repeated extglobs",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-112366"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "picomatch",
+      "vulnerable_versions": "<=4.0.7",
+      "github_advisory_id": "GHSA-fc5q-39xc-vjpf",
+      "recommendation": "None",
+      "patched_versions": "<0.0.0",
+      "updated": "2026-11-17T15:56:44.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-1333"
+      ],
+      "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf"
+    }
+  },
+  "muted": [],
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 2,
+      "moderate": 2,
+      "high": 1,
+      "critical": 0
+    },
+    "dependencies": 1248,
+    "devDependencies": 0,
+    "optionalDependencies": 0,
+    "totalDependencies": 1248
+  }
+}
