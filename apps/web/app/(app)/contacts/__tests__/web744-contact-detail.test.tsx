@@ -169,12 +169,11 @@ describe('#744 the rendered contact detail saves only through its captured recor
     harness.restore()
   })
 
-  async function seedContacts() {
+  async function seedContacts(initialVcard = contactVcard('vcard-base-744', BASE_GIVEN)) {
     const { account, collection } = await makeSavedContact('')
     const manager = account.getCollectionManager().getItemManager(collection)
-    const baseVcard = contactVcard('vcard-base-744', BASE_GIVEN)
     const otherVcard = contactVcard('vcard-other-744', OTHER_GIVEN)
-    const item = await manager.create({ mtime: 1 }, baseVcard)
+    const item = await manager.create({ mtime: 1 }, initialVcard)
     item.encryptedItem.__markSaved()
     const other = await manager.create({ mtime: 1 }, otherVcard)
     other.encryptedItem.__markSaved()
@@ -188,12 +187,32 @@ describe('#744 the rendered contact detail saves only through its captured recor
     useContactListStore.setState({ lists: [{ id: collection.uid, name: 'Address book 744', color: '#fff', visible: true, accessLevel: 2 }], activeListId: 'all' } as any)
     useContactStore.setState({
       contacts: [
-        { ...deserializeContact(baseVcard), id: item.uid, listId: collection.uid, revision: item.etag },
+        { ...deserializeContact(initialVcard), id: item.uid, listId: collection.uid, revision: item.etag },
         { ...deserializeContact(otherVcard), id: other.uid, listId: collection.uid, revision: other.etag },
       ],
     } as any)
     return { account, collection, item, other }
   }
+
+  it('keeps hidden components through visible name and address edits', async () => {
+    const source = contactVcard('vcard-base-744', BASE_GIVEN).replace(/^N:.*$/m, `N:;${BASE_GIVEN};Quinlan,James;;`).replace('END:VCARD', 'ADR;TYPE=home:PO Box 123;Apartment 4;Main Street;;;;\r\nEND:VCARD')
+    const { account, collection, item } = await seedContacts(source)
+    renderContactsPage()
+    openContact(BASE_GIVEN)
+    fireEvent.click(ui().getByRole('button', { name: 'Edit contact' }))
+    const given = ui().getByPlaceholderText('Given name')
+    fireEvent.change(given, { target: { value: 'John' } })
+    fireEvent.blur(given)
+    await settle()
+    const street = ui().getByPlaceholderText('Street')
+    fireEvent.change(street, { target: { value: 'New Street' } })
+    fireEvent.blur(street)
+    await settle()
+    const saved = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+    const wire = new TextDecoder().decode(await saved.getContent())
+    expect(wire).toContain('N:;John;Quinlan,James;;')
+    expect(wire).toContain('ADR;TYPE=home:PO Box 123;Apartment 4;New Street;;;;')
+  })
 
   it('#744 shows a refused edit as Not saved in the selected detail, and keeps it across a refresh', async () => {
     const { account, collection, item } = await seedContacts()

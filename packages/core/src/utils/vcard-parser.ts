@@ -6,6 +6,8 @@
 export interface VCardName {
   family: string;
   given: string;
+  /** Opaque N component text, including its vCard escaping and comma separators. */
+  additional?: string;
   prefix?: string;
   suffix?: string;
 }
@@ -21,6 +23,9 @@ export interface VCardEmail {
 }
 
 export interface VCardAddress {
+  /** Opaque ADR component text, including its vCard escaping. */
+  poBox?: string;
+  extended?: string;
   type: string;
   street: string;
   city: string;
@@ -378,6 +383,14 @@ function splitStructuredValue(value: string): string[] {
   return parts;
 }
 
+/** Opaque components may not escape into an adjacent component or content line. */
+function retainedStructuredComponent(value = ''): string {
+  if (/[\r\n]/.test(value) || splitStructuredValue(value).length !== 1 || (value.match(/\\+$/)?.[0].length ?? 0) % 2 !== 0) {
+    throw new Error('Invalid retained vCard component');
+  }
+  return value;
+}
+
 // ── Birthdays ──
 
 /** Year written with X-APPLE-OMIT-YEAR for a birthday without a year, as
@@ -460,6 +473,15 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
 
     const prop = parseProperty(line);
     const text = (value = prop.value) => propertyText(prop, value, strict);
+    // Hidden components retain their source spelling. Legacy transfer encoding must first
+    // become ordinary escaped TEXT; split lists before decoding encoded commas.
+    const component = (value: string) => {
+      const retained = prop.params['ENCODING']?.toUpperCase() === 'QUOTED-PRINTABLE'
+        ? splitCommaValues(value).map(part => escapeText(text(part))).join(',') : value;
+      // Incomplete legacy fields may end in a lone backslash. Keep it as literal text
+      // rather than letting it escape the next component separator on write.
+      return (retained.match(/\\+$/)?.[0].length ?? 0) % 2 !== 0 ? `${retained}\\` : retained;
+    };
     switch (prop.name) {
       // Labels are resolved before this pass so group ordering is irrelevant.
       case 'UID':
@@ -473,6 +495,7 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
         vcard.n = {
           family: text(parts[0] ?? ''),
           given: text(parts[1] ?? ''),
+          ...(parts[2] ? { additional: component(parts[2]) } : {}),
           prefix: parts[3] ? text(parts[3]) : undefined,
           suffix: parts[4] ? text(parts[4]) : undefined,
         };
@@ -487,6 +510,8 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
       case 'ADR': {
         const adrParts = splitStructuredValue(prop.value);
         adrs.push({
+          ...(adrParts[0] ? { poBox: component(adrParts[0]) } : {}),
+          ...(adrParts[1] ? { extended: component(adrParts[1]) } : {}),
           type: labels.get(prop.group) || getTypeParam(prop.params),
           street: text(adrParts[2] ?? ''),
           city: text(adrParts[3] ?? ''),
@@ -632,7 +657,7 @@ export function generateVCard(vcard: VCard): string {
     const nParts = [
       escapeText(vcard.n.family),
       escapeText(vcard.n.given),
-      '', // additional names
+      retainedStructuredComponent(vcard.n.additional),
       vcard.n.prefix ? escapeText(vcard.n.prefix) : '',
       vcard.n.suffix ? escapeText(vcard.n.suffix) : '',
     ];
@@ -654,8 +679,8 @@ export function generateVCard(vcard: VCard): string {
   if (vcard.adr) {
     for (const adr of vcard.adr) {
       const adrParts = [
-        '', // PO box
-        '', // extended address
+        retainedStructuredComponent(adr.poBox),
+        retainedStructuredComponent(adr.extended),
         escapeText(adr.street),
         escapeText(adr.city),
         escapeText(adr.state),

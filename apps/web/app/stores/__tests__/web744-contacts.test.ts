@@ -112,6 +112,23 @@ describe('#744 the contact store saves through the captured record base', () => 
   const isItemWrite = (method: string, path: string) => method === 'post' && /item\/(batch|transaction)$/.test(path)
   const isItemGet = (uid: string) => (method: string, path: string) => method === 'get' && path.endsWith(`item/${uid}`)
 
+  it('saves and favorites a known-revision contact with incomplete trailing-backslash components', async () => {
+    const slash = String.fromCharCode(92)
+    const source = ['BEGIN:VCARD', 'VERSION:3.0', 'UID:incomplete-components', 'FN:John Public',
+      `N:Public;John;Q${slash}`, `ADR;TYPE=home:Box;Apt${slash}`, 'END:VCARD'].join('\r\n')
+    const { account, collection, item } = await shownSavedContact()
+    await item.setContent(source)
+    await account.getCollectionManager().getItemManager(collection).transaction([item])
+    useContactStore.getState().syncFromRemote([{ ...deserializeContact(source), id: item.uid, listId: collection.uid, revision: item.etag }])
+    await useContactStore.getState().updateContact(item.uid, { organization: 'Edited organization' })
+    await useContactStore.getState().setContactFavorite(item.uid, true)
+    const saved = (await serverText(account, collection, item.uid))!
+    expect(saved).toContain('ORG:Edited organization')
+    expect(saved).toContain('X-SILENTSUITE-FAVORITE:1')
+    expect(saved).toContain(`N:Public;John;Q${slash}${slash};;`)
+    expect(saved).toContain(`ADR;TYPE=home:Box;Apt${slash}${slash};;;;;`)
+  })
+
   it('#744 refuses an edit captured on R0 after this context cached acknowledged A, and A stays', async () => {
     const { account, collection, item } = await shownSavedContact()
     const peerItem = await peerWrites(account, collection, item, PEER_GIVEN)
