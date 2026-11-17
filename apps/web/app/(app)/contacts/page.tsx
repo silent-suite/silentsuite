@@ -97,6 +97,10 @@ async function processContactPhoto(file: File): Promise<string> {
 
 // ── ContactAvatar ──
 
+function isEmbeddedPhoto(photoUrl: Contact['photoUrl']): photoUrl is string {
+  return !!photoUrl && /^(data:image\/|blob:)/i.test(photoUrl)
+}
+
 function ContactAvatar({
   contact,
   size = 'md',
@@ -112,11 +116,12 @@ function ContactAvatar({
     lg: 'h-20 w-20 text-2xl',
   }
 
-  if (contact.photoUrl) {
+  if (isEmbeddedPhoto(contact.photoUrl)) {
     return (
       <img
         src={contact.photoUrl}
         alt={contact.displayName}
+        referrerPolicy="no-referrer"
         className={`${sizeClasses[size]} shrink-0 rounded-full object-cover ${className}`}
       />
     )
