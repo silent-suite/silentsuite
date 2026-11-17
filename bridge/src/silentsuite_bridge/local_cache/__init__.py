@@ -1765,7 +1765,6 @@ class Etebase:
                                 models.ItemEntity.new,
                             ]
                         )
-                        _store_dav_uid(local_item, replacement)
                         current_unresolved.delete_instance()
                         reanchor_dav_state(cache_col, previous_state_hash)
                         continue
@@ -1786,6 +1785,7 @@ class Etebase:
                                 models.ItemEntity.new,
                             ]
                         )
+                        _store_dav_uid(local_item, replacement)
                         current_unresolved.delete_instance()
                         href_mapper = models.HrefMapper.get_or_none(
                             models.HrefMapper.content == local_item
