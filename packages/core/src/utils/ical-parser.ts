@@ -64,6 +64,9 @@ export interface VAlarm {
   action: string;
   trigger: string;
   description?: string;
+  triggerParams?: Record<string, string>;
+  /** Complete source block, retained only while its editable fields still match. */
+  source?: string[];
 }
 
 // ── Escaping ──
@@ -220,12 +223,16 @@ function parseVAlarmBlock(block: string[]): VAlarm {
         break;
       case 'TRIGGER':
         alarm.trigger = prop.value;
+        if (Object.keys(prop.params).length) alarm.triggerParams = prop.params;
         break;
       case 'DESCRIPTION':
         alarm.description = unescapeText(prop.value);
         break;
     }
   }
+  const canonical = ['BEGIN:VALARM', `ACTION:${alarm.action}`, `TRIGGER:${alarm.trigger}`,
+    ...(alarm.description ? [`DESCRIPTION:${escapeText(alarm.description)}`] : []), 'END:VALARM'];
+  if (block.join('\r\n') !== canonical.join('\r\n')) alarm.source = [...block];
   return alarm;
 }
 
@@ -423,9 +430,19 @@ export function generateVEvent(event: VEvent): string {
 
   if (event.valarms) {
     for (const alarm of event.valarms) {
+      if (alarm.source && isRetainableComponent(alarm.source, TODO_FORBIDDEN_COMPONENTS, 'VALARM')) {
+        const original = parseVAlarmBlock(alarm.source);
+        if (original.action === alarm.action && original.trigger === alarm.trigger
+          && original.description === alarm.description
+          && JSON.stringify(original.triggerParams) === JSON.stringify(alarm.triggerParams)) {
+          lines.push(...alarm.source.map(foldRetainedLine));
+          continue;
+        }
+      }
       lines.push('BEGIN:VALARM');
       lines.push(foldLine(`ACTION:${alarm.action}`));
-      lines.push(foldLine(`TRIGGER:${alarm.trigger}`));
+      const params = Object.entries(alarm.triggerParams ?? {}).map(([key, value]) => `;${key}=${value}`).join('');
+      lines.push(foldLine(`TRIGGER${params}:${alarm.trigger}`));
       if (alarm.description) lines.push(foldLine(`DESCRIPTION:${escapeText(alarm.description)}`));
       lines.push('END:VALARM');
     }

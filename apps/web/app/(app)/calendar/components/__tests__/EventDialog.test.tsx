@@ -322,6 +322,34 @@ describe('EventDialog edit calendar selection', () => {
     })
   })
 
+  it('keeps compound and opaque alarms after a title edit', async () => {
+    const imported = deserializeCalendarEvent(['BEGIN:VEVENT', 'UID:alarm', 'DTSTART:20260601T090000Z', 'DTEND:20260601T100000Z',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT1H30M', 'END:VALARM',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER;RELATED=END:-PT15M', 'END:VALARM',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:PT0S', 'END:VALARM', 'END:VEVENT'].join('\r\n'))
+    const event = makeEvent({ alarms: imported.alarms })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Changed title' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalled())
+    expect(mocks.updateEvent.mock.calls[0]![1]).not.toHaveProperty('alarms')
+  })
+
+  it('changes one reminder without replacing its compound or opaque siblings', async () => {
+    const imported = deserializeCalendarEvent(['BEGIN:VEVENT', 'UID:alarm', 'DTSTART:20260601T090000Z', 'DTEND:20260601T100000Z',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT1H30M', 'X-ID:keep', 'END:VALARM',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER;RELATED=END:-PT15M', 'END:VALARM',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:PT0S', 'END:VALARM', 'END:VEVENT'].join('\r\n'))
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent({ alarms: imported.alarms })} onClose={mocks.onClose} />)
+    expect(screen.getByLabelText('Reminder 3')).toHaveValue('0')
+    fireEvent.change(screen.getByLabelText('Reminder 3'), { target: { value: '5' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalled())
+    const alarms = mocks.updateEvent.mock.calls[0]![1].alarms
+    expect(alarms.slice(0, 2)).toEqual(imported.alarms.slice(0, 2))
+    expect(alarms[2].trigger).toBe('-PT5M')
+  })
+
   it('saves user-entered custom minute reminders as simple negative-duration VALARMs', async () => {
     renderWithIntl(<EventDialog mode="create" startDate={new Date('2026-06-01T09:00:00Z')} onClose={mocks.onClose} />)
 

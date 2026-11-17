@@ -3,6 +3,7 @@ import type { VEvent, VAlarm } from '../utils/ical-parser.js';
 import { isKnownTimeZone, wallTimeInZone, wallTimeToInstant } from '../utils/zoned-time.js';
 import { expandRecurrence, occurrenceWallClock, occurrencesBefore } from '../utils/recurrence.js';
 import type { DateRange } from './types.js';
+import { parseICalDurationSeconds } from '../utils/ical-duration.js';
 
 export interface CalendarEvent {
   id: string;
@@ -479,6 +480,7 @@ export function splitRetainedRecurrenceDates(
  * E.g. 15 → '-PT15M', 60 → '-PT1H', 1440 → '-P1D'
  */
 export function buildAlarmTrigger(minutes: number): string {
+  if (minutes === 0) return 'PT0S';
   if (minutes >= 1440 && minutes % 1440 === 0) return `-P${minutes / 1440}D`;
   if (minutes >= 60 && minutes % 60 === 0) return `-PT${minutes / 60}H`;
   return `-PT${minutes}M`;
@@ -486,20 +488,11 @@ export function buildAlarmTrigger(minutes: number): string {
 
 /**
  * Parse a VALARM trigger string like '-PT15M', '-PT1H', '-P1D' into minutes.
- * Returns 0 if the trigger cannot be parsed.
+ * Returns null if the trigger cannot be parsed; zero means at start.
  */
-export function parseAlarmTriggerMinutes(trigger: string): number {
-  if (trigger.startsWith('-P')) {
-    const dayMatch = trigger.match(/-P(\d+)D/);
-    if (dayMatch) return parseInt(dayMatch[1]!, 10) * 1440;
-
-    const hourMatch = trigger.match(/-PT(\d+)H/);
-    if (hourMatch) return parseInt(hourMatch[1]!, 10) * 60;
-
-    const minMatch = trigger.match(/-PT(\d+)M/);
-    if (minMatch) return parseInt(minMatch[1]!, 10);
-  }
-  return 0;
+export function parseAlarmTriggerMinutes(trigger: string): number | null {
+  const seconds = parseICalDurationSeconds(trigger);
+  return seconds === null ? null : seconds === 0 ? 0 : -seconds / 60;
 }
 
 /** The form of an event's DTSTART value, which RECURRENCE-ID values of its overrides share. */
