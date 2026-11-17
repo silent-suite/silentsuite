@@ -59,16 +59,16 @@ describe('YEARLY on the event zone calendar', () => {
     expect(iso(expandEventRecurrence(e, TOKYO_RANGE))).toEqual(['2025-12-31T23:00:00.000Z', '2026-12-31T23:00:00.000Z']);
   });
 
-  it('Asia/Tokyo negative BYMONTHDAY is the last day of January in Tokyo', () => {
+  it('counts the January 1 seed before the negative BYMONTHDAY candidate in Tokyo', () => {
     const e = vevent(...TOKYO_JAN_1, 'RRULE:FREQ=YEARLY;BYMONTH=1;BYMONTHDAY=-1;COUNT=2');
-    expect(iso(expandEventRecurrence(e, TOKYO_RANGE))).toEqual(['2026-01-30T23:00:00.000Z', '2027-01-30T23:00:00.000Z']);
+    expect(iso(expandEventRecurrence(e, TOKYO_RANGE))).toEqual(['2025-12-31T23:00:00.000Z', '2026-01-30T23:00:00.000Z']);
   });
 
   it('Asia/Tokyo BYDAY=MO is evaluated in Tokyo (Sunday in UTC and Los Angeles)', () => {
-    // 2026-01-05 08:00 JST is a Monday; Jan 5 is next a Monday in 2032.
+    // YEARLY BYDAY without BYMONTH expands every matching weekday in that year.
     const e = vevent('DTSTART;TZID=Asia/Tokyo:20260105T080000', 'DTEND;TZID=Asia/Tokyo:20260105T090000', 'RRULE:FREQ=YEARLY;BYDAY=MO;COUNT=2');
     const out = expandEventRecurrence(e, range(utc('2026-01-01T00:00:00Z'), utc('2033-01-01T00:00:00Z')));
-    expect(iso(out)).toEqual(['2026-01-04T23:00:00.000Z', '2032-01-04T23:00:00.000Z']);
+    expect(iso(out)).toEqual(['2026-01-04T23:00:00.000Z', '2026-01-11T23:00:00.000Z']);
   });
 
   it('Australia/Sydney Feb 29 with a Z UNTIL stops after the last leap day before it', () => {

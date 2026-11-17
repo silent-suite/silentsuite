@@ -1,11 +1,13 @@
 """Windows --background mode: the bridge must outlive the terminal that started it."""
 
+import json
 import os
 import re
 import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +15,73 @@ from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import config, windows_background as wb
 
 BINARY = ["C:\\Users\\Test User\\AppData\\Local\\SilentSuite\\silentsuite-bridge.exe"]
+
+
+def _installer_fixture_diagnostics(root, result):
+    def as_text(value):
+        return value.decode("utf-8", "replace") if isinstance(value, bytes) else value or ""
+
+    parts = [f"PowerShell exit: {result.returncode}",
+             "stdout:\n" + as_text(result.stdout), "stderr:\n" + as_text(result.stderr)]
+    paths = [root / "result.json", root / "install.log", root / "steps.log"]
+    paths.extend(sorted(root.glob("process-*.log")))
+    for path in paths:
+        try:
+            content = path.read_text(encoding="utf-8-sig", errors="replace") if path.exists() else "<not written>"
+        except OSError as exc:
+            content = f"<could not read: {exc}>"
+        parts.append(path.name + ":\n" + content)
+    return "\n\n".join(parts)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires native Windows executable handles")
+@pytest.mark.parametrize("mode", ["success", "swap-failed", "backup-failed", "start-failed", "stop-failed", "restore-failed",
+                                  "fresh-slow", "upgrade-slow", "cleanup-failed"])
+def test_windows_installer_replaces_only_its_running_target(tmp_path, mode):
+    fixture = Path(__file__).with_name("windows_installer_fixture.ps1")
+    installer = Path(__file__).resolve().parents[1] / "install.ps1"
+    # A pwsh parent exports its module path; the child uses Windows PowerShell 5.1.
+    env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+    env.update(TEMP=str(tmp_path), TMP=str(tmp_path), CI="1")
+    env["PSModulePath"] = str(Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "Modules")
+    command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+               "-File", str(fixture), "-Installer", str(installer), "-Root", str(tmp_path), "-Mode", mode]
+    try:
+        result = subprocess.run(command, env=env, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        result = subprocess.CompletedProcess(command, -1, exc.stdout, exc.stderr)
+    diagnostics = _installer_fixture_diagnostics(tmp_path, result)
+    try:
+        assert result.returncode == 0
+        receipt = json.loads((tmp_path / "result.json").read_text(encoding="utf-8-sig"))
+        assert receipt["OtherAlive"], ("a different installation must remain running", receipt)
+        assert receipt["Failed"] == (mode not in {"success", "fresh-slow", "cleanup-failed"}), receipt
+        if mode in {"success", "fresh-slow", "upgrade-slow", "cleanup-failed"}:
+            assert receipt["ReadinessTargetPids"], "candidate must outlive the captured background command"
+        if mode in {"success", "cleanup-failed"}:
+            assert not receipt["Failed"], "upgrade failed while the installed executable was running"
+            assert receipt["OldExited"] and receipt["InstalledNew"] and receipt["TargetRunning"], receipt
+            if mode == "cleanup-failed":
+                assert receipt["Injected"] and receipt["OldBackupRetained"], receipt
+                assert "backup could not be removed" in result.stdout
+        elif mode == "fresh-slow":
+            assert not receipt["HadOld"] and receipt["InstalledNew"] and receipt["TargetRunning"], receipt
+            assert "dashboard did not respond yet" in result.stdout
+        elif mode == "restore-failed":
+            assert receipt["RestoreFailures"] >= 2, receipt
+            assert receipt["OldBackupRetained"], "failed restoration must retain the previous executable"
+        else:
+            if mode in {"swap-failed", "backup-failed"}:
+                assert receipt["Injected"] and receipt["OldExited"], receipt
+            elif mode == "stop-failed":
+                assert not receipt["OldExited"], receipt
+            assert receipt["InstalledOld"], "a failed replacement must leave the previous bytes installed"
+            assert receipt["TargetRunning"], "restore the previously running bridge after rollback"
+    except (AssertionError, ValueError, OSError, KeyError) as exc:
+        # Explicit text avoids pytest abbreviating the receipt dictionary.
+        print(diagnostics, flush=True)
+        raise AssertionError(f"Windows installer mode {mode}: {exc}\n\n{diagnostics}") from None
 
 
 class FakeProcess:

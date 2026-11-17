@@ -171,12 +171,14 @@ def ws_client(fake_redis) -> TestClient:
     `create_application` in main.py, plus the production `CustomHttpException`
     handler. `create_application` itself is not used: its startup hook would
     replace the fake transport with a real Redis client."""
+    from etebase_server.fastapi.routers.authentication import authentication_router
     from etebase_server.fastapi.routers.collection import item_router
     from etebase_server.fastapi.routers.websocket import websocket_router
 
     app = FastAPI()
     app.include_router(item_router, prefix=f"{COLLECTION_PREFIX}/{{collection_uid}}")
     app.include_router(websocket_router, prefix=WS_PREFIX)
+    app.include_router(authentication_router, prefix="/api/v1/authentication")
 
     @app.exception_handler(CustomHttpException)
     async def _custom_exception_handler(_request, exc: CustomHttpException):  # noqa: RUF029
@@ -253,7 +255,8 @@ def _issue_ticket(client: TestClient, membership: Membership) -> str:
 def _connect(client: TestClient, ticket: str) -> t.Tuple[t.Optional[int], t.Optional[bytes]]:
     """Open the websocket and return `(close_code, first_frame)`.
 
-    `close_code` is set when the server closed the handshake without accepting.
+    `close_code` is set when the server closes before delivering a first frame,
+    either during the handshake or after accepting the connection.
     `first_frame` is the first catch-up frame of an accepted connection. An
     error raised by the server while the session is open (for example in the
     live-update loop that follows catch-up) is re-raised when it is closed.
@@ -265,6 +268,8 @@ def _connect(client: TestClient, ticket: str) -> t.Tuple[t.Optional[int], t.Opti
         return exc.code, None
     try:
         return None, ws.receive_bytes()
+    except WebSocketDisconnect as exc:
+        return exc.code, None
     finally:
         session.__exit__(None, None, None)
 
@@ -459,6 +464,7 @@ class TestWebsocketSubscriptionCleanup:
             Starlette raises WebSocketDisconnect when sending to it."""
 
             sent = 0
+            path_params = {}
 
             async def send_bytes(self, data):
                 self.sent += 1
@@ -471,11 +477,125 @@ class TestWebsocketSubscriptionCleanup:
                 raise AssertionError("closed a socket that was already gone")
 
         ws = DisconnectedWebSocket()
-        ticket_model = TicketInner(user=membership.user.id, req=TicketRequest(collection=membership.collection_uid))
+        from etebase_server.django.token_auth.models import AuthToken
+
+        ticket_model = TicketInner(
+            user=membership.user.id, req=TicketRequest(collection=membership.collection_uid),
+            token_id=AuthToken.objects.get(key=membership.token).pk,
+        )
 
         # Returns without raising WebSocketDisconnect.
         asyncio.run(redis_connector(ws, ticket_model, membership.user, None))
 
         assert ws.sent == 1
         assert fake_redis.subscriptions == [f"col.{membership.collection_uid}"]
+        assert [pubsub.closed for pubsub in fake_redis.pubsubs] == [True]
+
+
+@pytest.mark.django_db(transaction=True)
+class TestWebsocketRevocation:
+    @pytest.mark.parametrize("change", ["membership", "inactive", "logout", "expiry", "password"])
+    def test_live_delivery_rechecks_authorization(self, ws_client, fake_redis, membership, signing_key, change):
+        from django.utils import timezone
+        from nacl.signing import SigningKey
+
+        from etebase_server.django import models
+        from etebase_server.django.token_auth.models import AuthToken
+        from etebase_server.fastapi.conftest import build_signed_response, login_challenge, msgpack_post
+
+        ticket = _issue_ticket(ws_client, membership)
+        with ws_client.websocket_connect(f"{WS_PREFIX}/{ticket}/") as ws:
+            ws.receive_bytes()
+            if change == "membership":
+                models.CollectionMember.objects.filter(user=membership.user).delete()
+            elif change == "inactive":
+                type(membership.user).objects.filter(pk=membership.user.pk).update(is_active=False)
+                assert membership.user.is_active  # The connection's snapshot remains stale.
+            elif change == "logout":
+                reply = ws_client.post("/api/v1/authentication/logout/",
+                                       headers={"Authorization": f"Token {membership.token}"})
+                assert reply.status_code == 204
+            elif change == "expiry":
+                AuthToken.objects.filter(key=membership.token).update(expiry=timezone.now() - timezone.timedelta(seconds=1))
+            else:
+                caller = AuthToken.objects.create(user=membership.user)
+                _, challenge = login_challenge(ws_client, membership.user.username)
+                body = build_signed_response(
+                    username=membership.user.username, challenge_bytes=challenge["challenge"], signing_key=signing_key,
+                    action="changePassword",
+                    extra={"loginPubkey": bytes(SigningKey.generate().verify_key), "encryptedContent": b"synthetic-new-key"},
+                )
+                reply = msgpack_post(ws_client, "/api/v1/authentication/change_password/", body,
+                                     headers={"Authorization": f"Token {caller.key}"})
+                assert reply.status_code == 204
+                assert AuthToken.objects.filter(pk=caller.pk).exists()
+
+            fake_redis.deliver(f"col.{membership.collection_uid}", b"must-not-be-forwarded")
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_bytes()
+            assert closed.value.code == status.WS_1008_POLICY_VIOLATION
+        assert [pubsub.closed for pubsub in fake_redis.pubsubs] == [True]
+
+    @pytest.mark.parametrize("change", ["deleted_user", "deleted_token", "legacy_ticket", "wrong_user"])
+    def test_ticket_state_is_rechecked_before_catch_up(self, ws_client, fake_redis, membership, user_factory, change):
+        from etebase_server.django import models
+        from etebase_server.django.token_auth.models import AuthToken
+        from etebase_server.fastapi.utils import msgpack_encode
+
+        ticket = _issue_ticket(ws_client, membership)
+        stored_ticket = msgpack_decode(fake_redis.store[ticket.encode()])
+        token = AuthToken.objects.get(key=membership.token)
+        assert stored_ticket["token_id"] == token.pk
+        assert "key" not in stored_ticket
+        if change == "deleted_user":
+            # Remove the membership protecting the user's collection type before its owner.
+            models.CollectionMember.objects.filter(user=membership.user).delete()
+            membership.user.delete()
+        elif change == "deleted_token":
+            token.delete()
+        elif change == "legacy_ticket":
+            del stored_ticket["token_id"]
+            fake_redis.store[ticket.encode()] = msgpack_encode(stored_ticket)
+        else:
+            other = user_factory(username="test_user_other_socket")
+            stored_ticket["token_id"] = AuthToken.objects.create(user=other).pk
+            fake_redis.store[ticket.encode()] = msgpack_encode(stored_ticket)
+        code, frame = _connect(ws_client, ticket)
+        assert code == status.WS_1008_POLICY_VIOLATION
+        assert frame is None
+        assert fake_redis.store == {}
+        assert all(pubsub.closed for pubsub in fake_redis.pubsubs)
+
+    def test_null_expiry_token_can_receive(self, ws_client, fake_redis, membership):
+        from etebase_server.django.token_auth.models import AuthToken
+
+        # Issue under ordinary HTTP expiry, then make the persisted token nonexpiring.
+        ticket = _issue_ticket(ws_client, membership)
+        AuthToken.objects.filter(key=membership.token).update(expiry=None)
+        code, frame = _connect(ws_client, ticket)
+        assert code is None
+        assert frame is not None
+
+    @pytest.mark.parametrize("change", ["membership", "inactive"])
+    def test_authorization_change_during_catch_up_discards_the_frame(
+        self, ws_client, fake_redis, membership, monkeypatch, change
+    ):
+        from etebase_server.django import models
+        from etebase_server.fastapi.routers import collection
+
+        original = collection.item_list_common
+
+        def changed(*args, **kwargs):
+            response = original(*args, **kwargs)
+            if change == "membership":
+                models.CollectionMember.objects.filter(user=membership.user).delete()
+            else:
+                type(membership.user).objects.filter(pk=membership.user.pk).update(is_active=False)
+            return response
+
+        ticket = _issue_ticket(ws_client, membership)
+        monkeypatch.setattr(collection, "item_list_common", changed)
+        code, frame = _connect(ws_client, ticket)
+        assert code == status.WS_1008_POLICY_VIOLATION
+        assert frame is None
         assert [pubsub.closed for pubsub in fake_redis.pubsubs] == [True]

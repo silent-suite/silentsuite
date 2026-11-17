@@ -6,10 +6,12 @@ import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { act, screen, fireEvent } from '@testing-library/react'
 import { renderWithIntl as render } from '@/src/__tests__/render-with-intl'
-import { toVEvent, toVTodo, toVCard } from '@silentsuite/core'
+import { serializeCalendarEvent, deserializeCalendarEvent, parseVCalendar, toVTodo, toVCard } from '@silentsuite/core'
 import { showErrorToast, showWarningToast } from '@/app/stores/use-toast-store'
 import JSZip from 'jszip'
 import ExportPage from '../page'
+import { vEventToImportEvent } from '@/app/components/import/import-mappers'
+import { expandEventsForRange } from '@/app/(app)/calendar/lib/calendar-grid-events'
 
 // Mutable mock data so individual tests can configure collections + items.
 // `vi.hoisted` runs before the module mocks below are evaluated, which is
@@ -127,7 +129,7 @@ vi.mock('@silentsuite/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@silentsuite/core')>()
   return {
     ...actual,
-    toVEvent: vi.fn(() => 'BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nEND:VEVENT'),
+    serializeCalendarEvent: vi.fn(actual.serializeCalendarEvent),
     toVTodo: vi.fn(() => 'BEGIN:VTODO\r\nSUMMARY:Test task\r\nEND:VTODO'),
     toVCard: vi.fn(actual.toVCard),
     listCollections: vi.fn(async (_account: unknown, collectionType: string) => {
@@ -416,6 +418,99 @@ describe('ExportPage', () => {
     expect(clickedLink!.download).toBe('silentsuite-export.zip')
   })
 
+  it('round-trips moved and cancelled occurrences through the downloaded file and file mapper', async () => {
+    const source = ['BEGIN:VCALENDAR', 'BEGIN:VTIMEZONE', 'TZID:Europe/Berlin', 'END:VTIMEZONE',
+      'BEGIN:VEVENT', 'UID:download-series', 'SUMMARY:Series', 'DTSTART;TZID=Europe/Berlin:20261117T100000', 'DTEND;TZID=Europe/Berlin:20261117T110000',
+      'RRULE:FREQ=DAILY;COUNT=3', 'STATUS:CONFIRMED', 'TRANSP:TRANSPARENT', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:download-series', 'RECURRENCE-ID;TZID=Europe/Berlin:20261118T100000', 'DTSTART;TZID=Europe/Berlin:20261118T120000', 'DTEND;TZID=Europe/Berlin:20261118T130000', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:download-series', 'RECURRENCE-ID;TZID=Europe/Berlin:20261119T100000', 'DTSTART;TZID=Europe/Berlin:20261119T100000', 'STATUS:CANCELLED', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
+    mockData.events = [deserializeCalendarEvent(source)]
+    render(<ExportPage />)
+    fireEvent.click(screen.getByText(/Export Calendar/))
+    const blob = vi.mocked(URL.createObjectURL).mock.calls[0]![0] as Blob
+    const text = await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsText(blob)
+    })
+    expect(text.match(/BEGIN:VCALENDAR/g)).toHaveLength(1)
+    expect(text).toContain('BEGIN:VTIMEZONE')
+    expect(text.match(/BEGIN:VEVENT/g)).toHaveLength(3)
+    const parsed = parseVCalendar(text)
+    expect(parsed).toHaveLength(1)
+    const payload = vEventToImportEvent(parsed[0]!, 'imported')
+    expect(payload).toMatchObject({ uid: 'download-series', status: 'CONFIRMED', transp: 'TRANSPARENT' })
+    const saved = serializeCalendarEvent({ ...payload, id: 'new', uid: payload.uid!, created: new Date(), updated: new Date() })
+    const restored = deserializeCalendarEvent(saved)
+    expect(restored.overrides).toHaveLength(2)
+    expect(restored.vtimezones).toHaveLength(1)
+    fireEvent.click(screen.getByText(/Export All Data/))
+    await vi.waitFor(() => expect(vi.mocked(JSZip).mock.results.at(-1)?.value.file).toHaveBeenCalled())
+    const zip = vi.mocked(JSZip).mock.results.at(-1)!.value
+    const entry = zip.file.mock.calls.find((call: unknown[]) => call[0] === 'silentsuite-calendar.ics')![1] as Uint8Array
+    expect(new TextDecoder().decode(entry)).toBe(text)
+    expect(expandEventsForRange([restored], { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') }).map(e => e.startDate.toISOString())).toEqual(['2026-11-17T09:00:00.000Z', '2026-11-18T11:00:00.000Z'])
+  })
+
+  it('folds the exported master without changing its logical property text', async () => {
+    const description = 'é🙂'.repeat(40)
+    const extra = `X-LONG:${'日本'.repeat(40)}`
+    Object.assign(mockData.events[0]!, { description, unknownProperties: [extra] })
+    render(<ExportPage />)
+    fireEvent.click(screen.getByText(/Export Calendar/))
+    const text = await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsText(vi.mocked(URL.createObjectURL).mock.calls[0]![0] as Blob)
+    })
+    for (const line of text.split('\r\n')) expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75)
+    const logical = text.replace(/\r\n[ \t]/g, '').split('\r\n')
+    expect(logical).toContain(`DESCRIPTION:${description}`)
+    expect(logical).toContain(extra)
+  })
+
+  it('exports regenerated master text with control characters in direct and ZIP downloads', async () => {
+    const title = 'Team\u000bsync'
+    const description = 'Part\u000cnext ' + 'é'.repeat(90)
+    Object.assign(mockData.events[0]!, { title, description })
+    render(<ExportPage />)
+    fireEvent.click(screen.getByText(/Export Calendar/))
+    const text = await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsText(vi.mocked(URL.createObjectURL).mock.calls[0]![0] as Blob)
+    })
+    const logical = text.replace(/\r\n[ \t]/g, '').split('\r\n')
+    expect(logical).toContain(`SUMMARY:${title}`)
+    expect(logical).toContain(`DESCRIPTION:${description}`)
+    expect(showWarningToast).not.toHaveBeenCalled()
+    for (const line of text.split('\r\n')) expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75)
+    fireEvent.click(screen.getByText(/Export All Data/))
+    await vi.waitFor(() => expect(vi.mocked(JSZip).mock.results.at(-1)?.value.file).toHaveBeenCalled())
+    const zip = vi.mocked(JSZip).mock.results.at(-1)!.value
+    const entry = zip.file.mock.calls.find((call: unknown[]) => call[0] === 'silentsuite-calendar.ics')![1] as Uint8Array
+    expect(new TextDecoder().decode(entry)).toBe(text)
+    expect(showWarningToast).not.toHaveBeenCalled()
+  })
+
+  it('deduplicates identical zone definitions and skips a conflicting event in the exported file', async () => {
+    const make = (uid: string, offset: string) => deserializeCalendarEvent(['BEGIN:VCALENDAR', 'BEGIN:VTIMEZONE', 'TZID:Custom/Zone',
+      'BEGIN:STANDARD', 'DTSTART:19700101T000000', `TZOFFSETFROM:${offset}`, `TZOFFSETTO:${offset}`, 'END:STANDARD', 'END:VTIMEZONE',
+      'BEGIN:VEVENT', `UID:${uid}`, 'DTSTART;TZID=Custom/Zone:20261117T100000', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n'))
+    mockData.events = [make('one', '+0100'), make('two', '+0100'), make('three', '+0200')]
+    render(<ExportPage />)
+    fireEvent.click(screen.getByText(/Export Calendar/))
+    const text = await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsText(vi.mocked(URL.createObjectURL).mock.calls[0]![0] as Blob)
+    })
+    expect(text.match(/BEGIN:VTIMEZONE/g)).toHaveLength(1)
+    expect(text.match(/BEGIN:VEVENT/g)).toHaveLength(2)
+    expect(text).not.toContain('UID:three')
+    expect(showWarningToast).toHaveBeenCalledWith(expect.stringContaining('1 event'))
+  })
+
   it('verifies calendar export has text/calendar MIME type', () => {
     render(<ExportPage />)
     fireEvent.click(screen.getByText(/Export Calendar/))
@@ -469,7 +564,7 @@ describe('ExportPage', () => {
 
   it('skips events that fail to serialize and shows a warning toast', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    vi.mocked(toVEvent).mockImplementationOnce(() => {
+    vi.mocked(serializeCalendarEvent).mockImplementationOnce(() => {
       throw new Error('boom — PRIVATE_EVENT_TITLE')
     })
 
@@ -556,8 +651,8 @@ describe('ExportPage', () => {
     fireEvent.click(screen.getByText(/Export Calendar/))
 
     // Only the work event should have been serialized
-    expect(vi.mocked(toVEvent)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(toVEvent)).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    expect(vi.mocked(serializeCalendarEvent)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(serializeCalendarEvent)).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
     expect(clickedLink).not.toBeNull()
     expect(clickedLink!.download).toBe('silentsuite-calendar-work.ics')
   })
@@ -625,8 +720,8 @@ describe('ExportPage', () => {
     })
     fireEvent.click(screen.getByText(/Export Calendar/))
 
-    expect(vi.mocked(toVEvent)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(toVEvent)).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    expect(vi.mocked(serializeCalendarEvent)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(serializeCalendarEvent)).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
   })
 
   it('sanitizes the collection name in the export filename', () => {
@@ -691,7 +786,7 @@ describe('ExportPage', () => {
     })
 
     // Both events were serialized for the ZIP, regardless of the selection
-    expect(vi.mocked(toVEvent)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(serializeCalendarEvent)).toHaveBeenCalledTimes(2)
     expect(clickedLink).not.toBeNull()
     expect(clickedLink!.download).toBe('silentsuite-export.zip')
   })

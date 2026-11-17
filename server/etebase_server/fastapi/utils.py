@@ -20,6 +20,10 @@ User = get_typed_user_model()
 Prefetch = Literal["auto", "medium"]
 PrefetchQuery = Query(default="auto")
 
+# Repeated references may inline this many additional bytes per response.
+# Distinct stored chunks are not limited by this amplification guard.
+MAX_REPEATED_CHUNK_BYTES = 64 * 1024 * 1024
+
 
 T = t.TypeVar("T", bound=Model, covariant=True)
 
@@ -32,6 +36,10 @@ class BaseModel(PyBaseModel):
 class Context:
     user: t.Optional[UserType]
     prefetch: t.Optional[Prefetch]
+    repeated_chunk_bytes_left: int = dataclasses.field(default_factory=lambda: MAX_REPEATED_CHUNK_BYTES)
+    # chunk pk -> (first revision pk, header-duplicate exemption used)
+    prefetched_chunks: t.Dict[int, t.Tuple[int, bool]] = dataclasses.field(default_factory=dict)
+    chunk_budget_omitted: bool = False
 
 
 def get_object_or_404(queryset: QuerySet[T], **kwargs) -> T:

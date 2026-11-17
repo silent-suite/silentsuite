@@ -10,12 +10,12 @@ const repoRoot = resolve(__dirname, '../../../../..')
 const packageDir = resolve(repoRoot, 'self-host/umbrel/silentsuite')
 const workflowPath = resolve(repoRoot, '.github/workflows/ci-umbrel-candidate.yml')
 
-const POSTGRES_DIGEST = '7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7'
-const NGINX_UNPRIVILEGED_DIGEST = '15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3'
-// Released v0.5.16-beta images: release tag and multi-arch index digest kept together.
-const RELEASE_VERSION = '0.5.16-beta'
-const WEB_IMAGE = 'ghcr.io/silent-suite/silentsuite-web-selfhost:v0.5.16-beta@sha256:999974b2532e65a5c06d81422bd05de3a12664878f46918681c929d547a45a60'
-const SERVER_IMAGE = 'ghcr.io/silent-suite/silentsuite-server:v0.5.16-beta@sha256:6c2c341169d71274348c2872c6e495950e28cd7b4d2e2d6dfa79f89a86826ea6'
+const POSTGRES_DIGEST = '81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e'
+const NGINX_UNPRIVILEGED_DIGEST = 'f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03'
+// Released v0.5.20-beta images: release tag and multi-arch index digest kept together.
+const RELEASE_VERSION = '0.5.20-beta'
+const WEB_IMAGE = 'ghcr.io/silent-suite/silentsuite-web-selfhost:v0.5.20-beta@sha256:5156f5d9b67db5c7a6dcdf51c603b104e4c3ec6e2789ad2a6552431fd66e8088'
+const SERVER_IMAGE = 'ghcr.io/silent-suite/silentsuite-server:v0.5.20-beta@sha256:6a5ab47d21feeed4fc05379258e8c2686e1fa67138dbd6570900eea732b0c7bb'
 const PINNED_ACTIONS: Record<string, string> = {
   'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1',
   'docker/setup-buildx-action': 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
@@ -98,7 +98,7 @@ describe('Umbrel package', () => {
     expect(copy).not.toMatch(/\bssh\b|docker logs|\.env\b|bootstrap|token/i)
   })
 
-  it('declares the released upstream version 0.5.16-beta', () => {
+  it('declares the released upstream version 0.5.20-beta', () => {
     expect(manifest().version).toBe(RELEASE_VERSION)
   })
 

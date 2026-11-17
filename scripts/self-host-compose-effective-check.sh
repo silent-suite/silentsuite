@@ -22,7 +22,7 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 PLACEHOLDER_IMAGE="ghcr.io/silent-suite/silentsuite-server@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 # The fixed database identity, asserted against what Compose actually renders.
-EXPECTED_POSTGRES_IMAGE="postgres@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7"
+EXPECTED_POSTGRES_IMAGE="postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e"
 PROXY_NETWORK="silentsuite-effective-config-proxy"
 
 cp "$ROOT/self-host/docker-compose.yml" "$WORKDIR/docker-compose.yml"

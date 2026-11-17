@@ -247,11 +247,11 @@ def test_install_autostart_persists_profile_then_installs_unit(env, capsys):
     assert env.manager.actions()[:3] == [
         "systemctl --user daemon-reload",
         "systemctl --user enable",
-        "systemctl --user start",
+        "systemctl --user restart",
     ]
     out = capsys.readouterr().out
     assert "Persisted explicit network settings to settings.json: listenAddress, listenPort" in out
-    assert "systemd accepted the enable/start request" in out
+    assert "systemd accepted the enable/restart request" in out
 
 
 def test_install_autostart_without_environment_writes_no_network_profile(env, capsys):
@@ -262,9 +262,34 @@ def test_install_autostart_without_environment_writes_no_network_profile(env, ca
     assert "default loopback bind (127.0.0.1:37358)" in capsys.readouterr().out
 
 
-def test_install_autostart_does_not_claim_running_when_start_fails(env, capsys):
+def test_linux_reinstall_restarts_active_service(env, capsys):
+    active = {"version": "old"}
+    original = env.manager.__call__
+
+    def manager(argv, **kwargs):
+        result = original(argv, **kwargs)
+        if "restart" in argv and result.returncode == 0:
+            active["version"] = "replacement"
+        return result
+
+    env.monkeypatch.setattr(autostart.subprocess, "run", manager)
+    assert autostart.install_autostart() == 0
+    assert active["version"] == "replacement", "start on an active service leaves its old executable serving"
+    assert any("restart" in call for call in env.manager.calls)
+    assert "enable/restart" in capsys.readouterr().out
+
+
+def test_linux_reinstall_reports_restart_failure(env, capsys):
+    env.manager.failing = {"restart"}
+    assert autostart.install_autostart() == 1
+    out = capsys.readouterr().out
+    assert "not confirmed running" in out
+    assert "accepted" not in out
+
+
+def test_install_autostart_does_not_claim_running_when_restart_fails(env, capsys):
     set_env(env, SILENTSUITE_LISTEN_PORT="45123")
-    env.manager.failing = {"start"}
+    env.manager.failing = {"restart"}
 
     assert autostart.install_autostart() == 1
 
@@ -744,7 +769,7 @@ def test_linux_install_succeeds_when_linger_tools_are_missing(env, capsys, missi
     assert autostart.install_autostart() == 0
 
     out = capsys.readouterr().out
-    assert "systemd accepted the enable/start request." in out
+    assert "systemd accepted the enable/restart request." in out
     assert "sudo loginctl enable-linger synthetic-user" in out
     assert env.unit.exists()
 

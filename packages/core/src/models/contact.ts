@@ -8,6 +8,8 @@ export interface Contact {
   name: {
     prefix: string;
     given: string;
+    /** Opaque additional-name component with vCard escaping. */
+    additional?: string;
     family: string;
     suffix: string;
   };
@@ -15,6 +17,9 @@ export interface Contact {
   emails: Array<{ type: string; value: string }>;
   addresses: Array<{
     type: string;
+    /** Opaque address components with vCard escaping. */
+    poBox?: string;
+    extended?: string;
     street: string;
     city: string;
     state: string;
@@ -56,6 +61,7 @@ export function toVCard(contact: Contact): string {
     n: {
       family: contact.name.family,
       given: contact.name.given,
+      ...(contact.name.additional ? { additional: contact.name.additional } : {}),
       prefix: contact.name.prefix || undefined,
       suffix: contact.name.suffix || undefined,
     },
@@ -98,6 +104,7 @@ export function fromVCard(vcardStr: string): Contact {
     name: {
       prefix: vcard.n?.prefix ?? '',
       given: vcard.n?.given ?? '',
+      ...(vcard.n?.additional ? { additional: vcard.n.additional } : {}),
       family: vcard.n?.family ?? '',
       suffix: vcard.n?.suffix ?? '',
     },

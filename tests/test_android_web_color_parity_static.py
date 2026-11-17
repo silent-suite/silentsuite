@@ -154,7 +154,7 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 219, f"expected 219 Android resource XML files, found {len(files)}"
+    assert len(files) == 229, f"expected 229 Android resource XML files, found {len(files)}"
     assert {
         "drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml",
         # The month widget adds 19 XML files; all remain subject to the color rules below.
@@ -177,6 +177,11 @@ def xml_files() -> list[Path]:
         "values/widget_month_preview_styles.xml",
         "values-v31/widget_month_dimens.xml",
         "xml/widget_month_info.xml",
+        "drawable/ic_widget_add.xml", "drawable/widget_add_background.xml",
+        "drawable/widget_background.xml", "drawable/widget_touch_background.xml",
+        "layout/widget_agenda.xml", "layout/widget_agenda_day.xml",
+        "layout/widget_agenda_event.xml", "layout/widget_agenda_message.xml",
+        "layout/widget_agenda_preview.xml", "xml/widget_agenda_info.xml",
     } <= {
         path.relative_to(RES).as_posix() for path in files
     }
@@ -952,7 +957,7 @@ def test_immutable_assets_and_runtime_ledger_ownership_are_exact():
     for method in ("dayNightRolesRecreateDeterministically", "systemBarProtectionMatchesApiAndInsets", "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent"):
         assert method in rendered
     runner = source("android/scripts/run-focused-runtime-tests.sh")
-    for count in ("271", '"29:account-dashboard": 38', "157", "54"):
+    for count in ("273", '"29:account-dashboard": 38', "159", "54"):
         assert count in runner
 
 

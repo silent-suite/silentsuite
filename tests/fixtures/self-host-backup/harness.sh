@@ -20,7 +20,7 @@ HELPER="$ROOT/self-host/backup.sh"
 # The same immutable PostgreSQL identity self-host/docker-compose.yml pins. It
 # stands in for both fixture services: it has pg_dump, psql and a tar, so the
 # whole fixture runs on one image and never resolves a mutable tag.
-IMAGE="postgres@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7"
+IMAGE="postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e"
 
 SUFFIX="$$-$(date +%s)"
 WORK="$(mktemp -d)"

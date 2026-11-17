@@ -81,6 +81,7 @@ function buildContact(input: NewContact, uid: string, now: Date): Contact {
     name: {
       prefix: input.name?.prefix ?? '',
       given: input.name?.given ?? '',
+      ...(input.name?.additional ? { additional: input.name.additional } : {}),
       family: input.name?.family ?? '',
       suffix: input.name?.suffix ?? '',
     },
