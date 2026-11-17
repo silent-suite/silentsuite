@@ -49,6 +49,8 @@ def resolve_dav_collection_uid(username, segment):
     if getattr(db.database_proxy, "obj", None) is None:
         return segment
     with db.atomic_connection():
+        if not db.database_proxy.table_exists("collectionentity"):
+            return segment
         matches = list(
             models.CollectionEntity.select(models.CollectionEntity.uid)
             .join(models.User)
@@ -65,7 +67,11 @@ def resolve_dav_collection_uid(username, segment):
 
 
 def dav_collection_path(username, uid):
+    if getattr(db.database_proxy, "obj", None) is None:
+        return uid
     with db.atomic_connection():
+        if not db.database_proxy.table_exists("collectionentity"):
+            return uid
         row = (
             models.CollectionEntity.select(models.CollectionEntity.dav_href)
             .join(models.User)
@@ -220,11 +226,6 @@ def _migrate_cache_schema(database):
         database.execute_sql("ALTER TABLE itementity ADD COLUMN dav_uid VARCHAR(255)")
     if "dav_href" not in collection_columns:
         database.execute_sql("ALTER TABLE collectionentity ADD COLUMN dav_href VARCHAR(255)")
-    database.execute_sql("UPDATE collectionentity SET dav_href=NULL WHERE deleted=1 AND dav_href IS NOT NULL")
-    database.execute_sql(
-        "CREATE UNIQUE INDEX IF NOT EXISTS collectionentity_local_user_dav_href "
-        "ON collectionentity (local_user_id, dav_href)"
-    )
     if "dav_revision" not in collection_columns:
         database.execute_sql(
             "ALTER TABLE collectionentity "
@@ -289,6 +290,11 @@ def _migrate_cache_schema(database):
             database.execute_sql(
                 "ALTER TABLE davunresolveditem ADD COLUMN local_item_id INTEGER"
             )
+    database.execute_sql("UPDATE collectionentity SET dav_href=NULL WHERE deleted=1 AND dav_href IS NOT NULL")
+    database.execute_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS collectionentity_local_user_dav_href "
+        "ON collectionentity (local_user_id, dav_href)"
+    )
     _install_dav_state_triggers(database)
 
 
