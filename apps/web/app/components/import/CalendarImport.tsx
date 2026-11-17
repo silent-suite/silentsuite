@@ -306,8 +306,8 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     try {
       if (importMode === 'separate') {
         // One calendar per file, even when a retry leaves a single file. Files are imported in
-        // order; the first that is not fully acknowledged stops the run, and it and every later
-        // file stay listed with any calendar already created for them.
+        // order; an uncertain save stops later files. Definite per-event rejections stay
+        // listed for retry while the other files continue with their assigned calendars.
         let saved = 0
         let unsaved = 0
         let uncertain = false

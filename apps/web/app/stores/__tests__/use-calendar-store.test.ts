@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useCalendarStore } from '../use-calendar-store'
-import { serializeCalendarEvent, deserializeCalendarEvent } from '@silentsuite/core'
+import { parseVCalendar, serializeCalendarEvent, deserializeCalendarEvent } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
 import { expandEventsForRange } from '@/app/(app)/calendar/lib/calendar-grid-events'
 import { vEventToImportEvent } from '@/app/components/import/import-mappers'
@@ -1676,5 +1676,30 @@ describe('useCalendarStore keeps VTIMEZONE blocks and overrides of a series', ()
 
     expect(lastCreated()).not.toMatch(/^RECURRENCE-ID/m)
     expect(lastUpdated()).toContain(OVERRIDE.join('\r\n'))
+  })
+})
+
+
+describe('file series import', () => {
+  beforeEach(resetStore)
+  it('imports a Windows master, moved and cancelled occurrences as one stored item', async () => {
+    acknowledgeImports()
+    const source = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:file-series', 'SUMMARY:Series',
+      'DTSTART;TZID=W. Europe Standard Time:20261117T100000', 'DTEND;TZID=W. Europe Standard Time:20261117T110000',
+      'RRULE:FREQ=DAILY;COUNT=4', 'EXDATE;TZID=W. Europe Standard Time:20261120T100000', 'STATUS:CONFIRMED', 'TRANSP:TRANSPARENT', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:file-series', 'RECURRENCE-ID;TZID=W. Europe Standard Time:20261118T100000',
+      'DTSTART;TZID=W. Europe Standard Time:20261118T120000', 'DTEND;TZID=W. Europe Standard Time:20261118T130000', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:file-series', 'RECURRENCE-ID;TZID=W. Europe Standard Time:20261119T100000',
+      'DTSTART;TZID=W. Europe Standard Time:20261119T100000', 'STATUS:CANCELLED', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
+    expect(await useCalendarStore.getState().importEvents(parseVCalendar(source).map(e => vEventToImportEvent(e, 'cal-1')))).toBe(1)
+    const contents = etebaseMock.state.createItemsBatch.mock.calls[0]![1] as { content: string }[]
+    expect(contents).toHaveLength(1)
+    const saved = contents[0]!.content
+    expect(saved).not.toContain('W. Europe Standard Time')
+    expect(saved).toContain('RECURRENCE-ID;TZID=Europe/Berlin:20261118T100000')
+    const restored = deserializeCalendarEvent(saved)
+    expect(restored).toMatchObject({ uid: 'file-series', status: 'CONFIRMED', transp: 'TRANSPARENT' })
+    expect(restored.overrides).toHaveLength(2)
+    expect(expandEventsForRange([restored], { start: new Date('2026-11-17Z'), end: new Date('2026-11-21Z') }).map(e => e.startDate.toISOString())).toEqual(['2026-11-17T09:00:00.000Z', '2026-11-18T11:00:00.000Z'])
   })
 })

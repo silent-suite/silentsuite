@@ -754,3 +754,32 @@ describe('a late-evening event without DTEND stays on its own day (#1097 review)
     }
   })
 })
+
+
+describe('retained recurrence overrides', () => {
+  const event = calendarEvent({
+    startDate: new Date('2026-11-17T10:00:00Z'), endDate: new Date('2026-11-17T11:00:00Z'),
+    recurrenceRule: 'FREQ=DAILY;COUNT=3', timezone: 'UTC',
+  })
+  const moved = ['BEGIN:VEVENT', `UID:${event.uid}`, 'RECURRENCE-ID:20261118T100000Z', 'DTSTART:20261121T120000Z', 'DTEND:20261121T130000Z', 'SUMMARY:Moved', 'END:VEVENT']
+  const cancelled = ['BEGIN:VEVENT', `UID:${event.uid}`, 'RECURRENCE-ID:20261119T100000Z', 'STATUS:CANCELLED', 'END:VEVENT']
+  it('suppresses replaced slots even when the moved event is outside the view', () => {
+    const result = expandGridEventsForRange([{ ...event, overrides: [moved, cancelled] }], { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') })
+    expect(result.events.map(e => e.startDate.toISOString())).toEqual(['2026-11-17T10:00:00.000Z'])
+  })
+  it('shows a moved occurrence whose recurrence date is outside the view, keeping its edit identity', () => {
+    const result = expandGridEventsForRange([{ ...event, overrides: [moved, cancelled] }], { start: new Date('2026-11-21Z'), end: new Date('2026-11-22Z') })
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({ title: 'Moved', masterId: event.id, isRecurring: true, instanceDate: new Date('2026-11-18T10:00:00Z'), startDate: new Date('2026-11-21T12:00:00Z') })
+  })
+  it('keeps an orphan cancellation with RECURRENCE-ID hidden', () => {
+    expect(expandGridEventsForRange([{ ...event, recurrenceRule: null, status: 'CANCELLED', unknownProperties: ['RECURRENCE-ID:20261117T100000Z'] }], { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') }).events).toEqual([])
+  })
+  it.each([null, 'FREQ=DAILY;COUNT=3'])('preserves existing visibility of cancelled events without RECURRENCE-ID: %s', (rule) => {
+    const events = [{ ...event, recurrenceRule: rule, status: 'CANCELLED' }]
+    const range = { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') }
+    expect(expandGridEventsForRange(events, range).events).toHaveLength(rule ? 3 : 1)
+    expect(expandEventsForRange(events, range)).toHaveLength(rule ? 3 : 1)
+  })
+
+})

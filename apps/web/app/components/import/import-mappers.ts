@@ -22,7 +22,7 @@ export interface ImportEventPayload {
   floating?: true
   /** Present only when a timed TZID DTSTART lies in a DST gap: its original wall clock. */
   startWallClock?: string
-  /** Set only for a provider import unit (see ProviderImportVEvent); a file import leaves these out. */
+  /** Source identity and recurrence data, for both file and provider imports. */
   uid?: string
   unknownProperties?: string[]
   overrides?: string[][]
@@ -110,16 +110,10 @@ export function vEventToImportEvent(
     timezone: isAllDay ? undefined : startTzid,
     ...(!isAllDay && isFloatingICalDateTime(event.dtstart, event.dtstartParams) ? { floating: true as const } : {}),
     ...(startWallClock ? { startWallClock } : {}),
-    // A provider unit keeps its UID, source property, overrides, STATUS and TRANSP.
-    ...(isProviderImportVEvent(event)
-      ? {
-          uid: event.uid,
-          unknownProperties: [...(event.unknownProperties ?? [])],
-          ...(event.overrides ? { overrides: event.overrides.map((block) => [...block]) } : {}),
-          ...(event.status ? { status: event.status } : {}),
-          ...(event.transp ? { transp: event.transp } : {}),
-        }
-      : {}),
+    uid: event.uid,
+    ...(event.overrides ? { overrides: event.overrides.map((block) => [...block]) } : {}),
+    ...(event.status ? { status: event.status } : {}),
+    ...(event.transp ? { transp: event.transp } : {}),
   }
 }
 
