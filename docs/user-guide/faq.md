@@ -4,7 +4,7 @@
 
 ### What is SilentSuite?
 
-A privacy-focused, end-to-end encrypted sync service for calendar, contacts, tasks, and notes. Your data is encrypted on your device before it reaches the server. The server never sees plaintext — not even item counts or collection names.
+A privacy-focused, end-to-end encrypted sync service for calendar, contacts, tasks, and notes. Your data is encrypted on your device before it reaches the server. The server never sees plaintext, not even collection names. It can see how many items each collection holds and how often each one changes, but not what is in them.
 
 ### What's available right now?
 
