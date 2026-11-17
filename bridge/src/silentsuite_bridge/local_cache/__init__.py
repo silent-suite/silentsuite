@@ -211,6 +211,9 @@ def _migrate_cache_schema(database):
     if "collectionentity" not in tables or "itementity" not in tables:
         return
 
+    indexes = {
+        row[0] for row in database.execute_sql("SELECT name FROM sqlite_master WHERE type='index'")
+    }
     collection_columns = {column.name for column in database.get_columns("collectionentity")}
     item_columns = {column.name for column in database.get_columns("itementity")}
     if "dav_href" not in collection_columns:
@@ -224,16 +227,17 @@ def _migrate_cache_schema(database):
         database.execute_sql(
             "ALTER TABLE itementity ADD COLUMN remote_uid VARCHAR(255)"
         )
-    try:
-        database.execute_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS "
-            "itementity_collection_remote_uid "
-            "ON itementity (collection_id, remote_uid)"
-        )
-    except pw.IntegrityError:
-        raise BoundedDiagnosticError(
-            "CacheSchemaRemoteUidIntegrityError"
-        ) from None
+    if "itementity_collection_remote_uid" not in indexes:
+        try:
+            database.execute_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "itementity_collection_remote_uid "
+                "ON itementity (collection_id, remote_uid)"
+            )
+        except pw.IntegrityError:
+            raise BoundedDiagnosticError(
+                "CacheSchemaRemoteUidIntegrityError"
+            ) from None
     if "davsynctoken" in tables:
         token_columns = {
             column.name for column in database.get_columns("davsynctoken")
@@ -242,16 +246,17 @@ def _migrate_cache_schema(database):
             database.execute_sql(
                 "ALTER TABLE davsynctoken ADD COLUMN state_hash VARCHAR(255)"
             )
-        try:
-            database.execute_sql(
-                "CREATE UNIQUE INDEX IF NOT EXISTS "
-                "davsynctoken_collection_revision "
-                "ON davsynctoken (collection_id, revision)"
-            )
-        except pw.IntegrityError:
-            raise BoundedDiagnosticError(
-                "CacheSchemaTokenRevisionIntegrityError"
-            ) from None
+        if "davsynctoken_collection_revision" not in indexes:
+            try:
+                database.execute_sql(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "davsynctoken_collection_revision "
+                    "ON davsynctoken (collection_id, revision)"
+                )
+            except pw.IntegrityError:
+                raise BoundedDiagnosticError(
+                    "CacheSchemaTokenRevisionIntegrityError"
+                ) from None
     if "davrevision" in tables:
         revision_columns = {
             column.name for column in database.get_columns("davrevision")
@@ -284,10 +289,11 @@ def _migrate_cache_schema(database):
         "SELECT 1 FROM collectionentity WHERE deleted=1 AND dav_href IS NOT NULL LIMIT 1"
     ).fetchone() is not None:
         database.execute_sql("UPDATE collectionentity SET dav_href=NULL WHERE deleted=1 AND dav_href IS NOT NULL")
-    database.execute_sql(
-        "CREATE UNIQUE INDEX IF NOT EXISTS collectionentity_local_user_dav_href "
-        "ON collectionentity (local_user_id, dav_href)"
-    )
+    if "collectionentity_local_user_dav_href" not in indexes:
+        database.execute_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS collectionentity_local_user_dav_href "
+            "ON collectionentity (local_user_id, dav_href)"
+        )
 
 
 def _activate_dav_revision_ledger():
