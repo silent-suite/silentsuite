@@ -287,18 +287,18 @@ describe('expandEventsForRange', () => {
     ])
   })
 
-  it('preserves end-of-month anchoring for a recurring carry-in occurrence', () => {
+  it('skips a missing monthly day and preserves the next carry-in occurrence', () => {
     const expansion = expandGridEventsForRange([calendarEvent({
       startDate: new Date('2026-01-31T22:00:00.000Z'),
       endDate: new Date('2026-02-02T02:00:00.000Z'),
       recurrenceRule: 'FREQ=MONTHLY;COUNT=4',
     })], {
-      start: new Date('2026-03-01T00:00:00.000Z'),
-      end: new Date('2026-03-02T00:00:00.000Z'),
+      start: new Date('2026-04-01T00:00:00.000Z'),
+      end: new Date('2026-04-02T00:00:00.000Z'),
     })
 
     expect(expansion.events.map((event) => event.startDate.toISOString())).toEqual([
-      '2026-02-28T22:00:00.000Z',
+      '2026-03-31T22:00:00.000Z',
     ])
   })
 })
@@ -753,4 +753,33 @@ describe('a late-evening event without DTEND stays on its own day (#1097 review)
       expect(String(chip.end)).toContain('2026-11-16T23:59:59.999')
     }
   })
+})
+
+
+describe('retained recurrence overrides', () => {
+  const event = calendarEvent({
+    startDate: new Date('2026-11-17T10:00:00Z'), endDate: new Date('2026-11-17T11:00:00Z'),
+    recurrenceRule: 'FREQ=DAILY;COUNT=3', timezone: 'UTC',
+  })
+  const moved = ['BEGIN:VEVENT', `UID:${event.uid}`, 'RECURRENCE-ID:20261118T100000Z', 'DTSTART:20261121T120000Z', 'DTEND:20261121T130000Z', 'SUMMARY:Moved', 'END:VEVENT']
+  const cancelled = ['BEGIN:VEVENT', `UID:${event.uid}`, 'RECURRENCE-ID:20261119T100000Z', 'STATUS:CANCELLED', 'END:VEVENT']
+  it('suppresses replaced slots even when the moved event is outside the view', () => {
+    const result = expandGridEventsForRange([{ ...event, overrides: [moved, cancelled] }], { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') })
+    expect(result.events.map(e => e.startDate.toISOString())).toEqual(['2026-11-17T10:00:00.000Z'])
+  })
+  it('shows a moved occurrence whose recurrence date is outside the view, keeping its edit identity', () => {
+    const result = expandGridEventsForRange([{ ...event, overrides: [moved, cancelled] }], { start: new Date('2026-11-21Z'), end: new Date('2026-11-22Z') })
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({ title: 'Moved', masterId: event.id, isRecurring: true, instanceDate: new Date('2026-11-18T10:00:00Z'), startDate: new Date('2026-11-21T12:00:00Z') })
+  })
+  it('keeps an orphan cancellation with RECURRENCE-ID hidden', () => {
+    expect(expandGridEventsForRange([{ ...event, recurrenceRule: null, status: 'CANCELLED', unknownProperties: ['RECURRENCE-ID:20261117T100000Z'] }], { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') }).events).toEqual([])
+  })
+  it.each([null, 'FREQ=DAILY;COUNT=3'])('preserves existing visibility of cancelled events without RECURRENCE-ID: %s', (rule) => {
+    const events = [{ ...event, recurrenceRule: rule, status: 'CANCELLED' }]
+    const range = { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') }
+    expect(expandGridEventsForRange(events, range).events).toHaveLength(rule ? 3 : 1)
+    expect(expandEventsForRange(events, range)).toHaveLength(rule ? 3 : 1)
+  })
+
 })
