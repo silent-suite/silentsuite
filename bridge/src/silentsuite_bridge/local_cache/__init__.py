@@ -183,7 +183,7 @@ def _create_and_migrate_base_tables(database):
 
 
 def _ensure_cache_tables(database):
-    with _private_umask():
+    with _private_umask(), database.atomic():
         _create_and_migrate_base_tables(database)
         database.create_tables(
             [
