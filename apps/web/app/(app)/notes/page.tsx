@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
@@ -21,6 +21,8 @@ import {
   type StoredNote,
 } from '@/app/stores/use-note-store'
 import { canWriteNotebook, newNoteNotebook, useNotebookStore, type Notebook } from '@/app/stores/use-notebook-store'
+import { NoteNotCreatedError, type NoteNotCreatedReason } from '@/app/lib/note-not-created'
+import { showErrorToast, showWarningToast } from '@/app/stores/use-toast-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useSidebarStore } from '@/app/stores/use-sidebar-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -68,6 +70,15 @@ type Draft = { title: string; content: string }
 
 /** Autosave progress shown next to the editor. 'clean' renders nothing. */
 type SaveState = 'clean' | 'pending' | 'saving' | 'saved' | 'failed'
+
+/** The message for each reason a new note was not added to the list. */
+const NOT_CREATED_KEY = {
+  'queue-refused': 'createQueueRefused',
+  failed: 'createFailed',
+  queued: 'createQueued',
+  'no-session': 'createNoSession',
+  unavailable: 'createUnavailable',
+} as const satisfies Record<NoteNotCreatedReason, string>
 
 const SAVE_STATE_KEY = {
   pending: 'saveStatePending',
@@ -202,7 +213,7 @@ function NoteRow({ note, notebook, selected, dateLabel, onSelect }: {
  * the editor unmounts (note switch or navigation). Mount with `key={note.id}`
  * so each note gets its own draft.
  */
-function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = false, onDelete, onMove }: {
+function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, autoFocusTitle = false, onDelete, onMove }: {
   /** With the revision its text was read at; edits save only through that base (#744). */
   note: StoredNote
   canWrite: boolean
@@ -210,6 +221,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   moveRunning: boolean
   /** Choices for the notebook picker: the note's own plus every shown, writable notebook. */
   notebooks: Notebook[]
+  /** The offline banner the picker's reason is read from while offline. */
+  offlineNoticeId: string
   /** Focus the title on mount, for a note the user has just created. */
   autoFocusTitle?: boolean
   /** Shows the Delete action when provided; the caller owns the confirmation. */
@@ -227,6 +240,10 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   const [saveState, setSaveState] = useState<SaveState>('clean')
   const [moving, setMoving] = useState(false)
   const [moveFailed, setMoveFailed] = useState(false)
+  // A move recreates the note in the other notebook, which needs a connection. The reason is
+  // offered only where the picker would otherwise work; read-only, one-notebook and moving pickers keep their own state.
+  const isOnline = useSyncStore((s) => s.isOnline)
+  const moveNeedsConnection = !isOnline && canWrite && notebooks.length >= 2 && !moving && !moveRunning
   // Latest typed values, and the last values the store accepted. While they
   // differ the draft is unsaved and a refresh of this note must not clobber it.
   const draftRef = useRef<Draft>({ title: note.title, content: note.content })
@@ -416,7 +433,9 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
             <select
               value={note.notebookId ?? ''}
               onChange={(e) => void handleMove(e.target.value)}
-              disabled={!canWrite || moving || moveRunning || notebooks.length < 2}
+              disabled={!canWrite || moving || moveRunning || notebooks.length < 2 || !isOnline}
+              aria-describedby={moveNeedsConnection ? offlineNoticeId : undefined}
+              title={moveNeedsConnection ? t('moveOffline') : undefined}
               className="min-w-0 max-w-[11rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-1 pl-2 pr-6 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
             >
               {notebooks.map((notebook) => (
@@ -567,7 +586,15 @@ function NotesPageBody() {
     () => newNoteNotebook(notebooks, activeListId, { filterId: filteredNotebook?.id, openNotebookId: selectedNote?.notebookId }),
     [notebooks, activeListId, filteredNotebook?.id, selectedNote?.notebookId],
   )
-  const canCreateNote = canWrite && !isLoading && newNoteTarget !== undefined
+  // One create at a time: a second click, or the empty-state action, while one runs would add a second note.
+  // The ref closes the gap before the state has rendered; the state turns the buttons off meanwhile.
+  const createInFlight = useRef(false)
+  const [creating, setCreating] = useState(false)
+  // The offline queue refuses a new note, so New note is off until there is a connection.
+  const canCreateNote = canWrite && isOnline && !isLoading && newNoteTarget !== undefined && !creating
+  const offlineNoticeId = useId()
+  // Offline is all that keeps New note off: the empty states then say so instead of inviting a note.
+  const createNeedsConnection = !isOnline && canWrite && newNoteTarget !== undefined
   // The picker offers every shown writable notebook, plus the note's own so it always shows.
   const pickerNotebooks = useMemo(() => {
     const targets = notebooks.filter((notebook) => notebook.visible && canWriteNotebook(notebook))
@@ -587,16 +614,28 @@ function NotesPageBody() {
   }, [notebookFilter, visibleNotebooks])
 
   const handleCreate = useCallback(async () => {
-    if (!newNoteTarget || !canCreateNote) return
+    if (!newNoteTarget || !canCreateNote || createInFlight.current) return
+    createInFlight.current = true
+    setCreating(true)
     try {
       const created = await createNote({ notebookId: newNoteTarget.id })
       setQuery('')
       setNewNoteId(created.id)
       setSelectedId(created.id)
-    } catch {
-      // Nothing was added locally; the store already reported the failure.
+    } catch (err) {
+      // Nothing was added locally. A reason the store can name is worded here; any other
+      // rejection (subscription, notebook access, account change) is reported nowhere else either, as before.
+      if (err instanceof NoteNotCreatedError) {
+        // A queued create is not a failure, so it is a warning, not an error.
+        const message = t(NOT_CREATED_KEY[err.reason])
+        if (err.reason === 'queued') showWarningToast(message)
+        else showErrorToast(message)
+      }
+    } finally {
+      createInFlight.current = false
+      setCreating(false)
     }
-  }, [canCreateNote, createNote, newNoteTarget])
+  }, [canCreateNote, createNote, newNoteTarget, t])
 
   // The moved note is a new Etebase item, so the selection follows its new id,
   // unless another note, or none, was opened while the move ran.
@@ -614,7 +653,10 @@ function NotesPageBody() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       {!isOnline && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+        <div
+          id={offlineNoticeId}
+          className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+        >
           <WifiOff className="h-3.5 w-3.5 shrink-0" />
           {t('offlineMessage')}
         </div>
@@ -672,7 +714,8 @@ function NotesPageBody() {
             type="button"
             onClick={() => void handleCreate()}
             disabled={!canCreateNote}
-            title={!canWrite ? t('subscriptionRequired') : newNoteTarget ? t('newNoteIn', { name: newNoteTarget.name }) : !isLoading ? t('noWritableNotebook') : undefined}
+            aria-describedby={canWrite && !isOnline ? offlineNoticeId : undefined}
+            title={!canWrite ? t('subscriptionRequired') : !isOnline ? t('newNoteOffline') : newNoteTarget ? t('newNoteIn', { name: newNoteTarget.name }) : !isLoading ? t('noWritableNotebook') : undefined}
             className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canCreateNote ? 'cursor-not-allowed opacity-50' : 'hover:bg-emerald-500'}`}
           >
             <Plus className="h-4 w-4" />
@@ -692,7 +735,7 @@ function NotesPageBody() {
           ) : visibleNotes.length === 0 ? (
             <NotesEmptyState
               title={notes.length > 0 ? t('noVisibleNotes') : t('noNotesYet')}
-              description={notes.length > 0 ? t('noVisibleNotesDescription') : t('emptyDescription')}
+              description={notes.length > 0 ? t('noVisibleNotesDescription') : createNeedsConnection ? t('emptyOfflineDescription') : t('emptyDescription')}
               actionLabel={t('newNote')}
               onAddNote={canCreateNote ? () => void handleCreate() : undefined}
             />
@@ -735,7 +778,7 @@ function NotesPageBody() {
                 ) : (
                   <NotesEmptyState
                     title={t('noNotesInNotebook', { name: filteredNotebook?.name ?? '' })}
-                    description={t('noNotesInNotebookDescription')}
+                    description={createNeedsConnection ? t('emptyOfflineDescription') : t('noNotesInNotebookDescription')}
                     actionLabel={t('newNote')}
                     onAddNote={canCreateNote ? () => void handleCreate() : undefined}
                   />
@@ -773,6 +816,7 @@ function NotesPageBody() {
               canWrite={canEditSelected}
               moveRunning={movingNoteIds.has(selectedNote.id)}
               notebooks={pickerNotebooks}
+              offlineNoticeId={offlineNoticeId}
               autoFocusTitle={selectedNote.id === newNoteId}
               onDelete={canEditSelected ? () => setConfirmDelete(true) : undefined}
               onMove={(notebookId) => handleMove(selectedNote.id, notebookId)}

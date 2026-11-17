@@ -13,6 +13,7 @@ import {
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { AccountBoundaryChangedError, getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
+import { NoteNotCreatedError, type NoteNotCreatedReason } from '@/app/lib/note-not-created'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { canWriteNotebook, newNoteNotebook, useNotebookStore } from '@/app/stores/use-notebook-store'
 
@@ -267,15 +268,24 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       let itemUid: string | null = null
       // Unknown until the committed item reports its saved revision (#744).
       let committedRevision: string | null = null
+      // Why no note was added, once known. The page words it; no generic toast is shown here.
+      // Without a reason from createItem, the session was there but a queue guard or the collection was not.
+      let refusal: NoteNotCreatedReason = 'unavailable'
       try {
         const { noteToItemMeta, savedRevisionOf } = await import('@silentsuite/core')
         // Check before the lower store sees anything: a late call would run as the next account.
         if (!isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
         const etebase = useEtebaseStore.getState()
+        if (!etebase.account) refusal = 'no-session'
         itemUid = etebase.account
           ? await etebase.createItem('notes', draft.content, undefined, notebookId, noteToItemMeta(draft), (item) => {
             // Content and revision come from the same committed SDK object.
             if (isCurrentAccountEpoch(accountEpoch)) committedRevision = savedRevisionOf(item)
+          }, {
+            // The page words the failure itself; a refusal is not a "try again".
+            suppressErrorToast: true,
+            onRefused: (reason) => { refusal = reason },
+            onQueued: () => { refusal = 'queued' },
           })
           : null
       } catch (err) {
@@ -283,11 +293,10 @@ export const useNoteStore = create<NoteState & NoteActions>()(
           throw new AccountBoundaryChangedError()
         }
         console.error('[note-store] Failed to sync new note to Etebase', getSafeErrorDetails(err))
-        showErrorToast('Failed to save note. Please try again.')
+        refusal = 'failed'
       }
       if (!isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
-      // The etebase store already reported why the item was not created.
-      if (!itemUid) throw new Error('Note could not be saved.')
+      if (!itemUid) throw new NoteNotCreatedError(refusal)
 
       const note: StoredNote = { id: itemUid, uid: itemUid, ...draft, revision: committedRevision }
       set((state) => ({ notes: [...state.notes, note] }))

@@ -802,6 +802,98 @@ describe('useEtebaseStore nested offline queue boundary errors', () => {
   })
 })
 
+describe('useEtebaseStore.createItem failure reporting', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>
+
+  // The real class, so the name the store matches on is tied to offline-queue.ts, not to a copy here.
+  async function queueRefusal() {
+    const { OfflineQueueRefusedError } = await vi.importActual<typeof import('@/app/lib/offline-queue')>('@/app/lib/offline-queue')
+    return new OfflineQueueRefusedError('Offline queue refuses to persist plaintext notes create content without encrypted local persistence.')
+  }
+
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: { id: 'acct' } as any,
+      accountFingerprint: 'fingerprint',
+      collections: { calendar: [], tasks: [], contacts: [], notes: [{ uid: 'notebook-1' }] as any[], preferences: [] },
+    })
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    errorSpy.mockRestore()
+  })
+
+  it('without the options, a queue refusal still shows the generic offline-sync toast (other callers unchanged)', async () => {
+    coreMock.createItem.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    offlineQueueMock.isOfflineError.mockReturnValue(true)
+    offlineQueueMock.enqueue.mockRejectedValueOnce(await queueRefusal())
+
+    await expect(useEtebaseStore.getState().createItem('notes', 'text', undefined, 'notebook-1')).resolves.toBeNull()
+
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledTimes(1)
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith('Failed to save note for offline sync. Please try again.')
+  })
+
+  it('without the options, another failure still shows the generic toast', async () => {
+    coreMock.createItem.mockRejectedValueOnce(new Error('server said no'))
+
+    await expect(useEtebaseStore.getState().createItem('notes', 'text', undefined, 'notebook-1')).resolves.toBeNull()
+
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledTimes(1)
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith('Failed to save note. Please try again.')
+  })
+
+  it('with the options, a queue refusal shows no toast and reports queue-refused', async () => {
+    coreMock.createItem.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    offlineQueueMock.isOfflineError.mockReturnValue(true)
+    offlineQueueMock.enqueue.mockRejectedValueOnce(await queueRefusal())
+    const onRefused = vi.fn()
+
+    await expect(useEtebaseStore.getState().createItem('notes', 'text', undefined, 'notebook-1', undefined, undefined, { suppressErrorToast: true, onRefused })).resolves.toBeNull()
+
+    expect(offlineQueueMock.enqueue).toHaveBeenCalledTimes(1)
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+    expect(onRefused).toHaveBeenCalledTimes(1)
+    expect(onRefused).toHaveBeenCalledWith('queue-refused')
+  })
+
+  it('with the options, a queue that fails another way reports failed', async () => {
+    coreMock.createItem.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    offlineQueueMock.isOfflineError.mockReturnValue(true)
+    offlineQueueMock.enqueue.mockRejectedValueOnce(new Error('IndexedDB is unavailable'))
+    const onRefused = vi.fn()
+
+    await useEtebaseStore.getState().createItem('notes', 'text', undefined, 'notebook-1', undefined, undefined, { suppressErrorToast: true, onRefused })
+
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+    expect(onRefused).toHaveBeenCalledWith('failed')
+  })
+
+  it('with the options, a request that fails for another reason shows no toast and reports failed', async () => {
+    coreMock.createItem.mockRejectedValueOnce(new Error('server said no'))
+    const onRefused = vi.fn()
+
+    await expect(useEtebaseStore.getState().createItem('notes', 'text', undefined, 'notebook-1', undefined, undefined, { suppressErrorToast: true, onRefused })).resolves.toBeNull()
+
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+    expect(onRefused).toHaveBeenCalledTimes(1)
+    expect(onRefused).toHaveBeenCalledWith('failed')
+  })
+
+  it('with the options, a create the queue accepted is not reported as refused', async () => {
+    coreMock.createItem.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    offlineQueueMock.isOfflineError.mockReturnValue(true)
+    const onRefused = vi.fn()
+
+    await expect(useEtebaseStore.getState().createItem('notes', 'text', 'temp-1', 'notebook-1', undefined, undefined, { suppressErrorToast: true, onRefused })).resolves.toBeNull()
+
+    expect(offlineQueueMock.enqueue).toHaveBeenCalledTimes(1)
+    expect(onRefused).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+})
+
 describe('useEtebaseStore.createItemsBatch', () => {
   beforeEach(() => {
     offlineQueueMock.enqueue.mockClear()
