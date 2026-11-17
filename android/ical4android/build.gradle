@@ -54,7 +54,9 @@ def ical4jReplacedClasses = [
         'net/fortuna/ical4j/model/DateTime.class',
         'net/fortuna/ical4j/model/DateTime$*.class',
         'net/fortuna/ical4j/model/Iso8601.class',
-        'net/fortuna/ical4j/model/TimeZone.class'
+        'net/fortuna/ical4j/model/TimeZone.class',
+        'net/fortuna/ical4j/model/TimeZoneLoader.class',
+        'net/fortuna/ical4j/model/TimeZoneLoader$*.class'
 ]
 
 configurations {

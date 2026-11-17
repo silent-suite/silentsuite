@@ -210,6 +210,7 @@ a = Analysis(
         "silentsuite_bridge.autostart",
         "silentsuite_bridge.config",
         "silentsuite_bridge.tray",
+        "silentsuite_bridge.windows_background",
         "silentsuite_bridge.local_cache",
         "silentsuite_bridge.local_cache.db",
         "silentsuite_bridge.local_cache.models",

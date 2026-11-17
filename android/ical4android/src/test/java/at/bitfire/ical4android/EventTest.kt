@@ -18,6 +18,7 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
 import java.io.InputStreamReader
+import java.io.StringReader
 import java.nio.charset.Charset
 import java.time.Duration
 
@@ -202,6 +203,47 @@ class EventTest {
         // DTEND is same as DTSTART which is not valid for Android – but this will be handled by AndroidEvent, not Event
         assertEquals(868838400000L, eAllDay0Sec.dtEnd!!.date.time)
         assertNull(eAllDay0Sec.dtEnd!!.timeZone)
+    }
+
+    @Test
+    fun testZoneNotBundledWithIcal4jWithoutVTimeZone() {
+        // ical4j 3.0.20 doesn't bundle Europe/Kyiv and generates its definition; the web app's
+        // .ics import stores events without VTIMEZONE
+        val ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:-//SilentSuite//EN
+            BEGIN:VEVENT
+            UID:qa-tmp-sync-20261116-y001
+            DTSTART;TZID=Europe/Kyiv:20210601T100000
+            DTEND;TZID=Europe/Kyiv:20210601T110000
+            SUMMARY:kyiv
+            CREATED:20261116T113306Z
+            LAST-MODIFIED:20261116T113306Z
+            END:VEVENT
+            END:VCALENDAR
+        """.trimIndent().replace("\n", "\r\n") + "\r\n"
+        val e = Event.eventsFromReader(StringReader(ics)).single()
+        assertEquals("Europe/Kyiv", e.dtStart!!.timeZone.id)
+        assertEquals(1622530800000L, e.dtStart!!.date.time)   // 2021-06-01T07:00:00Z
+        assertEquals(1622534400000L, e.dtEnd!!.date.time)
+    }
+
+    @Test
+    fun testEndDateWithoutDtEnd() {
+        fun event(vararg lines: String) = Event.eventsFromReader(StringReader(
+            (listOf("BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:test", "BEGIN:VEVENT", "UID:no-dtend") +
+                lines + listOf("END:VEVENT", "END:VCALENDAR", "")).joinToString("\r\n"))).single()
+
+        val zeroLength = event("DTSTART:20210601T070000Z")
+        assertNull(zeroLength.dtEnd)
+        assertEquals(1622530800000L, zeroLength.getEndDate(true)!!.date.time)
+
+        val withDuration = event("DTSTART:20210601T070000Z", "DURATION:PT90M")
+        assertEquals(1622530800000L + 90 * 60000, withDuration.getEndDate(true)!!.date.time)
+
+        val allDay = event("DTSTART;VALUE=DATE:19970714")
+        assertEquals(868838400000L + 86400000, allDay.getEndDate(true)!!.date.time)
     }
 
     @Test

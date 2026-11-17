@@ -651,7 +651,7 @@ def test_windows_install_and_remove_round_trip_against_isolated_registry_key(env
     try:
         assert autostart.install_autostart() == 0
         value, kind = read_run_value()
-        assert value == autostart.render_windows_command([BINARY])
+        assert value == autostart.render_windows_command([BINARY, "--background"])
         assert kind == winreg.REG_SZ
         assert read_settings(env.settings) == {"network": {"listenPort": 45123}}
         assert "next sign-in" in capsys.readouterr().out
