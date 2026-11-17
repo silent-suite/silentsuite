@@ -168,9 +168,13 @@ def incoming_accept(
     data: CollectionInvitationAcceptIn,
     queryset: InvitationQuerySet = Depends(get_incoming_queryset),
 ):
-    invitation = get_object_or_404(queryset, uid=invitation_uid)
+    invitation = get_object_or_404(queryset.select_related("fromMember__collection"), uid=invitation_uid)
 
     with transaction.atomic():
+        # Removal takes the same collection lock. Re-read after acquiring it:
+        # an invitation loaded before removal must not recreate membership.
+        models.Collection.objects.select_for_update().get(pk=invitation.collection.pk)
+        invitation = get_object_or_404(queryset.select_related("fromMember__collection"), pk=invitation.pk)
         user = invitation.user
         if invitation.collection.members.filter(user=user).exists():
             raise HttpError(
@@ -194,7 +198,7 @@ def incoming_accept(
 
         models.CollectionMemberRemoved.objects.filter(user=invitation.user, collection=invitation.collection).delete()
 
-        invitation.delete()
+        models.CollectionInvitation.objects.filter(user=user, fromMember__collection=invitation.collection).delete()
 
 
 def get_user_or_404(request: Request, username: str) -> UserType:
