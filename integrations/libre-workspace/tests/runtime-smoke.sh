@@ -266,12 +266,12 @@ assert_output_has_no_secrets "$WORK/remove_silentsuite.sh.out"
 for volume in silentsuite-server_pgdata silentsuite-server_server_data; do
   docker volume inspect "$volume" >/dev/null || fail "volume $volume was deleted"
 done
-# The exact digest the packaged installer pins, and the one the retained
-# Compose file actually ran.
-POSTGRES_IMAGE="$(sed -n 's/^POSTGRES_IMAGE="\(postgres@sha256:[0-9a-f]\{64\}\)"$/\1/p' "$MODULE/install.sh")"
-[ "$(printf '%s\n' "$POSTGRES_IMAGE" | grep -c .)" = "1" ] || fail "could not read the pinned PostgreSQL digest from install.sh"
+# Use the installed release's digest: the packaged installer also admits newer
+# bundles whose PostgreSQL pin differs from this release's pin.
 RETAINED_COMPOSE="$(ls /root/silentsuite-removed-*/silentsuite-server/docker-compose.yml)"
 [ "$(printf '%s\n' "$RETAINED_COMPOSE" | wc -l)" = "1" ] || fail "expected exactly one retained installation"
+POSTGRES_IMAGE="$(sed -n 's/^    image: \(postgres@sha256:[0-9a-f]\{64\}\)$/\1/p' "$RETAINED_COMPOSE")"
+[ "$(printf '%s\n' "$POSTGRES_IMAGE" | grep -c .)" = "1" ] || fail "could not read the installed PostgreSQL digest from retained compose"
 [ "$(grep -cxF "    image: $POSTGRES_IMAGE" "$RETAINED_COMPOSE")" = "1" ] || fail "retained compose does not run $POSTGRES_IMAGE"
 docker run --rm -v silentsuite-server_pgdata:/var/lib/postgresql/data:ro --entrypoint cat "$POSTGRES_IMAGE" \
   /var/lib/postgresql/data/PG_VERSION >/dev/null || fail "the database volume has no cluster"

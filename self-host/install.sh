@@ -32,12 +32,11 @@ set -euo pipefail
 
 REPO="silent-suite/silentsuite"
 IMAGE_REPOSITORY="ghcr.io/silent-suite/silentsuite-server"
-# The database image is fixed source data, not release data: it ships inside the
-# checksummed bundle rather than in server-image.json, so it needs no per-release
-# manifest field. It is still an immutable digest — the container holds the
-# database password and every account row, so a republished upstream tag must
-# not be able to change what runs.
-POSTGRES_IMAGE="postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e"
+# The checksummed bundle pins its database image. Accept only these reviewed
+# immutable indexes, so this installer also works with earlier release bundles.
+# Select the bundle's pin below and use it for every pull and identity check.
+POSTGRES_IMAGE_CURRENT="postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e" # 16.16-alpine
+POSTGRES_IMAGE_PREVIOUS="postgres@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7" # 16.9-alpine
 INSTALL_DIR="${SILENTSUITE_DIR:-silentsuite-server}"
 REQUESTED_VERSION=""
 STAGE_DIR=""
@@ -661,13 +660,25 @@ if ! grep -q 'SILENTSUITE_SERVER_IMAGE' "$BUNDLE_ROOT/docker-compose.yml"; then
   echo "ERROR: the bundled compose file does not use the managed server image." >&2
   exit 1
 fi
-if [ "$(grep -cF "image: $POSTGRES_IMAGE" "$BUNDLE_ROOT/docker-compose.yml" | tr -d ' ')" != "1" ]; then
-  echo "ERROR: the bundled compose file does not pin PostgreSQL to the expected" >&2
-  echo "       immutable digest ($POSTGRES_IMAGE)." >&2
+# Read the single image line from the bundle's PostgreSQL service. Keep the
+# shipped Compose layout strict; duplicate services or image keys are refused.
+POSTGRES_IMAGE_LINE="$(awk '
+  /^  postgres:$/ { services++; inside = 1; next }
+  /^[^ ]|^  [^ ]/ { inside = 0 }
+  inside && /^[[:space:]]*image:/ { images++; line = $0 }
+  END { if (services == 1 && images == 1) print line }
+' "$BUNDLE_ROOT/docker-compose.yml")"
+if [ "$POSTGRES_IMAGE_LINE" = "    image: $POSTGRES_IMAGE_CURRENT" ]; then
+  POSTGRES_IMAGE="$POSTGRES_IMAGE_CURRENT"
+elif [ "$POSTGRES_IMAGE_LINE" = "    image: $POSTGRES_IMAGE_PREVIOUS" ]; then
+  POSTGRES_IMAGE="$POSTGRES_IMAGE_PREVIOUS"
+else
+  echo "ERROR: the bundled compose file must pin PostgreSQL to exactly one reviewed immutable digest." >&2
   exit 1
 fi
-if grep -Eq '^[[:space:]]*image:[[:space:]]*postgres:' "$BUNDLE_ROOT/docker-compose.yml"; then
-  echo "ERROR: the bundled compose file starts PostgreSQL from a mutable tag." >&2
+# No second PostgreSQL image line elsewhere may disagree with that selection.
+if [ "$(grep -E '^[[:space:]]*image:[[:space:]]*postgres' "$BUNDLE_ROOT/docker-compose.yml" || true)" != "$POSTGRES_IMAGE_LINE" ]; then
+  echo "ERROR: the bundled compose file contains conflicting PostgreSQL image lines." >&2
   exit 1
 fi
 

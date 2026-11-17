@@ -36,8 +36,8 @@ Then stop the stack and remove the parts that are safe to remove automatically:
 # Stop and remove the containers (volumes are left alone)
 docker compose down
 
-# Remove the Docker images. For an older install, use its PostgreSQL digest
-# from docker-compose.yml instead of the current release digest shown here.
+# Remove the Docker images. Use the PostgreSQL digest in your installed
+# docker-compose.yml; the repository Compose digest shown here may differ.
 # List the installed server images with `docker image ls`.
 docker image rm postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
 docker image ls --filter 'reference=ghcr.io/silent-suite/silentsuite-server' --format '{{.ID}}' | xargs -r docker image rm

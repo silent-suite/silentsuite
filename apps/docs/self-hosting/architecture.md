@@ -28,11 +28,13 @@ SilentSuite self-hosting runs two containers on a single Docker network. You pro
 | Service | Image | Role |
 |---|---|---|
 | **SilentSuite Server** | `ghcr.io/silent-suite/silentsuite-server` | Sync server built on the Etebase protocol. Handles encrypted data sync, user authentication, and the admin panel. All data is encrypted client-side; the server never sees plaintext. |
-| **PostgreSQL** | `postgres`, pinned to the immutable OCI index digest of 16.16-alpine | Database. Stores encrypted sync data and user accounts. Existing installations keep their installed digest. Only accessible within the Docker network. |
+| **PostgreSQL** | `postgres`, pinned to the immutable OCI index digest in the installed release bundle | Database. Stores encrypted sync data and user accounts. Existing installations keep their installed digest. Only accessible within the Docker network. |
 
-The Compose file references no mutable image tag. PostgreSQL is pinned to
+The Compose file references no mutable image tag. The repository Compose file pins PostgreSQL 16.16-alpine to
 `postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e`, and the server image comes from `SILENTSUITE_SERVER_IMAGE`, which the
-installer writes as the release's immutable index digest. Moving a tag upstream
+installer writes as the release's immutable index digest. New installs use 16.16 only
+once a published release bundle includes that Compose file; earlier bundles keep
+the reviewed 16.9-alpine digest. Moving a tag upstream
 cannot change what your instance runs.
 
 ## Network and Security

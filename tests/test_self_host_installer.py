@@ -1248,20 +1248,29 @@ def test_the_target_is_claimed_only_after_the_registry_image_is_verified(workspa
 
 
 POSTGRES_IMAGE = "postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e"
+PREVIOUS_POSTGRES_IMAGE = "postgres@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7"
 
 
-def test_a_valid_release_verifies_the_pinned_database_image(workspace):
+@pytest.mark.parametrize("postgres_image", [POSTGRES_IMAGE, PREVIOUS_POSTGRES_IMAGE], ids=["current", "previous"])
+def test_a_valid_release_verifies_the_pinned_database_image(workspace, postgres_image):
     """The database holds the password and every account row, so it is verified
     to the same standard as the server image."""
 
-    workspace["release"].publish()
+    compose = (ROOT / "self-host" / "docker-compose.yml").read_text(encoding="utf-8")
+    workspace["release"].publish(replace_compose=compose.replace(POSTGRES_IMAGE, postgres_image))
 
     result = run_installer(workspace)
 
     assert result.returncode == 0, result.stderr
     docker_log = (workspace["fixtures"] / "docker.log").read_text()
-    assert f"pull {POSTGRES_IMAGE}" in docker_log
-    assert "Database identity verified" in result.stdout
+    assert f"pull {postgres_image}" in docker_log
+    assert f"image inspect {postgres_image} --format {{{{.Os}}}}/{{{{.Architecture}}}}" in docker_log
+    assert f"image inspect {postgres_image} --format {{{{json .RepoDigests}}}}" in docker_log
+    assert f"Database identity verified: {postgres_image} (linux/amd64)" in result.stdout
+    installed_compose = (install_dir(workspace) / "docker-compose.yml").read_text()
+    assert f"    image: {postgres_image}\n" in installed_compose
+    other_image = PREVIOUS_POSTGRES_IMAGE if postgres_image == POSTGRES_IMAGE else POSTGRES_IMAGE
+    assert f"pull {other_image}" not in docker_log
 
 
 def test_an_arm64_host_installs_with_both_images_verified_for_arm64(workspace):
@@ -1360,12 +1369,25 @@ def test_the_database_is_verified_before_the_target_is_claimed(workspace):
     )
 
 
-def test_a_bundle_whose_compose_unpins_the_database_is_rejected(workspace):
+@pytest.mark.parametrize(
+    "image_lines",
+    [
+        "    image: postgres:16.16-alpine",
+        "    image: postgres@sha256:" + "9" * 64,
+        f"    image: {POSTGRES_IMAGE}extra",
+        f"    image: {POSTGRES_IMAGE}\n    image: {POSTGRES_IMAGE}",
+        f"    image: {POSTGRES_IMAGE}\n    image: {PREVIOUS_POSTGRES_IMAGE}",
+        f"    image: {POSTGRES_IMAGE}\n    image: postgres:16.16-alpine",
+        f"    image: {POSTGRES_IMAGE}\n    image: other-database:latest",
+    ],
+    ids=["tag", "unreviewed", "suffix", "duplicate", "two-reviewed", "digest-and-tag", "overridden"],
+)
+def test_a_bundle_whose_compose_unpins_the_database_is_rejected(workspace, image_lines):
     """A bundle that passes checksum and inventory can still be refused here."""
 
     compose = (ROOT / "self-host" / "docker-compose.yml").read_text(encoding="utf-8")
     workspace["release"].publish(
-        replace_compose=compose.replace(f"image: {POSTGRES_IMAGE}", "image: postgres:16.16-alpine")
+        replace_compose=compose.replace(f"    image: {POSTGRES_IMAGE}", image_lines)
     )
 
     result = run_installer(workspace)
@@ -1374,6 +1396,47 @@ def test_a_bundle_whose_compose_unpins_the_database_is_rejected(workspace):
     assert "PostgreSQL" in result.stderr
     assert not install_dir(workspace).exists()
     assert "pull" not in (workspace["fixtures"] / "docker.log").read_text()
+    assert leftover_temporaries(workspace) == []
+
+
+@pytest.mark.parametrize("variant", ["duplicate-service", "wrong-service", "extra-service"])
+def test_database_pin_must_belong_to_one_postgres_service(workspace, variant):
+    compose = (ROOT / "self-host" / "docker-compose.yml").read_text(encoding="utf-8")
+    if variant == "duplicate-service":
+        compose += f"\n  postgres:\n    image: {POSTGRES_IMAGE}\n"
+    elif variant == "wrong-service":
+        compose = compose.replace("  postgres:\n", "  unrelated:\n", 1)
+    else:
+        compose += f"\n  extra:\n    image: {PREVIOUS_POSTGRES_IMAGE}\n"
+    workspace["release"].publish(replace_compose=compose)
+
+    result = run_installer(workspace)
+
+    assert result.returncode != 0
+    assert "PostgreSQL" in result.stderr
+    assert not install_dir(workspace).exists()
+    assert "pull" not in (workspace["fixtures"] / "docker.log").read_text()
+
+
+@pytest.mark.parametrize(
+    ("bundle_image", "pulled_image"),
+    [(PREVIOUS_POSTGRES_IMAGE, POSTGRES_IMAGE), (POSTGRES_IMAGE, PREVIOUS_POSTGRES_IMAGE)],
+    ids=["previous-bundle-current-pull", "current-bundle-previous-pull"],
+)
+def test_reviewed_database_digest_must_match_the_bundle(workspace, bundle_image, pulled_image):
+    compose = (ROOT / "self-host" / "docker-compose.yml").read_text(encoding="utf-8")
+    workspace["release"].publish(replace_compose=compose.replace(POSTGRES_IMAGE, bundle_image))
+
+    result = run_installer(workspace, env={"SILENTSUITE_FAKE_PG_REPO_DIGEST": pulled_image})
+
+    assert result.returncode != 0
+    assert f"the pulled image is not {bundle_image}" in result.stderr
+    assert not install_dir(workspace).exists()
+    docker_log = (workspace["fixtures"] / "docker.log").read_text()
+    assert f"pull {bundle_image}" in docker_log
+    assert "compose up" not in docker_log
+    assert leftover_temporaries(workspace) == []
+
 
 # ── Static guarantees ─────────────────────────────────────────────────
 
