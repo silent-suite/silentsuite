@@ -574,6 +574,11 @@ def fetch_updates(
 
     queryset, stoken_rev = filter_by_stoken(stoken, queryset, models.CollectionItem.stoken_annotation)
 
+    if not data:
+        return MsgpackResponse(
+            CollectionItemListResponse(data=[], stoken=stoken_rev and stoken_rev.uid, done=True)
+        )
+
     uids, etags = zip(*[(item.uid, item.etag) for item in data])
     revs = models.CollectionItemRevision.objects.filter(uid__in=etags, current=True)
     queryset = queryset.filter(uid__in=uids).exclude(revisions__in=revs)

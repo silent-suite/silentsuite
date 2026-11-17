@@ -386,6 +386,15 @@ class CollectionRouteContractTests(TransactionTestCase):
         assert response.status_code == 404, response.content
         assert msgpack_decode(response.content)["code"] == "does_not_exist"
 
+    def test_fetch_updates_empty_list_succeeds_and_preserves_stoken(self):
+        for stoken in (None, self.col_a.stoken):
+            url = f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/fetch_updates/"
+            if stoken is not None:
+                url += f"?stoken={stoken}"
+            response = self._post(url, self.alice_token, [])
+            assert response.status_code == 200, response.content
+            assert msgpack_decode(response.content) == {"data": [], "stoken": stoken, "done": True}
+
     def test_fetch_updates_is_scoped_to_the_prefix_collection(self):
         expected = {self.col_a.uid: self.rev_a, self.col_b.uid: self.rev_b}
         for col_uid, revision_uid in expected.items():
