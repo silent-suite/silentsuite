@@ -9,7 +9,7 @@ const nextPwaDefaults = (require('@ducanh2912/next-pwa') as { runtimeCaching: un
 type Rule = { urlPattern: RegExp | ((ctx: { url: URL; sameOrigin: boolean; request: Request }) => boolean) | string; handler: string; method?: string; options?: { cacheName?: string } }
 
 /** The options next.config.js hands to next-pwa, captured without building. */
-function pwaOptions(): { extendDefaultRuntimeCaching?: boolean; workboxOptions?: { runtimeCaching?: Rule[]; skipWaiting?: boolean; clientsClaim?: boolean } } {
+function pwaOptions(): { importScripts?: string[]; extendDefaultRuntimeCaching?: boolean; workboxOptions?: { runtimeCaching?: Rule[]; skipWaiting?: boolean; clientsClaim?: boolean } } {
   const loader = Module as unknown as { _load: (request: string, ...rest: unknown[]) => unknown }
   const original = loader._load
   let captured: unknown
@@ -49,8 +49,9 @@ describe('service worker never caches Google import traffic (#48)', () => {
   const options = pwaOptions()
   const routes = [...(options.workboxOptions?.runtimeCaching ?? []), ...(nextPwaDefaults as Rule[])]
 
-  it('puts the Google API hosts first, as NetworkOnly without a cache, ahead of the defaults', () => {
+  it('puts cross-origin GETs first, as NetworkOnly without a cache, ahead of the defaults', () => {
     expect(options.extendDefaultRuntimeCaching).toBe(true)
+    expect(options.importScripts).toContain('/notification-worker.js')
     const ours = options.workboxOptions!.runtimeCaching!
     expect(ours[0]).toMatchObject({ handler: 'NetworkOnly', method: 'GET' })
     expect(ours[0]!.options).toBeUndefined()
@@ -70,11 +71,12 @@ describe('service worker never caches Google import traffic (#48)', () => {
   })
 
   it.each([
-    ['https://server.silentsuite.io/api/v1/collection/', 'cross-origin'],
-    ['https://fonts.googleapis.com/css2?family=Inter', 'google-fonts-stylesheets'],
-    ['https://evil.example/?u=https://www.googleapis.com/', 'cross-origin'],
-  ])('leaves %s to the defaults', (href, cacheName) => {
-    expect(firstMatch(routes, href)?.options?.cacheName).toBe(cacheName)
+    'https://server.silentsuite.io/api/v1/collection/',
+    'https://fonts.googleapis.com/css2?family=Inter',
+    'https://evil.example/?u=https://www.googleapis.com/',
+  ])('uses NetworkOnly for any cross-origin GET: %s', (href) => {
+    expect(firstMatch(routes, href)?.handler).toBe('NetworkOnly')
+    expect(firstMatch(routes, href)?.options).toBeUndefined()
   })
 })
 
@@ -99,13 +101,40 @@ describe('service worker never caches Microsoft import traffic (#48)', () => {
     expect(firstMatch(routes, href)?.options).toBeUndefined()
   })
 
-  it('leaves look-alike hosts to the defaults', () => {
+  it('also uses NetworkOnly for look-alike hosts', () => {
     for (const href of ['https://graph.microsoft.com.evil.example/v1.0/me', 'https://evil.example/?u=https://graph.microsoft.com/']) {
-      expect(firstMatch(routes, href)?.options?.cacheName).toBe('cross-origin')
+      expect(firstMatch(routes, href)?.handler).toBe('NetworkOnly')
     }
   })
 
   it('has no route for non-GET requests, so the token POST to login.microsoftonline.com is never handled', () => {
     for (const rule of routes) expect(rule.method ?? 'GET').toBe('GET')
+  })
+})
+
+describe('cross-origin requests precede all runtime cache defaults', () => {
+  const options = pwaOptions()
+  const routes = [...(options.workboxOptions?.runtimeCaching ?? []), ...(nextPwaDefaults as Rule[])]
+  it.each([
+    'https://api.silentsuite.io/auth/session',
+    'https://api.silentsuite.io/subscription',
+    'https://api.silentsuite.io/subscription/payment-flows/current',
+    'https://api.silentsuite.io/api/v1/collection/',
+    'https://selfhost.example.invalid:8443/api/v1/collection/',
+    'http://localhost:8000/api/v1/collection/',
+    'https://app.silentsuite.io.evil.example/api/session',
+    'https://cdn.example.invalid/image.png',
+  ])('%s is NetworkOnly without a cache or fallback plugin', (href) => {
+    const route = firstMatch(routes, href)
+    expect(route).toMatchObject({ handler: 'NetworkOnly', method: 'GET' })
+    expect(route?.options).toBeUndefined()
+  })
+  it.each([
+    'https://app.silentsuite.io/_next/static/chunks/app.js',
+    'https://app.silentsuite.io/icon-192.svg',
+    'https://app.silentsuite.io/calendar',
+    'https://app.silentsuite.io/api/local',
+  ])('keeps the same-origin route for %s', (href) => {
+    expect(firstMatch(routes, href)).toBe(firstMatch(nextPwaDefaults as Rule[], href))
   })
 })

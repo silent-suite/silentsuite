@@ -26,7 +26,7 @@ type Alarm = { id: string; title: string; time: string; triggerAt: number; trigg
 type Listener = (event: any) => void
 
 /** Load the real worker script into a fake ServiceWorkerGlobalScope. */
-function loadWorker(timers: { setTimeout?: unknown; clearTimeout?: unknown } = {}) {
+function loadWorker(timers: { setTimeout?: unknown; clearTimeout?: unknown } = {}, cacheStorage: unknown = undefined, database: unknown = indexedDB) {
   const listeners: Record<string, Listener> = {}
   // Notifications currently on screen, as getNotifications() returns them.
   const shown: { title: string; close: () => void }[] = []
@@ -35,14 +35,14 @@ function loadWorker(timers: { setTimeout?: unknown; clearTimeout?: unknown } = {
     shown.push(notification)
   })
   const self = {
-    addEventListener: (type: string, fn: Listener) => { listeners[type] = fn },
+    addEventListener: (type: string, fn: Listener) => { listeners[type] = event => fn({ waitUntil: () => {}, ...event }) },
     registration: { showNotification, getNotifications: async () => [...shown] },
     clients: { matchAll: async () => [], openWindow: async () => null },
   }
   const src = readFileSync(path.resolve(__dirname, '../../../public/notification-worker.js'), 'utf8')
   // setInterval is stubbed so the 30 s fallback loop does not keep the test alive.
-  new Function('self', 'indexedDB', 'setInterval', 'setTimeout', 'clearTimeout', src)(
-    self, indexedDB, () => 0, timers.setTimeout ?? setTimeout, timers.clearTimeout ?? clearTimeout,
+  new Function('self', 'indexedDB', 'setInterval', 'setTimeout', 'clearTimeout', 'caches', src)(
+    self, database, () => 0, timers.setTimeout ?? setTimeout, timers.clearTimeout ?? clearTimeout, cacheStorage,
   )
   return { listeners, showNotification, shown }
 }
@@ -100,6 +100,13 @@ async function runPeriodicCheck(worker: ReturnType<typeof loadWorker>) {
   await done
 }
 
+const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches')
+
+function seededCaches() {
+  const names = new Set(['cross-origin', 'cross-origin-other', 'workbox-precache'])
+  return { names, delete: vi.fn(async (name: string) => names.delete(name)) }
+}
+
 const FP_A = 'synthetic-fingerprint-A'
 const userA = { id: 'synthetic-user-A', email: 'a@synthetic.invalid', planId: 'pro', isAdmin: false, onboardedAt: null }
 
@@ -123,6 +130,8 @@ describe('logout clears service-worker reminders', () => {
   afterEach(() => {
     vi.useRealTimers()
     Reflect.deleteProperty(navigator, 'serviceWorker')
+    if (originalCaches) Object.defineProperty(globalThis, 'caches', originalCaches)
+    else Reflect.deleteProperty(globalThis, 'caches')
   })
 
   it('removes stored reminder records on logout', async () => {
@@ -211,6 +220,61 @@ describe('logout clears service-worker reminders', () => {
     await useAuthStore.getState().logout()
 
     expect(useAuthStore.getState().user).toBeNull()
+  })
+
+  it('real logout deletes only the legacy cross-origin cache', async () => {
+    const storage = seededCaches()
+    Object.defineProperty(globalThis, 'caches', { configurable: true, value: storage })
+    await useAuthStore.getState().logout()
+    expect([...storage.names]).toEqual(['cross-origin-other', 'workbox-precache'])
+    expect(storage.delete).toHaveBeenCalledWith('cross-origin')
+  })
+
+  it('CLEAR_ALARMS keeps the worker alive until cache deletion and reminder cleanup finish', async () => {
+    const storage = seededCaches()
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    storage.delete.mockImplementation(async name => { await held; return storage.names.delete(name) })
+    const worker = loadWorker({}, storage)
+    await scheduleOne(worker, { id: 'held-clear', title: 'Synthetic', time: '10:00', triggerAt: Date.now() + 60000, triggerLabel: '-PT1M' })
+    const waitUntil = vi.fn()
+    worker.listeners.message!({ data: { type: 'CLEAR_ALARMS' }, waitUntil })
+    expect(waitUntil).toHaveBeenCalledTimes(1)
+    let finished = false
+    const completion = (waitUntil.mock.calls[0]![0] as Promise<unknown>).then(() => { finished = true })
+    await waitFor(async () => (await readAlarmDb()).length === 0)
+    expect(finished).toBe(false)
+    release()
+    await completion
+    expect([...storage.names]).toEqual(['cross-origin-other', 'workbox-precache'])
+  })
+
+  it.each(['database', 'cache'])('worker cleanup continues when %s cleanup fails', async (failure) => {
+    const storage = seededCaches()
+    if (failure === 'cache') storage.delete.mockRejectedValue(new Error('synthetic cache failure'))
+    const worker = loadWorker({}, storage, failure === 'database'
+      ? { open: () => { throw new Error('synthetic database failure') } } : indexedDB)
+    await withAlarmStore('readwrite', store => { store.put({ id: 'synthetic-record' }) })
+    const waitUntil = vi.fn()
+    worker.listeners.message!({ data: { type: 'CLEAR_ALARMS' }, waitUntil })
+    expect(waitUntil).toHaveBeenCalledTimes(1)
+    await waitUntil.mock.calls[0]![0]
+    if (failure === 'database') expect(storage.names.has('cross-origin')).toBe(false)
+    else expect(await readAlarmDb()).toEqual([])
+  })
+
+  it('activation deletes only the legacy cache, including repeated activation without IndexedDB', async () => {
+    const storage = seededCaches()
+    const worker = loadWorker({}, storage, null)
+    expect(worker.listeners.activate).toBeTypeOf('function')
+    for (let count = 0; count < 2; count++) {
+      const waitUntil = vi.fn()
+      worker.listeners.activate!({ waitUntil })
+      expect(waitUntil).toHaveBeenCalledTimes(1)
+      await waitUntil.mock.calls[0]![0]
+    }
+    expect([...storage.names]).toEqual(['cross-origin-other', 'workbox-precache'])
+    expect(storage.delete.mock.calls).toEqual([['cross-origin'], ['cross-origin']])
   })
 
   it('worker drops all reminders on CLEAR_ALARMS', async () => {
