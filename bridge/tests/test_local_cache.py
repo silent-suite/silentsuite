@@ -1348,6 +1348,9 @@ def test_v1_cache_is_migrated_additively_without_bumping_legacy_version(tmp_path
 def test_revision_ledger_activation_rolls_back_marker_when_token_deletion_fails(
     mem_db, user, monkeypatch
 ):
+    models.SchemaMigration.delete().where(
+        models.SchemaMigration.name == "dav-revision-chain-v3"
+    ).execute()
     cache_col = CollectionEntity.create(
         local_user=user,
         uid="contacts",
