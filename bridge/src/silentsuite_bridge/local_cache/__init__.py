@@ -279,7 +279,11 @@ def _migrate_cache_schema(database):
             database.execute_sql(
                 "ALTER TABLE davunresolveditem ADD COLUMN local_item_id INTEGER"
             )
-    database.execute_sql("UPDATE collectionentity SET dav_href=NULL WHERE deleted=1 AND dav_href IS NOT NULL")
+    # Ordinary session initialization must remain a reader when no cleanup is due.
+    if database.execute_sql(
+        "SELECT 1 FROM collectionentity WHERE deleted=1 AND dav_href IS NOT NULL LIMIT 1"
+    ).fetchone() is not None:
+        database.execute_sql("UPDATE collectionentity SET dav_href=NULL WHERE deleted=1 AND dav_href IS NOT NULL")
     database.execute_sql(
         "CREATE UNIQUE INDEX IF NOT EXISTS collectionentity_local_user_dav_href "
         "ON collectionentity (local_user_id, dav_href)"
