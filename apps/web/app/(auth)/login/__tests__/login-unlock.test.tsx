@@ -141,6 +141,19 @@ describe('LoginPage unlock route', () => {
 
     expect(replace).toHaveBeenCalledWith('/tasks')
   })
+
+  it.each([
+    '%2F%5Cattacker.invalid',
+    '%2F%09%2Fattacker.invalid',
+  ])('keeps an authenticated returnTo=%s inside the app', (encodedReturnTo) => {
+    authState.isAuthenticated = true
+    searchParams = new URLSearchParams(`returnTo=${encodedReturnTo}`)
+
+    render(<LoginPage />)
+
+    expect(replace).toHaveBeenCalledWith('/calendar')
+    expect(replace.mock.calls.every(([destination]) => destination === '/calendar')).toBe(true)
+  })
 })
 
 describe('LoginPage server selection', () => {
