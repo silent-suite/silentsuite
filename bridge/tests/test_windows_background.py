@@ -18,7 +18,8 @@ BINARY = ["C:\\Users\\Test User\\AppData\\Local\\SilentSuite\\silentsuite-bridge
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires native Windows executable handles")
-@pytest.mark.parametrize("mode", ["success", "swap-failed", "backup-failed", "start-failed", "stop-failed", "restore-failed"])
+@pytest.mark.parametrize("mode", ["success", "swap-failed", "backup-failed", "start-failed", "stop-failed", "restore-failed",
+                                  "fresh-slow", "upgrade-slow", "cleanup-failed"])
 def test_windows_installer_replaces_only_its_running_target(tmp_path, mode):
     fixture = Path(__file__).with_name("windows_installer_fixture.ps1")
     installer = Path(__file__).resolve().parents[1] / "install.ps1"
@@ -34,10 +35,16 @@ def test_windows_installer_replaces_only_its_running_target(tmp_path, mode):
     assert result.returncode == 0, result.stdout + result.stderr
     receipt = json.loads((tmp_path / "result.json").read_text(encoding="utf-8-sig"))
     assert receipt["OtherAlive"], ("a different installation must remain running", receipt)
-    assert receipt["Failed"] == (mode != "success"), receipt
-    if mode == "success":
+    assert receipt["Failed"] == (mode not in {"success", "fresh-slow", "cleanup-failed"}), receipt
+    if mode in {"success", "cleanup-failed"}:
         assert not receipt["Failed"], "upgrade failed while the installed executable was running"
         assert receipt["OldExited"] and receipt["InstalledNew"] and receipt["TargetRunning"], receipt
+        if mode == "cleanup-failed":
+            assert receipt["Injected"] and receipt["OldBackupRetained"], receipt
+            assert "backup could not be removed" in result.stdout
+    elif mode == "fresh-slow":
+        assert not receipt["HadOld"] and receipt["InstalledNew"] and receipt["TargetRunning"], receipt
+        assert "dashboard did not respond yet" in result.stdout
     elif mode == "restore-failed":
         assert receipt["RestoreFailures"] >= 2, receipt
         assert receipt["OldBackupRetained"], "failed restoration must retain the previous executable"

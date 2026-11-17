@@ -250,6 +250,33 @@ def test_write_presync_wait_has_no_database_transaction(dav_world, monkeypatch):
         assert request.result(timeout=10).status == 201
 
 
+def test_mapped_propfind_does_not_reserve_writer_behind_another_collection(dav_world, monkeypatch):
+    world = dav_world
+    col = world.add_collection()
+    world.add_item(col)
+    world.add_item(col, uid="second")
+    other = world.add_collection(uid="other")
+    world.database.timeout = 0.025
+    begins = []
+    original = world.database.begin
+
+    def begin(*args, **kwargs):
+        kind = args[0] if args else kwargs.get("lock_type")
+        if kind == "IMMEDIATE":
+            begins.append(kind)
+        return original(*args, **kwargs)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with world.database.atomic("IMMEDIATE"):
+            models.CollectionEntity.update(dirty=True).where(models.CollectionEntity.id == other.id).execute()
+            monkeypatch.setattr(world.database, "begin", begin)
+            response = pool.submit(world.request, "PROPFIND", f"/{USERNAME}/contacts/", PROPS,
+                                   {"HTTP_DEPTH": "1"}).result(timeout=5)
+            assert response.status == 207, response.body
+            assert b"contact-1.vcf" in response.body and b"second.vcf" in response.body
+            assert begins == [], "mapped WAL readers must not reserve SQLite's writer"
+
+
 def test_proppatch_uses_nested_savepoint_and_rolls_back_late_failure(dav_world, monkeypatch):
     world = dav_world
     col = world.add_collection()
@@ -324,7 +351,8 @@ def test_href_allocation_reserves_sqlite_before_python_lock(dav_world, monkeypat
     with world.database.atomic() if borrowed else nullcontext():
         if borrowed:
             models.CollectionEntity.get_by_id(col.id)
-        local_cache.ensure_dav_href(row, "contact-1.vcf", ".vcf")
+        # Stable listing reads bypass the lock; explicitly exercise replacement.
+        local_cache.ensure_dav_href(row, "contact-1.vcf", ".vcf", replace_existing=True)
     assert observed == ["reserved"]
     assert local_cache.dav_collection_state_hash(col) == before
 

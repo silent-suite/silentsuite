@@ -133,6 +133,26 @@ def test_initialization_releases_alias_left_on_deleted_collection(dav_world):
     assert create(world).status == 201
 
 
+def test_remote_uid_alias_collision_has_bounded_diagnostic(dav_world, caplog):
+    world = dav_world
+    owner = world.add_collection(uid="owner")
+    models.CollectionEntity.update(dav_href="reserved-alias").where(
+        models.CollectionEntity.id == owner.id
+    ).execute()
+    incoming = world.remote.store.load(owner.eb_col)
+    incoming.uid = "reserved-alias"
+    world.remote.queue_collection_page(incoming, stoken="conflict-page")
+    page = world.remote.collection_pages.popleft()
+    with caplog.at_level("WARNING", logger="silentsuite-bridge.cache"):
+        with pytest.raises(local_cache.DavCollectionPathError):
+            world.service()._apply_collection_list_page(world.remote.col_mgr, page)
+    messages = [record.getMessage() for record in caplog.records
+                if record.name == "silentsuite-bridge.cache"]
+    assert messages == ["Collection list rejected (dav_collection_path_conflict)"]
+    assert models.CollectionEntity.select().count() == 1
+    assert models.User.get_by_id(world.user.id).stoken is None
+
+
 @pytest.mark.parametrize("segment", ["unsafe:name", "unsafe name", "a" * 256])
 def test_collection_create_refuses_unsafe_segment(dav_world, segment):
     result = create(dav_world, path=segment)

@@ -53,7 +53,7 @@ Add-Type -TypeDefinition ($Program.Replace('NAMESPACE','PreviousBridge').Replace
     -OutputAssembly $OldImage -OutputType ConsoleApplication
 Add-Type -TypeDefinition ($Program.Replace('NAMESPACE','CandidateBridge').Replace('VERSION','new')) `
     -OutputAssembly $Candidate -OutputType ConsoleApplication
-Copy-Item $OldImage $ExePath
+if ($Mode -ne 'fresh-slow') { Copy-Item $OldImage $ExePath }
 Copy-Item $OldImage $OtherExe
 $OldHash = (Get-FileHash $OldImage -Algorithm SHA256).Hash
 $NewHash = (Get-FileHash $Candidate -Algorithm SHA256).Hash
@@ -64,9 +64,11 @@ $script:Injected = $false
 $script:RestoreFailures = 0
 
 try {
-    $Old = Start-Process -FilePath $ExePath -ArgumentList '--serve' -PassThru -WindowStyle Hidden
-    if (-not $ReadyEvent.WaitOne(10000)) { throw 'Previous process did not acknowledge startup' }
-    $ReadyEvent.Reset() | Out-Null
+    if ($Mode -ne 'fresh-slow') {
+        $Old = Start-Process -FilePath $ExePath -ArgumentList '--serve' -PassThru -WindowStyle Hidden
+        if (-not $ReadyEvent.WaitOne(10000)) { throw 'Previous process did not acknowledge startup' }
+        $ReadyEvent.Reset() | Out-Null
+    }
     $Other = Start-Process -FilePath $OtherExe -ArgumentList '--serve' -PassThru -WindowStyle Hidden
     if (-not $ReadyEvent.WaitOne(10000)) { throw 'Other process did not acknowledge startup' }
     $ReadyEvent.Reset() | Out-Null
@@ -114,6 +116,11 @@ try {
     }
     function Test-BridgeDashboardReady {
         param([int]$TimeoutSeconds=20)
+        if ($Mode -in @('fresh-slow','upgrade-slow')) {
+            if (-not $ReadyEvent.WaitOne(5000)) { throw 'Slow-start process did not acknowledge startup' }
+            $ReadyEvent.Reset() | Out-Null
+            return $false
+        }
         return $ReadyEvent.WaitOne(5000)
     }
     function Move-Item {
@@ -140,12 +147,22 @@ try {
             Microsoft.PowerShell.Management\Stop-Process @PSBoundParameters
         }
     }
+    function Remove-Item {
+        [CmdletBinding()]
+        param($Path,$LiteralPath,[switch]$Force)
+        $Source = if ($LiteralPath) { $LiteralPath } else { $Path }
+        if ($Mode -eq 'cleanup-failed' -and $Source -like '*.previous.exe') {
+            $script:Injected = $true
+            throw 'Injected backup cleanup failure'
+        }
+        Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters
+    }
 
     try { Invoke-SilentSuiteBridgeInstall } catch { $Failed = $true }
-    if ($Mode -in @('swap-failed','backup-failed','start-failed')) {
+    if ($Mode -in @('swap-failed','backup-failed','start-failed','upgrade-slow')) {
         if (-not $ReadyEvent.WaitOne(10000)) { throw 'Restored process did not acknowledge startup' }
     }
-    $Old.Refresh()
+    if ($Old) { $Old.Refresh() }
     $Other.Refresh()
     $InstalledHash = if (Test-Path $ExePath) { (Get-FileHash $ExePath -Algorithm SHA256).Hash } else { '' }
     $AtTarget = @(Get-Process | Where-Object {
@@ -155,7 +172,8 @@ try {
         $_.FullName -ne $ExePath -and (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $OldHash
     })
     [pscustomobject]@{
-        Failed=$Failed; OldExited=$Old.HasExited; OtherAlive=(-not $Other.HasExited)
+        Failed=$Failed; HadOld=($null -ne $Old)
+        OldExited=($null -ne $Old -and $Old.HasExited); OtherAlive=(-not $Other.HasExited)
         InstalledNew=($InstalledHash -eq $NewHash); InstalledOld=($InstalledHash -eq $OldHash)
         TargetRunning=($AtTarget.Count -gt 0); Injected=$script:Injected
         OldBackupRetained=($OldBackups.Count -gt 0); RestoreFailures=$script:RestoreFailures
