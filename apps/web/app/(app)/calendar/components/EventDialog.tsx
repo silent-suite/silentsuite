@@ -12,7 +12,7 @@ import { useManagedBirthdayCalendarIds } from '@/app/lib/birthday-calendar/sessi
 import { RecurrencePicker } from './RecurrencePicker'
 import { RecurrenceScopeDialog, type RecurrenceScope } from './RecurrenceScopeDialog'
 import type { CalendarEvent, DateFormat, VAlarm } from '@silentsuite/core'
-import { buildAlarmTrigger, eventOccurrenceWallClock, gapWallClock, occurrenceEnd, parseAlarmTriggerMinutes, validStartWallClock } from '@silentsuite/core'
+import { resolveTimeZone, buildAlarmTrigger, eventOccurrenceWallClock, gapWallClock, occurrenceEnd, parseAlarmTriggerMinutes, validStartWallClock } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate } from '@/app/lib/date'
@@ -37,7 +37,7 @@ function makeFormatTime(hour12: boolean, tz: string) {
       hour: 'numeric',
       minute: '2-digit',
       hour12,
-      timeZone: tz,
+      timeZone: resolveTimeZone(tz) ?? 'UTC',
     })
   }
 }
@@ -81,7 +81,7 @@ function formatTimeForInput(date: Date, tz: string | undefined): string {
     const m = String(date.getMinutes()).padStart(2, '0')
     return `${h}:${m}`
   }
-  return formatTimeForInputInZone(date, tz)
+  return formatTimeForInputInZone(date, resolveTimeZone(tz) ?? 'UTC')
 }
 
 function normalizeTimeFormat(timeFormat: string): EventTimeFormat {
@@ -259,7 +259,7 @@ function formatDateForInput(date: Date, tz: string | undefined): string {
     const d = String(date.getDate()).padStart(2, '0')
     return `${y}-${m}-${d}`
   }
-  return formatDateForInputInZone(date, tz)
+  return formatDateForInputInZone(date, resolveTimeZone(tz) ?? 'UTC')
 }
 
 function formatDateForDisplay(date: Date, tz: string | undefined): string {
@@ -270,11 +270,11 @@ function formatDateForDisplay(date: Date, tz: string | undefined): string {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
-      ...(tz ? { timeZone: tz } : {}),
+      ...(tz ? { timeZone: resolveTimeZone(tz) ?? 'UTC' } : {}),
     })
   }
 
-  const weekday = date.toLocaleDateString(undefined, { weekday: 'short', ...(tz ? { timeZone: tz } : {}) })
+  const weekday = date.toLocaleDateString(undefined, { weekday: 'short', ...(tz ? { timeZone: resolveTimeZone(tz) ?? 'UTC' } : {}) })
   const datePart = formatDate(date, pref)
   return `${weekday} ${datePart}`
 }
@@ -590,7 +590,7 @@ export function EventDialog({
       return new Date(y, m - 1, d, 0, 0, 0, 0)
     }
     const [h, min] = time.split(':').map(Number)
-    return instantFromWallClock(y, m, d, h, min, timezone)
+    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(timezone) ?? 'UTC')
   }, [allDay, timezone])
 
   const endFromInputs = useCallback((dateIso: string, time: string): Date => {
@@ -602,7 +602,7 @@ export function EventDialog({
       return new Date(y, m - 1, d + 1, 0, 0, 0, 0)
     }
     const [h, min] = time.split(':').map(Number)
-    return instantFromWallClock(y, m, d, h, min, timezone)
+    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(timezone) ?? 'UTC')
   }, [allDay, timezone])
 
   const buildStartDate = useCallback(
@@ -1265,14 +1265,16 @@ export function EventDialog({
                         aria-label="Event timezone"
                         className={`min-w-0 flex-1 ${compactFieldClass} ${disabledClass}`}
                       >
+                        {!allTimezones.includes(timezone) && <option value={timezone}>{timezone}</option>}
                         {allTimezones.map((tz) => (
                           <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
                         ))}
                       </select>
                     </div>
+                    {!resolveTimeZone(timezone) && <p className="text-xs text-[rgb(var(--muted))]">Time zone not recognised. Times are shown as a UTC approximation; the original zone is kept.</p>}
                     {timezone !== userTz && (
                       <span className="block pl-7 text-xs leading-relaxed text-[rgb(var(--muted))]">
-                        Event anchored in {shortTimezoneLabel(timezone, buildStartDate())}; your calendar shows {shortTimezoneLabel(userTz, buildStartDate())}.
+                        Event anchored in {shortTimezoneLabel(resolveTimeZone(timezone) ?? 'UTC', buildStartDate())}; your calendar shows {shortTimezoneLabel(userTz, buildStartDate())}.
                       </span>
                     )}
                   </div>

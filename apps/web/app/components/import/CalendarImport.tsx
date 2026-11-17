@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, ChevronDown, ExternalLink, Loader2 } from 'lucide-react'
-import { parseVCalendar, parseICalDateValue } from '@silentsuite/core'
+import { resolveTimeZone, parseVCalendar, parseICalDateValue } from '@silentsuite/core'
 import type { VEvent } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportListSelector from './ImportListSelector'
@@ -122,13 +122,15 @@ function formatEventPreviewDate(dtstart: string, tzid?: string): string {
   // Timed: convert via parseICalDateValue so TZID is honoured
   try {
     const { date } = parseICalDateValue(dtstart, tzid)
+    const zone = tzid ? resolveTimeZone(tzid) : undefined
     return date.toLocaleString(undefined, {
+      ...(tzid && !zone ? { timeZone: 'UTC' } : {}),
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-    })
+    }) + (tzid && !zone ? ' (time zone not recognised; UTC approximation)' : '')
   } catch {
     return dtstart
   }
@@ -313,7 +315,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
         let genericFailure = false
         const remaining: CalendarImportGroup[] = []
         for (const group of importGroups) {
-          if (remaining.length > 0) {
+          if (unconfirmedCalendar || uncertain || genericFailure) {
             remaining.push(group)
             unsaved += group.events.length
             continue
@@ -551,6 +553,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
                 {previewEvents.slice(0, 10).map(({ event, group }, i) => (
                   <div key={`${group.id}-${i}`} className="rounded-md px-3 py-2 text-sm hover:bg-[rgb(var(--surface))]">
                     <p className="text-[rgb(var(--foreground))]">{event.summary || 'Untitled Event'}</p>
+                    {event.importError && <p className="text-sm text-red-600 dark:text-red-400">{event.importError}</p>}
                     <p className="text-xs text-[rgb(var(--muted))]">
                       {formatEventPreviewDate(event.dtstart, event.dtstartParams?.['TZID'])}
                       {groups.length > 1 ? ` - ${group.fileName}` : ''}

@@ -1,13 +1,13 @@
 import type { DateRange } from '../models/types.js';
-import { isKnownTimeZone, wallTimeInZone, wallTimeToInstant } from './zoned-time.js';
+import { resolveTimeZone, wallTimeInZone, wallTimeToInstant } from './zoned-time.js';
 
 /**
  * Options for {@link expandRecurrence}.
  */
 export interface RecurrenceOptions {
   /** IANA zone or 'UTC' in which DTSTART's wall clock repeats. Omitted = host-local
-   *  (floating and all-day events, and legacy callers). A zone Intl does not know falls back
-   *  to host-local, matching how the parser reads such a TZID. */
+   *  (floating and all-day events, and legacy callers). Windows labels resolve through CLDR;
+   *  an unknown explicit label uses the parser's deterministic UTC approximation. */
   timeZone?: string;
   /** DTSTART's intended wall clock (`YYYYMMDDTHHMMSS`) in `timeZone`, for a DTSTART inside a DST
    *  gap whose wall time cannot be recovered from the instant. Used only with an IANA zone and only
@@ -116,7 +116,8 @@ function ianaZone(timeZone: string): Zone {
 function resolveZone(timeZone: string | undefined): Zone {
   if (timeZone === undefined) return HOST_ZONE;
   if (timeZone.toUpperCase() === 'UTC') return UTC_ZONE;
-  return isKnownTimeZone(timeZone) ? ianaZone(timeZone) : HOST_ZONE;
+  const resolved = resolveTimeZone(timeZone);
+  return resolved ? ianaZone(resolved) : UTC_ZONE;
 }
 
 /**

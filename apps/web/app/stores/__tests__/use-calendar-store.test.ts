@@ -503,6 +503,14 @@ describe('useCalendarStore.importEvents', () => {
     resetStore()
   })
 
+  it('imports valid siblings when one event cannot be serialized', async () => {
+    acknowledgeImports()
+    const valid = { title: 'Valid', startDate: new Date('2026-11-17T10:00Z'), endDate: new Date('2026-11-17T11:00Z') }
+    await expect(useCalendarStore.getState().importEvents([valid, { ...valid, startDate: new Date(NaN), timezone: 'Europe/Berlin' }, { ...valid, title: 'Last' }]))
+      .rejects.toMatchObject({ saved: 2, unsaved: [1], uncertain: false })
+    expect(useCalendarStore.getState().events.map(e => e.title)).toEqual(['Valid', 'Last'])
+  })
+
   it('preserves source TZID on imported events', async () => {
     acknowledgeImports()
     const { importEvents } = useCalendarStore.getState()

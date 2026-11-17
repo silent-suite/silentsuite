@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { NOTIFICATION_LOOKAHEAD_MS, NOTIFICATION_MAX_FUTURE_MS, MS_PER_MINUTE } from '@/app/lib/constants'
-import { expandEventRecurrence, occurrenceEnd, parseICalDurationSeconds } from '@silentsuite/core'
+import { resolveTimeZone, expandEventRecurrence, occurrenceEnd, parseICalDurationSeconds } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
 
 interface NotificationContextValue {
@@ -121,6 +121,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         if (alarm.action.toUpperCase() !== 'DISPLAY') continue
         const param = (key: string) => alarm.triggerParams?.[key]?.replace(/^"(.*)"$/, '$1').toUpperCase()
         const absolute = param('VALUE') === 'DATE-TIME'
+        if (!absolute && event.timezone && !resolveTimeZone(event.timezone)) continue
         const relatedEnd = param('RELATED') === 'END'
         const seconds = absolute ? null : parseICalDurationSeconds(alarm.trigger)
         if (!absolute && seconds === null) continue

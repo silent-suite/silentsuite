@@ -350,6 +350,18 @@ describe('EventDialog edit calendar selection', () => {
     expect(alarms[2].trigger).toBe('-PT5M')
   })
 
+  it('shows an unknown zone as an explicit UTC approximation without changing its label', async () => {
+    const event = makeEvent({ timezone: '(UTC+01:00) Custom, zone' })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+    expect(screen.getByText(/Time zone not recognised/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Edited' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalled())
+    const patch = mocks.updateEvent.mock.calls[0]![1]
+    expect(patch).not.toHaveProperty('timezone')
+    expect(patch).not.toHaveProperty('startDate')
+  })
+
   it('saves user-entered custom minute reminders as simple negative-duration VALARMs', async () => {
     renderWithIntl(<EventDialog mode="create" startDate={new Date('2026-06-01T09:00:00Z')} onClose={mocks.onClose} />)
 

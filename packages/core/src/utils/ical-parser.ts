@@ -1,3 +1,4 @@
+import { decodeTimeZone, encodeTimeZone, isKnownTimeZone, resolveTimeZone } from './zoned-time.js';
 /**
  * Lightweight iCalendar (RFC 5545) parser/generator.
  * Supports VEVENT components with common properties.
@@ -5,6 +6,10 @@
 
 export interface VEvent {
   uid: string;
+  /** File-import context; supplied definitions travel with each stored item. */
+  vtimezones?: string[][];
+  overrides?: string[][];
+  importError?: string;
   dtstart: string;
   dtend?: string;
   duration?: string;
@@ -383,7 +388,7 @@ export function generateVEvent(event: VEvent): string {
   // DTSTART
   if (event.dtstartParams && Object.keys(event.dtstartParams).length > 0) {
     const paramStr = Object.entries(event.dtstartParams)
-      .map(([k, v]) => `${k}=${v}`)
+      .map(([k, v]) => `${k}=${k.toUpperCase() === 'TZID' ? encodeTimeZone(decodeTimeZone(v)) : v}`)
       .join(';');
     lines.push(foldLine(`DTSTART;${paramStr}:${event.dtstart}`));
   } else {
@@ -394,7 +399,7 @@ export function generateVEvent(event: VEvent): string {
   if (event.dtend) {
     if (event.dtendParams && Object.keys(event.dtendParams).length > 0) {
       const paramStr = Object.entries(event.dtendParams)
-        .map(([k, v]) => `${k}=${v}`)
+        .map(([k, v]) => `${k}=${k.toUpperCase() === 'TZID' ? encodeTimeZone(decodeTimeZone(v)) : v}`)
         .join(';');
       lines.push(foldLine(`DTEND;${paramStr}:${event.dtend}`));
     } else {
@@ -410,7 +415,7 @@ export function generateVEvent(event: VEvent): string {
 
   if (event.exdate && event.exdate.length > 0) {
     if (event.exdateParams?.TZID) {
-      lines.push(foldLine(`EXDATE;TZID=${event.exdateParams.TZID}:${event.exdate.join(',')}`));
+      lines.push(foldLine(`EXDATE;TZID=${encodeTimeZone(decodeTimeZone(event.exdateParams.TZID))}:${event.exdate.join(',')}`));
     } else {
       lines.push(foldLine(`EXDATE:${event.exdate.join(',')}`));
     }
@@ -925,6 +930,7 @@ export function parseVCalendar(ical: string): VEvent[] {
   const unfolded = unfoldLines(ical);
   const lines = unfolded.split(/\r?\n/);
   const events: VEvent[] = [];
+  const vtimezones = splitCalendarItem(ical)?.vtimezones ?? [];
 
   let inEvent = false;
   let eventLines: string[] = [];
@@ -935,7 +941,13 @@ export function parseVCalendar(ical: string): VEvent[] {
       eventLines = ['BEGIN:VEVENT'];
     } else if (line.trim() === 'END:VEVENT') {
       eventLines.push('END:VEVENT');
-      events.push(parseVEvent(eventLines.join('\r\n')));
+      try {
+        const event = parseVEvent(eventLines.map(line => mapTimeZoneParameters(line, zone => zone)).join('\r\n'));
+        if (vtimezones.length) event.vtimezones = vtimezones;
+        events.push(normalizeImportTimeZones(event));
+      } catch {
+        events.push({ uid: topLevelProperty(eventLines, 'UID')?.value ?? '', dtstart: topLevelProperty(eventLines, 'DTSTART')?.value ?? '', summary: topLevelProperty(eventLines, 'SUMMARY')?.value, importError: 'This event has an invalid or undefined time zone, or invalid calendar data.' });
+      }
       inEvent = false;
       eventLines = [];
     } else if (inEvent) {
@@ -961,4 +973,43 @@ export function generateVCalendar(events: VEvent[]): string {
 
   lines.push('END:VCALENDAR');
   return lines.join('\r\n');
+}
+
+/** Rewrite only TZID parameters; every other parameter/value retains its spelling. */
+export function mapTimeZoneParameters(line: string, map: (zone: string) => string): string {
+  const colon = findPropertyColon(line);
+  const left = line.slice(0, colon);
+  const parts = splitParams(left);
+  return parts.map((part, index) => {
+    const eq = part.indexOf('=');
+    if (index === 0 || eq < 0 || part.slice(0, eq).toUpperCase() !== 'TZID') return part;
+    const zone = decodeTimeZone(part.slice(eq + 1));
+    encodeTimeZone(zone); // Reject invalid identifiers before invoking the mapping.
+    return `${part.slice(0, eq)}=${encodeTimeZone(map(zone))}`;
+  }).join(';') + line.slice(colon);
+}
+
+/** File admission only. Ordinary saves retain existing zone labels, even unknown ones. */
+export function normalizeImportTimeZones(event: VEvent): VEvent {
+  if (event.importError) return event;
+  const definitions = (event.vtimezones ?? []).filter(block => generateRetainedComponent(block, 'VTIMEZONE') !== null);
+  const names = new Set(definitions.map(block => topLevelProperty(block, 'TZID')?.value));
+  const used = new Set<string>();
+  const rewrite = (line: string) => mapTimeZoneParameters(line, zone => {
+    let target = zone;
+    if (!names.has(zone) && !isKnownTimeZone(zone)) {
+      const resolved = resolveTimeZone(zone);
+      if (!resolved) throw new Error('Time zone has no definition');
+      target = resolved;
+    }
+    used.add(target);
+    return target;
+  });
+  const normalized = parseVEvent(unfoldLines(generateVEvent(event)).split('\r\n').map(rewrite).join('\r\n'));
+  const overrides = event.overrides?.map(block => block.map(rewrite));
+  return {
+    ...normalized,
+    ...(overrides?.length ? { overrides } : {}),
+    ...(definitions.length ? { vtimezones: definitions.filter(block => used.has(topLevelProperty(block, 'TZID')?.value ?? '')) } : {}),
+  };
 }

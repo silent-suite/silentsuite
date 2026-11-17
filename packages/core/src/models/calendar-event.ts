@@ -1,6 +1,6 @@
 import { parseVEvent, generateVEvent, partitionRetainedRDates, splitCalendarItem, topLevelProperty, generateRetainedComponent } from '../utils/ical-parser.js';
 import type { VEvent, VAlarm } from '../utils/ical-parser.js';
-import { isKnownTimeZone, wallTimeInZone, wallTimeToInstant } from '../utils/zoned-time.js';
+import { resolveTimeZone, decodeTimeZone, encodeTimeZone, isKnownTimeZone, wallTimeInZone, wallTimeToInstant } from '../utils/zoned-time.js';
 import { expandRecurrence, occurrenceWallClock, occurrencesBefore } from '../utils/recurrence.js';
 import type { DateRange } from './types.js';
 import { parseICalDurationSeconds } from '../utils/ical-duration.js';
@@ -22,7 +22,7 @@ export interface CalendarEvent {
    *  Optional so existing callers keep compiling; deserialize paths default to []. */
   categories?: string[];
   calendarId?: string;
-  /** IANA timezone for this event (e.g. 'America/New_York'). When absent,
+  /** Source timezone label (IANA, Windows or custom). Computation resolves it separately. When absent,
    *  falls back to user default timezone, then local system timezone. */
   timezone?: string;
   /** True only when a timed DTSTART was read as RFC 5545 floating time (no Z, no TZID).
@@ -73,7 +73,7 @@ function formatICalDate(date: Date, allDay: boolean): string {
  */
 function formatICalDateTimeLocal(date: Date, tzid: string): string {
   const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tzid,
+    timeZone: resolveTimeZone(tzid) ?? 'UTC',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: false,
@@ -136,9 +136,9 @@ export function parseICalDateValue(value: string, tzid?: string): { date: Date; 
   // the same conversion recurrence expansion uses, so parsed EXDATEs match expanded
   // occurrences.
   if (tzid) {
-    const instant = wallTimeToInstant(tzid, Date.UTC(year, month, day, hour, minute, second));
+    const instant = wallTimeToInstant(resolveTimeZone(tzid) ?? 'UTC', Date.UTC(year, month, day, hour, minute, second));
     if (instant !== null) return { date: new Date(instant), allDay: false };
-    // Invalid TZID — fall through to local time interpretation
+    // Unknown labels use an explicit UTC approximation, never the host zone.
   }
 
   return { date: new Date(year, month, day, hour, minute, second), allDay: false };
@@ -175,7 +175,9 @@ function civilToWallClock(civil: number): string {
  * instant (it lies in a DST gap); otherwise undefined.
  */
 export function gapWallClock(timeZone: string | undefined, value: string): string | undefined {
-  if (!timeZone || !isKnownTimeZone(timeZone)) return undefined;
+  if (!timeZone) return undefined;
+  timeZone = resolveTimeZone(timeZone);
+  if (!timeZone) return undefined;
   const clean = value.replace(/[^0-9TZ]/g, '');
   if (clean.length < 15 || clean.endsWith('Z')) return undefined;
   const wall = clean.slice(0, 15);
@@ -195,7 +197,7 @@ export function validStartWallClock(
   event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'startDate' | 'startWallClock'>,
 ): string | undefined {
   const wall = event.startWallClock;
-  const timeZone = event.timezone;
+  const timeZone = event.timezone ? resolveTimeZone(event.timezone) : undefined;
   if (!wall || event.allDay || !timeZone || !isKnownTimeZone(timeZone)) return undefined;
   const civil = wallClockToCivil(wall);
   if (civil === null) return undefined;
@@ -208,7 +210,7 @@ export function validStartWallClock(
  * timed recurring event in a known zone, or `instance` is not exactly one generated occurrence.
  */
 export function eventOccurrenceWallClock(master: CalendarEvent, instance: Date): string | undefined {
-  const timeZone = master.timezone;
+  const timeZone = master.timezone ? resolveTimeZone(master.timezone) : undefined;
   if (!master.recurrenceRule || master.allDay || !timeZone || !isKnownTimeZone(timeZone)) return undefined;
   return occurrenceWallClock(master.recurrenceRule, master.startDate, instance, {
     timeZone,
@@ -225,7 +227,7 @@ export function recurrenceTimeZone(
   event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'floating'>,
 ): string | undefined {
   if (event.allDay) return undefined;
-  if (event.timezone) return event.timezone;
+  if (event.timezone) return resolveTimeZone(event.timezone) ?? 'UTC';
   if (event.floating === true) return undefined;
   return 'UTC';
 }
@@ -382,7 +384,7 @@ function readVEvent(veventStr: string): CalendarEvent {
   const isAllDay =
     vevent.dtstartParams?.['VALUE'] === 'DATE' || vevent.dtstart.length === 8;
 
-  const startTzid = vevent.dtstartParams?.['TZID'];
+  const startTzid = vevent.dtstartParams?.['TZID'] ? decodeTimeZone(vevent.dtstartParams['TZID']) : undefined;
   const endTzid = vevent.dtendParams?.['TZID'] ?? startTzid;
   const startParsed = parseICalDateValue(vevent.dtstart, startTzid);
   const startIsFloating = !isAllDay && isFloatingICalDateTime(vevent.dtstart, vevent.dtstartParams);
@@ -617,7 +619,7 @@ function overrideInForm(block: string[], from: StartForm, event: CalendarEvent, 
     : to === 'floating'
       ? formatICalDateTimeFloating(date)
       : formatICalDateTime(date);
-  if (to === 'tzid') params.push(`;TZID=${event.timezone}`);
+  if (to === 'tzid') params.push(`;TZID=${encodeTimeZone(event.timezone!)}`);
   const next = [...block];
   next[index] = `RECURRENCE-ID${params.join('')}:${value}`;
   return next;
