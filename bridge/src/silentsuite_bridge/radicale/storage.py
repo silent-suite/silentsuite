@@ -36,6 +36,8 @@ from ..local_cache import (
     is_safe_dav_href,
     opaque_dav_href,
     record_dav_change,
+    resolve_dav_collection_uid,
+    dav_collection_path,
     retire_settled_tombstone,
 )
 from ..local_cache.models import (
@@ -665,7 +667,7 @@ class Collection(BaseCollection):
         self.etesync = self._storage.etesync
         if len(attributes) == 2:
             self.is_fake = False
-            self.uid = attributes[-1]
+            self.uid = resolve_dav_collection_uid(attributes[0], attributes[-1])
             self.collection = self.etesync.get(self.uid)
             col_type = self.collection.col_type
 
@@ -1268,7 +1270,7 @@ class Storage(BaseStorage):
                 if journal.col_type not in config.COL_TYPES:
                     continue
                 yield Collection(
-                    self, posixpath.join(path, journal.uid)
+                    self, posixpath.join(path, dav_collection_path(attributes[0], journal.uid))
                 )
         elif len(attributes) == 2:
             for href in collection._list():
@@ -1299,6 +1301,8 @@ class Storage(BaseStorage):
         if len(attributes) < 2:
             # Creating the user principal itself — nothing to do
             return Collection(self, href)
+        if len(attributes) != 2 or not is_safe_dav_href(attributes[1]):
+            raise ValueError("invalid DAV collection path")
 
         props = props or {}
         tag = props.get("tag", "")
@@ -1337,14 +1341,27 @@ class Storage(BaseStorage):
         # Create and cache locally. The background generation queued by the
         # write lock performs the potentially unbounded upstream upload.
         col_mgr = self.etesync.etebase.get_collection_manager()
-        col = col_mgr.create(col_type, meta, b"")
-
-        # Cache it locally
         from ..local_cache import db, models
-        with db.atomic_connection():
+        with db.database_proxy.atomic("IMMEDIATE"):
+            existing = models.CollectionEntity.get_or_none(
+                (models.CollectionEntity.local_user == self.etesync.user)
+                & ~models.CollectionEntity.deleted
+                & ((models.CollectionEntity.uid == attributes[1])
+                   | (models.CollectionEntity.dav_href == attributes[1]))
+            )
+            if existing is not None and items is None:
+                raise ValueError("DAV collection path already exists")
+            col = col_mgr.create(col_type, meta, b"")
+            if models.CollectionEntity.select().where(
+                (models.CollectionEntity.local_user == self.etesync.user)
+                & ((models.CollectionEntity.uid == col.uid)
+                   | (~models.CollectionEntity.deleted & (models.CollectionEntity.dav_href == col.uid)))
+            ).exists():
+                raise ValueError("DAV collection identity already exists")
             cache_col = models.CollectionEntity(
                 local_user=self.etesync.user,
                 uid=col.uid,
+                dav_href=attributes[1] if existing is None and col.uid != attributes[1] else None,
             )
             cache_col.eb_col = col_mgr.cache_save(col)
             cache_col.stoken = col.stoken or ""

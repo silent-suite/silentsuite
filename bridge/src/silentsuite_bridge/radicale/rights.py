@@ -7,11 +7,13 @@ clients only see accepted collections.
 """
 
 import logging
+import peewee as pw
 
 from radicale import pathutils
 from radicale.rights.owner_only import Rights as OwnerOnlyRights
 
 from ..privacy_logging import bounded_exception_class
+from ..local_cache import DavCollectionPathError, resolve_dav_collection_uid
 from .etesync_cache import etesync_for_user
 
 logger = logging.getLogger("silentsuite-bridge.rights")
@@ -36,7 +38,11 @@ class Rights(OwnerOnlyRights):
         collection_uid = parts[1]
         try:
             with etesync_for_user(user, exclusive=False) as (etesync, _):
-                collection = etesync.get(collection_uid)
+                collection = etesync.get(resolve_dav_collection_uid(user, collection_uid))
+        except DavCollectionPathError:
+            return permissions.replace("w", "")
+        except pw.OperationalError:
+            raise
         except Exception as exc:
             # Missing collections include legitimate creates. Preserve the base
             # owner-only answer and let storage/server code decide.

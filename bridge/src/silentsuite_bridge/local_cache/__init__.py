@@ -35,6 +35,42 @@ class DavUnresolvedItemsError(RuntimeError):
     """A sync applied safe changes but retained unresolved DAV conflicts."""
 
 
+class DavCollectionPathError(ValueError):
+    """A DAV collection path has more than one live owner."""
+
+
+def resolve_dav_collection_uid(username, segment):
+    if getattr(db.database_proxy, "obj", None) is None:
+        return segment
+    with db.atomic_connection():
+        matches = list(
+            models.CollectionEntity.select(models.CollectionEntity.uid)
+            .join(models.User)
+            .where(
+                (models.User.username == username)
+                & ~models.CollectionEntity.deleted
+                & ((models.CollectionEntity.uid == segment)
+                   | (models.CollectionEntity.dav_href == segment))
+            ).limit(2)
+        )
+    if len(matches) > 1:
+        raise DavCollectionPathError("ambiguous DAV collection path")
+    return matches[0].uid if matches else segment
+
+
+def dav_collection_path(username, uid):
+    with db.atomic_connection():
+        row = (
+            models.CollectionEntity.select(models.CollectionEntity.dav_href)
+            .join(models.User)
+            .where((models.User.username == username)
+                   & (models.CollectionEntity.uid == uid)
+                   & ~models.CollectionEntity.deleted)
+            .first()
+        )
+    return row.dav_href if row is not None and row.dav_href else uid
+
+
 def _bounded_integrity(diagnostic_code):
     """Translate one constrained-write failure into a fixed product code."""
 
@@ -169,6 +205,13 @@ def _migrate_cache_schema(database):
 
     collection_columns = {column.name for column in database.get_columns("collectionentity")}
     item_columns = {column.name for column in database.get_columns("itementity")}
+    if "dav_href" not in collection_columns:
+        database.execute_sql("ALTER TABLE collectionentity ADD COLUMN dav_href VARCHAR(255)")
+    database.execute_sql("UPDATE collectionentity SET dav_href=NULL WHERE deleted=1 AND dav_href IS NOT NULL")
+    database.execute_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS collectionentity_local_user_dav_href "
+        "ON collectionentity (local_user_id, dav_href)"
+    )
     if "dav_revision" not in collection_columns:
         database.execute_sql(
             "ALTER TABLE collectionentity "
@@ -1039,6 +1082,13 @@ class Etebase:
         with self._mutation_session_guard():
             with db.database_proxy.atomic("IMMEDIATE"):
                 for col in col_list.data:
+                    if not col.deleted and models.CollectionEntity.select().where(
+                        (models.CollectionEntity.local_user == self.user)
+                        & ~models.CollectionEntity.deleted
+                        & (models.CollectionEntity.dav_href == col.uid)
+                        & (models.CollectionEntity.uid != col.uid)
+                    ).exists():
+                        raise DavCollectionPathError("ambiguous DAV collection path")
                     collection = models.CollectionEntity.get_or_none(
                         local_user=self.user, uid=col.uid
                     )
@@ -1069,6 +1119,8 @@ class Etebase:
                     collection.eb_col = col_mgr.cache_save(col)
                     collection.stoken = col.stoken
                     collection.deleted = col.deleted
+                    if collection.deleted:
+                        collection.dav_href = None
                     collection.save(
                         only=[
                             models.CollectionEntity.local_user,
@@ -1076,6 +1128,7 @@ class Etebase:
                             models.CollectionEntity.eb_col,
                             models.CollectionEntity.stoken,
                             models.CollectionEntity.deleted,
+                            models.CollectionEntity.dav_href,
                         ]
                     )
                     if previous_state_hash is not None:
@@ -1100,7 +1153,8 @@ class Etebase:
                             collection.save(only=[models.CollectionEntity.dirty])
                             continue
                         collection.deleted = True
-                        collection.save(only=[models.CollectionEntity.deleted])
+                        collection.dav_href = None
+                        collection.save(only=[models.CollectionEntity.deleted, models.CollectionEntity.dav_href])
                         models.DavUnresolvedItem.delete().where(
                             models.DavUnresolvedItem.collection == collection
                         ).execute()
@@ -2188,10 +2242,12 @@ class Collection:
             current_cache = models.CollectionEntity.get_by_id(self.cache_col.id)
             current_cache.deleted = True
             current_cache.dirty = True
+            current_cache.dav_href = None
             current_cache.save(
                 only=[
                     models.CollectionEntity.deleted,
                     models.CollectionEntity.dirty,
+                    models.CollectionEntity.dav_href,
                 ]
             )
             self.cache_col = current_cache
