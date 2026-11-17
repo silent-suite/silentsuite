@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- Illustrative calendar for the picker, not real dates or event data. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="8dp"
+    android:background="@drawable/widget_month_background"
+    android:importantForAccessibility="noHideDescendants"
+    tools:ignore="HardcodedText">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:text="@string/widget_month_name"
+            android:textColor="@color/semantic_on_surface"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:autoSizeTextType="uniform"
+            android:autoSizeMinTextSize="14sp"
+            android:autoSizeMaxTextSize="18sp"
+            android:autoSizeStepGranularity="1sp"
+            android:maxLines="1"
+            android:ellipsize="end" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:minWidth="40dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:gravity="center"
+            android:background="@drawable/widget_month_day_background"
+            android:text="@string/widget_month_today"
+            android:contentDescription="@string/widget_month_return_today"
+            android:textColor="@color/semantic_on_primary_container"
+            android:textSize="14sp"
+            android:maxLines="1"
+            android:visibility="gone" />
+        <ImageButton
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="10dp"
+            android:scaleType="fitCenter"
+            android:background="@drawable/widget_month_control_background"
+            android:src="@drawable/widget_month_previous"
+            android:contentDescription="@string/widget_month_previous" />
+        <ImageButton
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="10dp"
+            android:scaleType="fitCenter"
+            android:background="@drawable/widget_month_control_background"
+            android:src="@drawable/widget_month_next"
+            android:contentDescription="@string/widget_month_next" />
+        <ImageButton
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="10dp"
+            android:scaleType="fitCenter"
+            android:background="@drawable/widget_month_control_background"
+            android:src="@drawable/widget_month_add"
+            android:contentDescription="@string/widget_month_add_event" />
+    </LinearLayout>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="24dp" android:orientation="horizontal">
+        <TextView style="@style/widget_month_preview_weekday" android:text="@string/widget_month_preview_sun" />
+        <TextView style="@style/widget_month_preview_weekday" android:text="@string/widget_month_preview_mon" />
+        <TextView style="@style/widget_month_preview_weekday" android:text="@string/widget_month_preview_tue" />
+        <TextView style="@style/widget_month_preview_weekday" android:text="@string/widget_month_preview_wed" />
+        <TextView style="@style/widget_month_preview_weekday" android:text="@string/widget_month_preview_thu" />
+        <TextView style="@style/widget_month_preview_weekday" android:text="@string/widget_month_preview_fri" />
+        <TextView style="@style/widget_month_preview_weekday" android:text="@string/widget_month_preview_sat" />
+    </LinearLayout>
+    <LinearLayout style="@style/widget_month_preview_week">
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="1" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="2" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="visible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="3" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="4" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="5" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="6" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="7" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout style="@style/widget_month_preview_week">
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="8" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="9" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="visible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="10" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="11" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="12" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="13" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="14" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout style="@style/widget_month_preview_week">
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="15" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="16" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="visible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="17" android:background="@drawable/widget_month_day_background" android:textColor="@color/semantic_on_primary_container" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="18" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="19" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="20" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="21" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout style="@style/widget_month_preview_week">
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="22" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="23" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="visible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="24" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="25" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="26" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="27" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="28" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout style="@style/widget_month_preview_week">
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="29" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="30" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="1" android:alpha="0.45" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="2" android:alpha="0.45" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="3" android:alpha="0.45" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="4" android:alpha="0.45" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+        <LinearLayout style="@style/widget_month_preview_cell">
+            <TextView style="@style/widget_month_preview_number" android:text="5" android:alpha="0.45" />
+            <ImageView style="@style/widget_month_preview_marker" android:visibility="invisible" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

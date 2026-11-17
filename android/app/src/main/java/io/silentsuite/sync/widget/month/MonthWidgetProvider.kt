@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.CancellationSignal
 import android.provider.CalendarContract
+import android.text.format.DateFormat
 import android.view.View
 import android.widget.RemoteViews
 import io.silentsuite.sync.R
@@ -36,9 +37,9 @@ class MonthWidgetProvider : AppWidgetProvider() {
                 if (target.isNotEmpty() && parseMonth(target) == null) return
                 // Empty means follow today across future month boundaries; other months stay pinned.
                 manager.updateAppWidgetOptions(id, Bundle().apply { putString(OPTION_MONTH, target) })
-                refreshAsync(context)
+                // Updating options delivers onAppWidgetOptionsChanged, which refreshes once.
             }
-            ACTION_REFRESH, Intent.ACTION_DATE_CHANGED, Intent.ACTION_TIME_CHANGED,
+            ACTION_REFRESH, Intent.ACTION_TIME_CHANGED,
             Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_LOCALE_CHANGED,
             Intent.ACTION_MY_PACKAGE_REPLACED -> refreshAsync(context)
             else -> super.onReceive(context, intent)
@@ -70,6 +71,12 @@ class MonthWidgetProvider : AppWidgetProvider() {
         private const val EXTRA_MONTH = "month"
         private const val OPTION_MONTH = "io.silentsuite.sync.widget.month.displayed"
         internal val executor = Executors.newSingleThreadExecutor()
+
+        /** Refresh entry point for the shared permission/settings flow after access changes. */
+        @JvmStatic
+        fun requestUpdate(context: Context) {
+            context.sendBroadcast(Intent(context, MonthWidgetProvider::class.java).setAction(ACTION_REFRESH))
+        }
 
         internal fun ids(context: Context): IntArray = AppWidgetManager.getInstance(context)
             .getAppWidgetIds(ComponentName(context, MonthWidgetProvider::class.java))
@@ -103,17 +110,20 @@ class MonthWidgetProvider : AppWidgetProvider() {
                 } else MonthEventReader.Result(MonthEventReader.State.UNAVAILABLE)
                 val views = RemoteViews(context.packageName, R.layout.widget_month)
                 views.setTextViewText(R.id.widget_month_title,
-                    month.format(DateTimeFormatter.ofPattern("LLLL yyyy", locale)))
+                    month.format(DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "LLLLyyyy"), locale)))
                 views.setOnClickPendingIntent(R.id.widget_month_previous,
                     monthIntent(context, id, month.minusMonths(1).toString(), todayMonth))
                 views.setOnClickPendingIntent(R.id.widget_month_next,
                     monthIntent(context, id, month.plusMonths(1).toString(), todayMonth))
-                views.setViewVisibility(R.id.widget_month_today, if (month == todayMonth) View.INVISIBLE else View.VISIBLE)
+                views.setViewVisibility(R.id.widget_month_today, if (month == todayMonth) View.GONE else View.VISIBLE)
                 views.setOnClickPendingIntent(R.id.widget_month_today, monthIntent(context, id, "", todayMonth))
                 views.setOnClickPendingIntent(R.id.widget_month_add, calendarIntent(context, null))
                 if (result.state != MonthEventReader.State.READY) {
                     views.setViewVisibility(R.id.widget_month_content, View.GONE)
-                    views.setViewVisibility(R.id.widget_month_navigation, View.GONE)
+                    views.setTextViewText(R.id.widget_month_title, context.getString(R.string.widget_month_name))
+                    views.setViewVisibility(R.id.widget_month_today, View.GONE)
+                    views.setViewVisibility(R.id.widget_month_previous, View.GONE)
+                    views.setViewVisibility(R.id.widget_month_next, View.GONE)
                     views.setViewVisibility(R.id.widget_month_add, View.GONE)
                     views.setViewVisibility(R.id.widget_month_message, View.VISIBLE)
                     val message = when (result.state) {
@@ -126,10 +136,19 @@ class MonthWidgetProvider : AppWidgetProvider() {
                 } else {
                     // Hosts may reapply a full RemoteViews update onto the old layout.
                     views.setViewVisibility(R.id.widget_month_content, View.VISIBLE)
-                    views.setViewVisibility(R.id.widget_month_navigation, View.VISIBLE)
+                    views.setViewVisibility(R.id.widget_month_previous, View.VISIBLE)
+                    views.setViewVisibility(R.id.widget_month_next, View.VISIBLE)
                     views.setViewVisibility(R.id.widget_month_add, View.VISIBLE)
                     views.setViewVisibility(R.id.widget_month_message, View.GONE)
                     views.setOnClickPendingIntent(R.id.widget_month_root, null)
+                    // Use the smaller host bounds so the box fits in either orientation.
+                    // The 88dp budget is 16dp outer padding + 48dp header + 24dp weekdays;
+                    // each day reserves another 6dp for the marker and its gap.
+                    val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 280)
+                    val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 300)
+                    val numberWidth = minOf(32, (width - 16) / 7).coerceAtLeast(1)
+                    val numberHeight = minOf(32, (height - 88) / (days.size / 7) - 6).coerceAtLeast(1)
+                    val density = context.resources.displayMetrics.density
                     val numbers = NumberFormat.getIntegerInstance(locale)
                     val dateFormat = DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL).withLocale(locale)
                     views.removeAllViews(R.id.widget_month_weekdays)
@@ -151,6 +170,8 @@ class MonthWidgetProvider : AppWidgetProvider() {
                             }
                             val cell = RemoteViews(context.packageName, layout)
                             cell.setTextViewText(R.id.widget_month_number, numbers.format(day.date.dayOfMonth))
+                            cell.setInt(R.id.widget_month_number, "setWidth", (numberWidth * density).toInt())
+                            cell.setInt(R.id.widget_month_number, "setHeight", (numberHeight * density).toInt())
                             val marked = day.date in result.markedDays
                             cell.setViewVisibility(R.id.widget_month_marker, if (marked) View.VISIBLE else View.INVISIBLE)
                             val description = buildList {

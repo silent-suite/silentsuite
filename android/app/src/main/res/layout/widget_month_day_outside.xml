@@ -10,13 +10,16 @@
     android:background="@drawable/widget_month_control_background">
     <TextView
         android:id="@+id/widget_month_number"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:width="32dp"
+        android:height="32dp"
         android:gravity="center"
         android:includeFontPadding="false"
         android:textSize="14sp"
         android:maxLines="1"
-        android:textColor="@color/semantic_on_surface_variant"
+        android:textColor="@color/semantic_on_surface"
+        android:alpha="0.45"
         android:importantForAccessibility="no" />
     <ImageView
         android:id="@+id/widget_month_marker"
@@ -24,5 +27,6 @@
         android:layout_height="4dp"
         android:layout_marginTop="2dp"
         android:src="@drawable/widget_month_marker"
+        android:alpha="0.45"
         android:importantForAccessibility="no" />
 </LinearLayout>

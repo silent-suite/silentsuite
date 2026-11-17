@@ -10,8 +10,10 @@
     android:background="@drawable/widget_month_control_background">
     <TextView
         android:id="@+id/widget_month_number"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:width="32dp"
+        android:height="32dp"
         android:gravity="center"
         android:includeFontPadding="false"
         android:textSize="14sp"
