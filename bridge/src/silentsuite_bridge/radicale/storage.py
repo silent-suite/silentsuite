@@ -16,11 +16,11 @@ import re
 import secrets
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 import peewee as pw
 import vobject
-from radicale import pathutils
+from radicale import pathutils, xmlutils
 from radicale.item import Item
 from radicale.storage import (
     BaseCollection,
@@ -1137,11 +1137,16 @@ class Collection(BaseCollection):
             return {}
 
         if key is None:
-            ret = {}
+            ret = {"tag": self.tag}
             meta = self.collection.meta
-            for k in meta.keys():
-                ret[k] = self.meta_mappings.map_get(meta, k)[1]
-            ret["tag"] = self.tag
+            for prop in set(self.meta_mappings._mappings) | set(meta):
+                try:
+                    xmlutils.make_clark(prop)
+                except ValueError:
+                    continue
+                value = self.get_meta(prop)
+                if value is not None:
+                    ret[prop] = value
             return ret
         elif key == "tag":
             return self.tag
@@ -1208,6 +1213,18 @@ class Storage(BaseStorage):
         """Verify storage is accessible."""
         return True
 
+    @contextmanager
+    def write_scope(self, method, path):
+        """Only depth-three item requests need check-through-write atomicity."""
+        previous = getattr(self._request_context, "collection_write", False)
+        self._request_context.collection_write = (
+            method in {"PUT", "DELETE"} and len(_get_attributes_from_path(path)) <= 2
+        )
+        try:
+            yield
+        finally:
+            self._request_context.collection_write = previous
+
     def _path_belongs_to_user(self, path):
         attributes = _get_attributes_from_path(path)
         return not self.user or not attributes or attributes[0] == self.user
@@ -1262,6 +1279,8 @@ class Storage(BaseStorage):
                 return
 
             collection = Collection(self, path)
+        except (pw.OperationalError, DavUidIndexPending):
+            raise
         except Exception:
             return
 
@@ -1430,7 +1449,17 @@ class Storage(BaseStorage):
             try:
                 if mode == "w":
                     etesync.prepare_dav_uid_index()
-                yield
+                database = db.database_proxy.obj
+                owns_connection = database.is_closed()
+                connection = database.connection_context() if owns_connection else nullcontext()
+                with connection:
+                    transaction = (
+                        database.atomic("IMMEDIATE")
+                        if mode == "w" and not getattr(self._request_context, "collection_write", False)
+                        else nullcontext()
+                    )
+                    with transaction:
+                        yield
             finally:
                 self.etesync = None
                 self.user = None

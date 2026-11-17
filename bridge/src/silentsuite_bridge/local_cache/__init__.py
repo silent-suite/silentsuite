@@ -151,6 +151,7 @@ def _init_cache_database(db_path=None):
     with _private_umask():
         database = SqliteExtDatabase(
             path,
+            timeout=5.0,
             pragmas={
                 "journal_mode": "wal",
                 "foreign_keys": 1,
@@ -504,11 +505,26 @@ def opaque_dav_href(identity, suffix):
 _dav_href_allocation_lock = threading.RLock()
 
 
+@contextmanager
+def _dav_href_writer_lock(cache_item):
+    database = db.database_proxy.obj
+    borrowed = database.in_transaction()
+    with database.atomic("IMMEDIATE"):
+        if borrowed:
+            # A nested atomic block is a savepoint, not an IMMEDIATE upgrade.
+            database.execute_sql(
+                "UPDATE collectionentity SET dav_revision=dav_revision WHERE id=?",
+                (cache_item.collection_id,),
+            )
+        with _dav_href_allocation_lock:
+            yield
+
+
 def ensure_dav_href(
     cache_item, preferred_href, suffix, *, strict=False, replace_existing=False
 ):
     """Return one collection-unique href, including retained tombstones."""
-    with _dav_href_allocation_lock:
+    with _dav_href_writer_lock(cache_item):
         mapper = models.HrefMapper.get_or_none(
             models.HrefMapper.content == cache_item
         )

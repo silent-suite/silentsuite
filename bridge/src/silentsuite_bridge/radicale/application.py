@@ -2,12 +2,38 @@
 
 import logging
 import re
+import sqlite3
+
+import peewee as pw
 
 from radicale.app import Application as RadicaleApplication
+from radicale import httputils
 
 from ..privacy_logging import bounded_exception_class, bounded_identifier
+from ..local_cache import DavUidIndexPending
 
 _MAX_DIAGNOSTIC_LENGTH = 320
+
+
+def _sqlite_busy(error):
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        code = getattr(error, "sqlite_errorcode", None)
+        if isinstance(code, int) and code & 255 in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+            return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
+def _busy_response(environ):
+    body = b"Local cache is busy; retry the request.\n"
+    return (
+        "503 Service Unavailable",
+        [("Content-Type", "text/plain; charset=utf-8"),
+         ("Content-Length", str(len(body))), ("Retry-After", "1")],
+        [] if environ.get("REQUEST_METHOD") == "HEAD" else [body],
+    )
 
 
 def _safe_exception_diagnostic(exc_info):
@@ -365,9 +391,27 @@ class Application(RadicaleApplication):
         if environ.get("wsgi.input") is not None:
             body = _TrackedRequestBody(environ["wsgi.input"])
             environ["wsgi.input"] = body
-        response = super()._handle_request(environ)
+        try:
+            response = super()._handle_request(environ)
+        except DavUidIndexPending:
+            return _busy_response(environ)
+        except (pw.OperationalError, sqlite3.OperationalError) as exc:
+            if not _sqlite_busy(exc):
+                raise
+            return _busy_response(environ)
         if body is not None and response[0].startswith("401 "):
             _drain_unread_body(environ, body)
+        return response
+
+    def do_PUT(self, environ, base_prefix, path, user):  # noqa: N802
+        with self._storage.write_scope("PUT", path):
+            return super().do_PUT(environ, base_prefix, path, user)
+
+    def do_DELETE(self, environ, base_prefix, path, user):  # noqa: N802
+        with self._storage.write_scope("DELETE", path):
+            response = super().do_DELETE(environ, base_prefix, path, user)
+        if response[0] == 404 and "HTTP_IF_MATCH" in environ:
+            return httputils.PRECONDITION_FAILED
         return response
 
     def do_PROPFIND(self, environ, base_prefix, path, user):  # noqa: N802
