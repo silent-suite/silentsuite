@@ -9,7 +9,7 @@ const nextPwaDefaults = (require('@ducanh2912/next-pwa') as { runtimeCaching: un
 type Rule = { urlPattern: RegExp | ((ctx: { url: URL; sameOrigin: boolean; request: Request }) => boolean) | string; handler: string; method?: string; options?: { cacheName?: string } }
 
 /** The options next.config.js hands to next-pwa, captured without building. */
-function pwaOptions(): { importScripts?: string[]; extendDefaultRuntimeCaching?: boolean; workboxOptions?: { runtimeCaching?: Rule[]; skipWaiting?: boolean; clientsClaim?: boolean } } {
+function pwaOptions(): { extendDefaultRuntimeCaching?: boolean; workboxOptions?: { importScripts?: string[]; runtimeCaching?: Rule[]; skipWaiting?: boolean; clientsClaim?: boolean } } {
   const loader = Module as unknown as { _load: (request: string, ...rest: unknown[]) => unknown }
   const original = loader._load
   let captured: unknown
@@ -51,7 +51,7 @@ describe('service worker never caches Google import traffic (#48)', () => {
 
   it('puts cross-origin GETs first, as NetworkOnly without a cache, ahead of the defaults', () => {
     expect(options.extendDefaultRuntimeCaching).toBe(true)
-    expect(options.importScripts).toContain('/notification-worker.js')
+    expect(options.workboxOptions?.importScripts).toContain('/notification-worker.js')
     const ours = options.workboxOptions!.runtimeCaching!
     expect(ours[0]).toMatchObject({ handler: 'NetworkOnly', method: 'GET' })
     expect(ours[0]!.options).toBeUndefined()

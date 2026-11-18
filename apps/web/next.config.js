@@ -80,10 +80,10 @@ const pwaConfig = withPWA({
   fallbacks: {
     document: '/offline',
   },
-  importScripts: ['/notification-worker.js'],
   // Our routes first, then next-pwa's defaults unchanged (see pwa-runtime-caching.js).
   extendDefaultRuntimeCaching: true,
   workboxOptions: {
+    importScripts: ['/notification-worker.js'],
     runtimeCaching: runtimeCachingBeforeDefaults,
   },
 })(withNextIntl(nextConfig))
