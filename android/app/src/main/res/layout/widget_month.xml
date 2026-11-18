@@ -26,7 +26,7 @@
             android:textSize="18sp"
             android:textStyle="bold"
             android:autoSizeTextType="uniform"
-            android:autoSizeMinTextSize="14sp"
+            android:autoSizeMinTextSize="12sp"
             android:autoSizeMaxTextSize="18sp"
             android:autoSizeStepGranularity="1sp"
             android:maxLines="1"

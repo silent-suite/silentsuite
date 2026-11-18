@@ -110,8 +110,12 @@ class MonthWidgetProvider : AppWidgetProvider() {
                         read.days.filter { it.events.isNotEmpty() }.mapTo(mutableSetOf()) { it.date })
                 }
                 val views = RemoteViews(context.packageName, R.layout.widget_month)
+                val fullTitle = month.format(DateTimeFormatter.ofPattern(
+                    DateFormat.getBestDateTimePattern(locale, "LLLLyyyy"), locale))
+                val titleSkeleton = if (month == todayMonth) "LLLLyyyy" else "LLLyyyy"
                 views.setTextViewText(R.id.widget_month_title,
-                    month.format(DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "LLLLyyyy"), locale)))
+                    month.format(DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, titleSkeleton), locale)))
+                views.setContentDescription(R.id.widget_month_title, fullTitle)
                 views.setOnClickPendingIntent(R.id.widget_month_previous,
                     monthIntent(context, id, month.minusMonths(1).toString(), todayMonth))
                 views.setOnClickPendingIntent(R.id.widget_month_next,
@@ -122,6 +126,7 @@ class MonthWidgetProvider : AppWidgetProvider() {
                 if (result.state != WidgetSettings.State.READY || result.failed) {
                     views.setViewVisibility(R.id.widget_month_content, View.GONE)
                     views.setTextViewText(R.id.widget_month_title, context.getString(R.string.widget_month_name))
+                    views.setContentDescription(R.id.widget_month_title, context.getString(R.string.widget_month_name))
                     views.setViewVisibility(R.id.widget_month_today, View.GONE)
                     views.setViewVisibility(R.id.widget_month_previous, View.GONE)
                     views.setViewVisibility(R.id.widget_month_next, View.GONE)
