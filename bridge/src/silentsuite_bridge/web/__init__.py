@@ -1102,6 +1102,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
 
         <div class="status-card">
+            <label style="font-size:13px;color:#ccc;"><input type="checkbox" id="e2eeLockPrefix" onchange="updateE2eeLockPrefix(this)"{{E2EE_LOCK_PREFIX_CHECKED}}> Show a lock (🔒) on events, tasks and contacts in your apps</label>
+            <span id="e2eeLockPrefixStatus" style="font-size:12px;color:#555;margin-left:8px;"></span>
+            <div class="fingerprint-help">Apps update as items change or after a re-sync.</div>
+        </div>
+
+        <div class="status-card">
             <h3 style="font-size:14px;color:#888;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px;">Experimental</h3>
             <label style="font-size:13px;color:#ccc;"><input type="checkbox" id="experimentalBirthdays" onchange="updateExperimentalBirthdays(this)"{{EXPERIMENTAL_BIRTHDAYS_CHECKED}}> Birthdays calendar</label>
             <span id="experimentalBirthdaysStatus" style="font-size:12px;color:#555;margin-left:8px;"></span>
@@ -1355,6 +1361,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         }
                     });
                 return intervalSave.pending;
+            }
+            function updateE2eeLockPrefix(box) {
+                var st = document.getElementById('e2eeLockPrefixStatus');
+                var wanted = box.checked;
+                box.disabled = true;
+                st.textContent = 'Saving...';
+                st.style.color = '#555';
+                return fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({e2eeLockPrefix: wanted})})
+                    .then(handleJsonResponse)
+                    .then(function(data) {
+                        box.checked = data.e2eeLockPrefix === true;
+                        st.textContent = 'Saved';
+                    })
+                    .catch(function(error) {
+                        box.checked = !wanted;
+                        st.textContent = 'Not saved: ' + ((error && error.message) || 'request failed');
+                        st.style.color = '#ff8a8a';
+                    })
+                    .then(function() { box.disabled = false; });
             }
             function updateExperimentalBirthdays(box) {
                 var st = document.getElementById('experimentalBirthdaysStatus');
@@ -1781,6 +1806,7 @@ def _render_dashboard():
     page = page.replace("{{SYNC_INTERVAL_DISPLAY}}", esc(interval_display))
     page = page.replace("{{NETWORK_CARD}}", _render_network_card())
     page = page.replace("{{EXPERIMENTAL_BIRTHDAYS_CHECKED}}", " checked" if config.EXPERIMENTAL_BIRTHDAYS is True else "")
+    page = page.replace("{{E2EE_LOCK_PREFIX_CHECKED}}", " checked" if config.E2EE_LOCK_PREFIX else "")
 
     return page
 
@@ -2341,7 +2367,11 @@ class Web(BaseWeb):
 
         # API endpoint for current settings
         if path == "/.web/api/settings":
-            data = {"syncInterval": config.SYNC_INTERVAL, "experimentalBirthdays": config.EXPERIMENTAL_BIRTHDAYS is True}
+            data = {
+                "syncInterval": config.SYNC_INTERVAL,
+                "experimentalBirthdays": config.EXPERIMENTAL_BIRTHDAYS is True,
+                "e2eeLockPrefix": config.E2EE_LOCK_PREFIX,
+            }
             return (
                 200,
                 {"Content-Type": "application/json"},
@@ -2409,6 +2439,8 @@ class Web(BaseWeb):
             # Checked before any write so a bad value never leaves a half-applied update.
             if "experimentalBirthdays" in data and not isinstance(data["experimentalBirthdays"], bool):
                 return _json_response(400, {"error": "experimentalBirthdays must be true or false"})
+            if "e2eeLockPrefix" in data and not isinstance(data["e2eeLockPrefix"], bool):
+                return _json_response(400, {"error": "e2eeLockPrefix must be true or false"})
 
             if "syncInterval" in data:
                 new_interval = int(data["syncInterval"])
@@ -2475,7 +2507,30 @@ class Web(BaseWeb):
                 config.EXPERIMENTAL_BIRTHDAYS = enabled
                 log_sync_event("info", f"Experimental Birthdays calendar turned {'on' if enabled else 'off'}")
 
+            if "e2eeLockPrefix" in data:
+                enabled = data["e2eeLockPrefix"]
+                try:
+                    config.save_settings({"e2eeLockPrefix": enabled})
+                except config.SettingsDurabilityError:
+                    return _json_response(
+                        500,
+                        {"error": "settings.json was replaced but not confirmed durable; retry to confirm the lock setting"},
+                    )
+                except config.SettingsLockError:
+                    return _json_response(
+                        503,
+                        {"error": "Another bridge process is updating settings.json; the lock setting was not changed, retry shortly"},
+                    )
+                except (config.SettingsFileError, OSError):
+                    return _json_response(
+                        500,
+                        {"error": "Could not write settings.json; the lock setting was not changed"},
+                    )
+                config.E2EE_LOCK_PREFIX = enabled
+
             saved = {"ok": True, "syncInterval": config.SYNC_INTERVAL}
+            if "e2eeLockPrefix" in data:
+                saved["e2eeLockPrefix"] = config.E2EE_LOCK_PREFIX
             if "experimentalBirthdays" in data:
                 saved["experimentalBirthdays"] = config.EXPERIMENTAL_BIRTHDAYS is True
             return (

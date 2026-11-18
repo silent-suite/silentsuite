@@ -1,5 +1,6 @@
 """Tests for SilentSuite Bridge configuration."""
 
+import json
 import os
 from unittest.mock import patch
 
@@ -42,12 +43,34 @@ def restore_config(monkeypatch):
     return importlib.reload(config)
 
 
+@pytest.mark.parametrize("settings,expected", [
+    ({}, True), ({"e2eeLockPrefix": True}, True), ({"e2eeLockPrefix": False}, False),
+    ({"e2eeLockPrefix": None}, True), ({"e2eeLockPrefix": 0}, True),
+    ({"e2eeLockPrefix": "false"}, True),
+])
+def test_load_lock_prefix_setting(tmp_path, monkeypatch, settings, expected):
+    cfg = reload_config_with_env(monkeypatch)
+    try:
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings), encoding="utf-8")
+        monkeypatch.setattr(cfg, "SETTINGS_FILE", str(settings_file))
+        monkeypatch.setattr(cfg, "E2EE_LOCK_PREFIX", not expected)
+        cfg.load_settings()
+        assert cfg.E2EE_LOCK_PREFIX is expected
+    finally:
+        restore_config(monkeypatch)
+
+
 class TestConfigDefaults:
     """Test that config module exposes sensible defaults."""
 
     def test_default_server_url(self):
         from silentsuite_bridge import config
         assert "silentsuite.io" in config.ETEBASE_SERVER_URL
+
+    def test_lock_prefix_defaults_on(self):
+        from silentsuite_bridge import config
+        assert config.E2EE_LOCK_PREFIX is True
 
     def test_default_listen_address(self):
         from silentsuite_bridge import config

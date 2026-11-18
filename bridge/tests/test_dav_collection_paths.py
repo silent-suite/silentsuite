@@ -48,7 +48,8 @@ def test_created_collection_keeps_requested_path(dav_world, method):
     assert world.request("PROPFIND", path, PROPS).status == 207
     if method == "MKCOL":
         assert world.request("PUT", path + "one.vcf", _vcard("one", "One")).status == 201
-        assert b"FN:One" in world.request("GET", path + "one.vcf").body
+        expected_fn = "FN:🔒 One"
+        assert expected_fn.encode() in world.request("GET", path + "one.vcf").body
         report = world.request("REPORT", path, SYNC_REPORT.replace(b"{token}", b""))
         assert report.status == 207
         assert path + "one.vcf" in hrefs(report)
@@ -56,7 +57,9 @@ def test_created_collection_keeps_requested_path(dav_world, method):
         xmlns:cr="urn:ietf:params:xml:ns:carddav"><d:prop><d:getetag/>
         <cr:address-data/></d:prop><d:href>{path}one.vcf</d:href></cr:addressbook-multiget>'''
         response = world.request("REPORT", path, multiget)
-        assert response.status == 207 and b"FN:One" in response.body
+        assert response.status == 207
+        address_data = ET.fromstring(response.body).findtext(".//{urn:ietf:params:xml:ns:carddav}address-data")
+        assert address_data and expected_fn in address_data
     else:
         from tests.conftest import SAMPLE_VCALENDAR_VEVENT
         put = world.request("PUT", path + "one.ics", SAMPLE_VCALENDAR_VEVENT,
