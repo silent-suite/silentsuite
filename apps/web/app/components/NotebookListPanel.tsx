@@ -8,6 +8,7 @@ import { useNoteStore } from '@/app/stores/use-note-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { CollectionListItem } from '@/app/components/CollectionListItem'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
+import { showErrorToast } from '@/app/stores/use-toast-store'
 
 export function NotebookListPanel() {
   const t = useTranslations('Notes')
@@ -42,8 +43,13 @@ export function NotebookListPanel() {
   const confirmDelete = useCallback(async () => {
     const target = pendingDelete
     setPendingDelete(null)
-    if (target) await deleteCollection('notes', target.id)
-  }, [deleteCollection, pendingDelete])
+    // A refused delete says why and that nothing was deleted (#1113 D1).
+    if (target) {
+      await deleteCollection('notes', target.id, {
+        onRefused: (reason) => showErrorToast(t(reason === 'unsaved' ? 'deleteNotebookUnsaved' : 'deleteNotebookChanged')),
+      })
+    }
+  }, [deleteCollection, pendingDelete, t])
 
   const handleColorChange = useCallback((id: string, color: string) => {
     void updateCollectionMeta('notes', id, { color })

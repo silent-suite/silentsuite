@@ -6,7 +6,11 @@ import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import {
   CACHE_SCHEMA_VERSION,
   _resetForTests as resetDataCache,
+  _setEncryptedCacheAvailableForTests,
+  _setEnvelopeKeyForTests,
   ensureFingerprint,
+  getItemsByType,
+  isCacheEnabled,
   putMeta,
 } from '@/app/lib/data-cache'
 
@@ -17,7 +21,15 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({
 }))
 
 import { useEtebaseStore } from '../use-etebase-store'
-import { getNoteObligation, markNoteObligation, registerNoteEditor, useNoteStore } from '../use-note-store'
+import {
+  conflictCopyTitle,
+  getHeldNoteDraft,
+  getNoteObligation,
+  markNoteObligation,
+  registerNoteEditor,
+  resetNoteLifecycle,
+  useNoteStore,
+} from '../use-note-store'
 import { useNotebookStore } from '../use-notebook-store'
 import { useAuthStore } from '../use-auth-store'
 import {
@@ -27,6 +39,7 @@ import {
   deleteDatabase,
   installNoteAccount,
   makeSavedNote,
+  respond,
   serverText,
 } from './web744-sdk-fixture'
 
@@ -39,6 +52,7 @@ const EDIT_TITLE = 'PRIVATE EDIT TITLE 744'
 const FIRST_BODY = 'PRIVATE AUTOSAVE ONE 744'
 const SECOND_BODY = 'PRIVATE AUTOSAVE TWO 744'
 const RETAINED_BODY = 'PRIVATE RETAINED DRAFT B 744'
+const NEWER_BODY = 'PRIVATE NEWER DRAFT C 1113'
 
 async function readAllRecords(dbName: string, storeName: string): Promise<any[]> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -378,5 +392,259 @@ describe('#744 the note store saves through the captured editing base', () => {
     noteSealedWriteAccepted(item.uid)
     expect(getNoteObligation(item.uid)).toBeDefined()
     unregisterNew()
+  })
+})
+
+describe('#1113 D1 conflicted copy title', () => {
+  it('matches Android: the displayed title, Untitled when blank, and no second suffix', () => {
+    expect(conflictCopyTitle('Groceries')).toBe('Groceries (conflicted copy)')
+    expect(conflictCopyTitle('  Groceries  ')).toBe('Groceries (conflicted copy)')
+    expect(conflictCopyTitle('')).toBe('Untitled (conflicted copy)')
+    expect(conflictCopyTitle('   ')).toBe('Untitled (conflicted copy)')
+    expect(conflictCopyTitle('Groceries (conflicted copy)')).toBe('Groceries (conflicted copy)')
+    expect(conflictCopyTitle('Groceries(conflicted copy)')).toBe('Groceries(conflicted copy) (conflicted copy)')
+  })
+})
+
+describe('#1113 D1 the note store refuses with a reason and saves copies once', () => {
+  const originalRequest = EtebaseRequest.default
+  let server: ReferenceServer
+
+  beforeEach(async () => {
+    await resetOfflineQueue()
+    await resetDataCache()
+    await deleteDatabase('silentsuite-offline-queue')
+    await deleteDatabase('silentsuite-data-cache')
+    resetNoteLifecycle()
+    server = new ReferenceServer()
+    EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
+    useAuthStore.setState({ canWrite: () => true } as any)
+  })
+
+  afterEach(() => {
+    EtebaseRequest.default = originalRequest
+    resetNoteLifecycle()
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useNoteStore.setState({ notes: [] })
+  })
+
+  async function staleDraft() {
+    const { account, collection, item } = await makeSavedNote(BASE_TITLE, BASE_BODY)
+    server.seed(collection, [item])
+    const peerItem = item._clone()
+    await peerItem.setContent(PEER_BODY)
+    await account.getCollectionManager().getItemManager(collection).transaction([peerItem])
+    installNoteAccount(account, collection, item)
+    useNotebookStore.setState({ lists: [{ id: collection.uid, name: 'Notebook 744', color: '#fff', visible: true, accessLevel: 2 }] } as any)
+    const at = new Date(1000)
+    useNoteStore.setState({
+      notes: [{ id: item.uid, uid: item.uid, title: BASE_TITLE, content: BASE_BODY, notebookId: collection.uid, created_at: at, updated_at: at, revision: item.etag }],
+    } as any)
+    const held = {
+      draft: { title: EDIT_TITLE, content: RETAINED_BODY },
+      base: { title: BASE_TITLE, content: BASE_BODY, revision: item.etag as string },
+      failed: 'changed' as const,
+    }
+    return { account, collection, item, peerItem, held }
+  }
+
+  async function liveTitles(account: any, collection: any): Promise<string[]> {
+    const response = await account.getCollectionManager().getItemManager(collection).list()
+    return response.data.filter((candidate: any) => !candidate.isDeleted).map((candidate: any) => candidate.getMeta().name)
+  }
+
+  it("refuses a save with 'changed' when the server copy moved on, and without a reason when it is missing", async () => {
+    const { item, held } = await staleDraft()
+    const reasons: unknown[] = []
+
+    const saved = await useNoteStore.getState().updateNote(item.uid, held.draft, { base: held.base, onRefused: (reason) => reasons.push(reason) })
+    const notFound = (url: string, options: any) => (
+      String(options?.method ?? 'get').toLowerCase() === 'get' && new URL(url).pathname.split('/').filter(Boolean).at(-1) === item.uid
+        ? respond(404, { detail: 'Not found.' })
+        : server.handle(url, options)
+    )
+    EtebaseRequest.default = notFound
+    const savedAgain = await useNoteStore.getState().updateNote(item.uid, held.draft, { base: held.base, onRefused: (reason) => reasons.push(reason) })
+
+    expect([saved, savedAgain]).toEqual([false, false])
+    expect(reasons).toEqual(['changed', undefined])
+  })
+
+  it('makes one copy for two calls while the first runs, and holds the text until it is confirmed', async () => {
+    const { account, collection, item, held } = await staleDraft()
+    const upload = server.holdNext((method, path) => method === 'post' && path.endsWith('item/transaction'))
+
+    const first = useNoteStore.getState().saveNoteCopy(item.uid, held)
+    const second = useNoteStore.getState().saveNoteCopy(item.uid, { ...held, draft: { title: 'OTHER', content: 'OTHER' } })
+    await upload.arrived
+    expect(getHeldNoteDraft(item.uid)?.copy).toBe('running')
+    upload.release(false)
+    const [a, b] = await Promise.all([first, second])
+
+    expect(a).toEqual(b)
+    expect(a.kind).toBe('copied')
+    expect(await liveTitles(account, collection)).toEqual(expect.arrayContaining([BASE_TITLE, `${EDIT_TITLE} (conflicted copy)`]))
+    expect((await liveTitles(account, collection)).filter((name) => name.endsWith('(conflicted copy)'))).toHaveLength(1)
+    expect(getHeldNoteDraft(item.uid)).toBeUndefined()
+    const copyId = (a as { id: string }).id
+    // Published like a new note: the store, the item cache and the notebook maps.
+    expect(useNoteStore.getState().notes.find((note) => note.id === copyId)).toMatchObject({
+      title: `${EDIT_TITLE} (conflicted copy)`, content: RETAINED_BODY, notebookId: collection.uid,
+    })
+    const { itemCache, itemTypeMap, itemCollectionMap } = useEtebaseStore.getState()
+    expect([itemCache.has(copyId), itemTypeMap.get(copyId), itemCollectionMap.get(copyId)]).toEqual([true, 'notes', collection.uid])
+    expect(useNoteStore.getState().notes.find((note) => note.id === copyId)?.revision)
+      .toBe((await account.getCollectionManager().getItemManager(collection).fetch(copyId)).etag)
+  })
+
+  it('keeps the attempt after a failure, so the retry re-sends the same item and confirms it', async () => {
+    const { account, collection, item, held } = await staleDraft()
+    let lose = true
+    EtebaseRequest.default = async (url: string, options: any) => {
+      const response = await server.handle(url, options)
+      if (lose && String(options?.method).toLowerCase() === 'post' && url.includes('item/transaction')) {
+        lose = false
+        throw new TypeError('Network request failed')
+      }
+      return response
+    }
+
+    const failed = await useNoteStore.getState().saveNoteCopy(item.uid, held)
+    const retried = await useNoteStore.getState().saveNoteCopy(item.uid, held)
+
+    expect(failed).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    expect(retried.kind).toBe('copied')
+    const copies = server.transactions.filter((transaction) => transaction.items.some((sent) => sent.uid !== item.uid))
+    expect(copies).toHaveLength(2)
+    // The same item both times: one UID, one revision.
+    expect(new Set(copies.map((transaction) => `${transaction.items[0].uid}|${transaction.items[0].content.uid}`)).size).toBe(1)
+    expect((await liveTitles(account, collection)).filter((name) => name.endsWith('(conflicted copy)'))).toHaveLength(1)
+  })
+
+  it('does not publish a copy that another app turned into something other than a note', async () => {
+    const { account, collection, item, held } = await staleDraft()
+    let lose = true
+    EtebaseRequest.default = async (url: string, options: any) => {
+      const response = await server.handle(url, options)
+      if (lose && String(options?.method).toLowerCase() === 'post' && url.includes('item/transaction')) {
+        lose = false
+        throw new TypeError('Network request failed')
+      }
+      return response
+    }
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, held)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    const listed = await account.getCollectionManager().getItemManager(collection).list()
+    const landed = listed.data.find((candidate: any) => candidate.uid !== item.uid)
+    const other = landed._clone()
+    other.setMeta({ ...other.getMeta(), type: 'etebase.other' })
+    await account.getCollectionManager().getItemManager(collection).transaction([other])
+    const retried = await useNoteStore.getState().saveNoteCopy(item.uid, held)
+
+    expect(retried).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    expect(useNoteStore.getState().notes.some((note) => note.id === landed.uid)).toBe(false)
+    expect(useEtebaseStore.getState().itemCache.has(landed.uid)).toBe(false)
+  })
+
+  /** Loses the response to the first copy upload; the copy still lands. */
+  function loseFirstCopyResponse(): void {
+    let lose = true
+    EtebaseRequest.default = async (url: string, options: any) => {
+      const response = await server.handle(url, options)
+      if (lose && String(options?.method).toLowerCase() === 'post' && url.includes('item/transaction')) {
+        lose = false
+        throw new TypeError('Network request failed')
+      }
+      return response
+    }
+  }
+
+  /** Breaks the stored body of the item: its metadata still decrypts here, its content does not. */
+  async function breakStoredBody(itemManager: any, collection: any, uid: string): Promise<void> {
+    const stored = (server as any).collections.get(collection.uid).items.get(uid)
+    const [chunkUid, bytes] = stored.content.chunks[0]
+    const broken = Uint8Array.from(bytes)
+    broken[broken.length - 1] ^= 0xff
+    stored.content = { ...stored.content, chunks: [[chunkUid, broken]] }
+    const fetched = await itemManager.fetch(uid)
+    expect(() => fetched.getMeta()).not.toThrow()
+    await expect(fetched.getContent()).rejects.toThrow()
+  }
+
+  it('does not count a copy whose server text this tab cannot read, and writes no display record of it', async () => {
+    const { account, collection, item, held } = await staleDraft()
+    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
+    _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
+    _setEncryptedCacheAvailableForTests(true)
+    try {
+      await ensureFingerprint(FINGERPRINT, getAccountEpoch())
+      expect(isCacheEnabled()).toBe(true)
+      loseFirstCopyResponse()
+      expect(await useNoteStore.getState().saveNoteCopy(item.uid, held)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+      const itemManager = account.getCollectionManager().getItemManager(collection)
+      const listed = await itemManager.list()
+      const landed = listed.data.find((candidate: any) => candidate.uid !== item.uid)
+      const copyUid: string = landed.uid
+      // Another device writes the copy again, and its body then cannot be decrypted here.
+      const peer = landed._clone()
+      await peer.setContent('PEER BODY OF THE COPY 1113')
+      await itemManager.transaction([peer])
+      await breakStoredBody(itemManager, collection, copyUid)
+
+      const retried = await useNoteStore.getState().saveNoteCopy(item.uid, held)
+
+      // The server holds a revision this tab did not send and cannot read: not copied.
+      expect(retried).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+      expect(getHeldNoteDraft(item.uid)).toMatchObject({ draft: held.draft, copy: 'unconfirmed' })
+      expect(useNoteStore.getState().notes.some((note) => note.id === copyUid)).toBe(false)
+      expect(useEtebaseStore.getState().itemCache.has(copyUid)).toBe(false)
+      expect((await getItemsByType('notes')).some((record) => record.itemUid === copyUid)).toBe(false)
+    } finally {
+      vi.unstubAllEnvs()
+      _setEncryptedCacheAvailableForTests(null)
+      _setEnvelopeKeyForTests(null)
+    }
+  })
+
+  it('keeps newer text held when the copy it grew from landed unseen and cannot be read', async () => {
+    const { account, collection, item, held } = await staleDraft()
+    loseFirstCopyResponse()
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, held)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    const itemManager = account.getCollectionManager().getItemManager(collection)
+    const landed = (await itemManager.list()).data.find((candidate: any) => candidate.uid !== item.uid)
+    const copyUid: string = landed.uid
+    const landedRevision: string = landed.etag
+    await breakStoredBody(itemManager, collection, copyUid)
+    // The user keeps typing after the lost response.
+    const newer = { ...held, draft: { title: EDIT_TITLE, content: NEWER_BODY } }
+
+    const retried = await useNoteStore.getState().saveNoteCopy(item.uid, newer)
+    const again = await useNoteStore.getState().saveNoteCopy(item.uid, newer)
+
+    // The 409 proves the server holds another revision, and this tab cannot read it: the newer
+    // text is not on the server, so it stays held on the source note and no copy is published.
+    expect([retried, again]).toEqual([{ kind: 'failed', reason: 'unconfirmed' }, { kind: 'failed', reason: 'unconfirmed' }])
+    expect(getHeldNoteDraft(item.uid)).toMatchObject({ draft: newer.draft, copy: 'unconfirmed' })
+    expect(getHeldNoteDraft(copyUid)).toBeUndefined()
+    expect(useNoteStore.getState().notes.some((note) => note.id === copyUid)).toBe(false)
+    expect(useEtebaseStore.getState().itemCache.has(copyUid)).toBe(false)
+    // One copy, never overwritten.
+    const copies = (await itemManager.list()).data.filter((candidate: any) => candidate.uid !== item.uid)
+    expect(copies.map((candidate: any) => [candidate.uid, candidate.etag])).toEqual([[copyUid, landedRevision]])
+  })
+
+  it('drops the attempt and held text on the account reset, and a late result is not published', async () => {
+    const { item, held } = await staleDraft()
+    const upload = server.holdNext((method, path) => method === 'post' && path.endsWith('item/transaction'))
+    const running = useNoteStore.getState().saveNoteCopy(item.uid, held)
+    await upload.arrived
+
+    bumpAccountEpoch()
+    resetNoteLifecycle()
+    upload.release(false)
+    const result = await running
+
+    expect(result).toEqual({ kind: 'stale' })
+    expect(getHeldNoteDraft(item.uid)).toBeUndefined()
+    expect(useNoteStore.getState().notes.filter((note) => note.title.endsWith('(conflicted copy)'))).toHaveLength(0)
   })
 })
