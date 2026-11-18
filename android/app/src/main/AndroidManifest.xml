@@ -60,6 +60,19 @@
         android:resizeableActivity="true"
         tools:ignore="UnusedAttribute">
 
+        <!-- Month widget: enabled by the shared per-account Experimental switch. -->
+        <receiver
+            android:name=".widget.month.MonthWidgetProvider"
+            android:enabled="false"
+            android:exported="false"
+            android:label="@string/widget_month_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.LOCALE_CHANGED" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_month_info" />
+        </receiver>
+
         <receiver
             android:name=".App$AppUpdatedReceiver"
             android:exported="true">

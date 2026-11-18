@@ -1060,4 +1060,23 @@
     <string name="widget_no_calendar_app">No calendar app found. Install a calendar app to open or add events.</string>
     <string name="widget_calendar_unavailable">The calendar app could not open this action.</string>
     <string name="widget_event_unavailable">This event is no longer available in your agenda.</string>
+    <!-- Month home-screen widget -->
+    <string name="widget_month_name">Month</string>
+    <string name="widget_month_description">A month of your SilentSuite calendar</string>
+    <string name="widget_month_previous">Previous month</string>
+    <string name="widget_month_next">Next month</string>
+    <string name="widget_month_today">Today</string>
+    <string name="widget_month_return_today">Back to this month</string>
+    <string name="widget_month_add_event">Add event</string>
+    <string name="widget_month_has_events">Has events</string>
+    <string name="widget_month_permission">Allow calendar access in SilentSuite to see your month.</string>
+    <string name="widget_month_unavailable">Open SilentSuite to view your calendars.</string>
+    <!-- Fixed illustrative weekday labels in the widget picker sample. -->
+    <string name="widget_month_preview_sun" translatable="false">S</string>
+    <string name="widget_month_preview_mon" translatable="false">M</string>
+    <string name="widget_month_preview_tue" translatable="false">T</string>
+    <string name="widget_month_preview_wed" translatable="false">W</string>
+    <string name="widget_month_preview_thu" translatable="false">T</string>
+    <string name="widget_month_preview_fri" translatable="false">F</string>
+    <string name="widget_month_preview_sat" translatable="false">S</string>
 </resources>
