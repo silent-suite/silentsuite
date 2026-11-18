@@ -287,18 +287,18 @@ describe('expandEventsForRange', () => {
     ])
   })
 
-  it('preserves end-of-month anchoring for a recurring carry-in occurrence', () => {
+  it('skips a missing monthly day and preserves the next carry-in occurrence', () => {
     const expansion = expandGridEventsForRange([calendarEvent({
       startDate: new Date('2026-01-31T22:00:00.000Z'),
       endDate: new Date('2026-02-02T02:00:00.000Z'),
       recurrenceRule: 'FREQ=MONTHLY;COUNT=4',
     })], {
-      start: new Date('2026-03-01T00:00:00.000Z'),
-      end: new Date('2026-03-02T00:00:00.000Z'),
+      start: new Date('2026-04-01T00:00:00.000Z'),
+      end: new Date('2026-04-02T00:00:00.000Z'),
     })
 
     expect(expansion.events.map((event) => event.startDate.toISOString())).toEqual([
-      '2026-02-28T22:00:00.000Z',
+      '2026-03-31T22:00:00.000Z',
     ])
   })
 })
@@ -642,4 +642,144 @@ describe('DURATION lookback from a 23-hour first occurrence (review repro)', () 
     expect(expandGridEventsForRange([series], range).events.map((e) => [e.startDate.toISOString(), e.endDate.toISOString()]))
       .toEqual([['2026-10-31T14:00:00.000Z', '2026-11-01T15:00:00.000Z']])
   })
+})
+
+// ── #1097: an event without DTEND (Fossify/Android) has zero length but must still show ──
+// RFC 5545 §3.6.1: a DATE-TIME DTSTART without DTEND or DURATION ends at its start.
+
+describe('events without DTEND show in the grid (#1097)', () => {
+  const fossifyVEvent = [
+    'BEGIN:VEVENT',
+    'DTSTAMP:20261116T111402Z',
+    'UID:no-dtend-1097',
+    'SUMMARY:set-up in Fossify',
+    'DTSTART;TZID=Europe/Berlin:20261116T120000',
+    'STATUS:CONFIRMED',
+    'END:VEVENT',
+  ].join('\r\n')
+  const dates = {
+    start: Temporal.PlainDate.from('2026-11-16'),
+    end: Temporal.PlainDate.from('2026-11-16'),
+  }
+  const range = visibleDateRangeToInstantRange(dates, 'Europe/Berlin')
+  const berlin = (date: Date) => zdt(date, 'Europe/Berlin')
+
+  it('projects a timed event with no DTEND as a short chip at its start time', () => {
+    const event = { ...fromVEvent(fossifyVEvent), id: 'no-dtend', calendarId: 'cal-1' }
+    expect(event.endDate.getTime()).toBe(event.startDate.getTime())
+
+    const expansion = expandGridEventsForRange([event], range)
+    expect(expansion.events).toHaveLength(1)
+
+    for (const view of ['week', 'month'] as const) {
+      const projection = toScheduleXProjection(
+        expansion.events, new Map(), 'Europe/Berlin', view, dates, berlin, expansion.droppedCount,
+      )
+      expect(projection.droppedCount).toBe(0)
+      expect(projection.events).toHaveLength(1)
+      const chip = projection.events[0]!
+      expect(String(chip.start)).toContain('2026-11-16T12:00:00')
+      expect(String(chip.end)).toContain('2026-11-16T12:30:00')
+      // The source keeps its zero length, so drag and edit don't invent an end.
+      expect(projection.sourceByRenderId.get(String(chip.id))!.endDate.getTime())
+        .toBe(event.startDate.getTime())
+    }
+  })
+
+  it('shows a zero-length event that starts exactly at the start of the visible range', () => {
+    const start = range.start
+    const event = calendarEvent({ id: 'midnight', startDate: start, endDate: start, recurrenceRule: null })
+    expect(expandGridEventsForRange([event], range).events).toHaveLength(1)
+  })
+
+  it('shows each occurrence of a recurring event with no length', () => {
+    const start = new Date('2026-11-15T11:00:00.000Z')
+    const event = calendarEvent({
+      id: 'daily-zero',
+      startDate: start,
+      endDate: start,
+      recurrenceRule: 'FREQ=DAILY;COUNT=3',
+      timezone: 'Europe/Berlin',
+    })
+    const expansion = expandGridEventsForRange([event], range)
+    expect(expansion.droppedCount).toBe(0)
+    expect(expansion.events.map((e) => e.startDate.toISOString())).toEqual(['2026-11-16T11:00:00.000Z'])
+  })
+
+  it('shows an all-day event with no DTEND on its one day', () => {
+    const event = {
+      ...fromVEvent(['BEGIN:VEVENT', 'UID:allday-1097', 'SUMMARY:Day off', 'DTSTART;VALUE=DATE:20261116', 'END:VEVENT'].join('\r\n')),
+      id: 'allday-no-dtend',
+      calendarId: 'cal-1',
+    }
+    const expansion = expandGridEventsForRange([event], range)
+    expect(expansion.events).toHaveLength(1)
+    const projection = toScheduleXProjection(
+      expansion.events, new Map(), 'Europe/Berlin', 'month', dates, berlin, expansion.droppedCount,
+    )
+    expect(projection.droppedCount).toBe(0)
+    expect(projection.events.map((e) => [String(e.start), String(e.end)])).toEqual([['2026-11-16', '2026-11-16']])
+  })
+
+  it('control: an event that ends before it starts is still dropped', () => {
+    const projection = toScheduleXProjection([
+      displayEvent({ startDate: new Date('2026-11-16T11:00:00.000Z'), endDate: new Date('2026-11-16T10:00:00.000Z') }),
+    ], new Map(), 'Europe/Berlin', 'week', dates, berlin)
+    expect(projection.droppedCount).toBe(1)
+    expect(projection.events).toHaveLength(0)
+  })
+})
+
+describe('a late-evening event without DTEND stays on its own day (#1097 review)', () => {
+  const dates = {
+    start: Temporal.PlainDate.from('2026-11-16'),
+    end: Temporal.PlainDate.from('2026-11-17'),
+  }
+  const berlin = (date: Date) => zdt(date, 'Europe/Berlin')
+  // 23:45 Berlin on 16 November.
+  const start = new Date('2026-11-16T22:45:00.000Z')
+
+  it('ends its chip before local midnight in week and month view', () => {
+    for (const view of ['week', 'month'] as const) {
+      const projection = toScheduleXProjection(
+        [displayEvent({ startDate: start, endDate: start, instanceDate: start })],
+        new Map(), 'Europe/Berlin', view, dates, berlin,
+      )
+      expect(projection.events).toHaveLength(1)
+      const chip = projection.events[0]!
+      expect(chip._options?.additionalClasses).not.toContain('ss-month-multiday')
+      expect(chip._options?.additionalClasses).not.toContain('ss-timegrid-multiday-segment')
+      expect(String(chip.start)).toContain('2026-11-16T23:45:00')
+      expect(String(chip.end)).toContain('2026-11-16T23:59:59.999')
+    }
+  })
+})
+
+
+describe('retained recurrence overrides', () => {
+  const event = calendarEvent({
+    startDate: new Date('2026-11-17T10:00:00Z'), endDate: new Date('2026-11-17T11:00:00Z'),
+    recurrenceRule: 'FREQ=DAILY;COUNT=3', timezone: 'UTC',
+  })
+  const moved = ['BEGIN:VEVENT', `UID:${event.uid}`, 'RECURRENCE-ID:20261118T100000Z', 'DTSTART:20261121T120000Z', 'DTEND:20261121T130000Z', 'SUMMARY:Moved', 'END:VEVENT']
+  const cancelled = ['BEGIN:VEVENT', `UID:${event.uid}`, 'RECURRENCE-ID:20261119T100000Z', 'STATUS:CANCELLED', 'END:VEVENT']
+  it('suppresses replaced slots even when the moved event is outside the view', () => {
+    const result = expandGridEventsForRange([{ ...event, overrides: [moved, cancelled] }], { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') })
+    expect(result.events.map(e => e.startDate.toISOString())).toEqual(['2026-11-17T10:00:00.000Z'])
+  })
+  it('shows a moved occurrence whose recurrence date is outside the view, keeping its edit identity', () => {
+    const result = expandGridEventsForRange([{ ...event, overrides: [moved, cancelled] }], { start: new Date('2026-11-21Z'), end: new Date('2026-11-22Z') })
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({ title: 'Moved', masterId: event.id, isRecurring: true, instanceDate: new Date('2026-11-18T10:00:00Z'), startDate: new Date('2026-11-21T12:00:00Z') })
+  })
+  it('keeps an orphan cancellation with RECURRENCE-ID hidden', () => {
+    expect(expandGridEventsForRange([{ ...event, recurrenceRule: null, status: 'CANCELLED', unknownProperties: ['RECURRENCE-ID:20261117T100000Z'] }], { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') }).events).toEqual([])
+  })
+  it.each([null, 'FREQ=DAILY;COUNT=3'])('preserves existing visibility of cancelled events without RECURRENCE-ID: %s', (rule) => {
+    const events = [{ ...event, recurrenceRule: rule, status: 'CANCELLED' }]
+    const range = { start: new Date('2026-11-17Z'), end: new Date('2026-11-20Z') }
+    expect(expandGridEventsForRange(events, range).events).toHaveLength(rule ? 3 : 1)
+    expect(expandEventsForRange(events, range)).toHaveLength(rule ? 3 : 1)
+  })
+
 })

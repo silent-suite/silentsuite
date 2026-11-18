@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { Button } from '@silentsuite/ui'
-import { toVEvent, toVTodo, toVCard, type CalendarEvent, type Task, type Contact } from '@silentsuite/core'
+import { serializeCalendarEvent, toVTodo, toVCard, type CalendarEvent, type Task, type Contact } from '@silentsuite/core'
+import { splitCalendarItem, generateRetainedComponent, foldRetainedLine, topLevelProperty } from '@silentsuite/core/utils/ical-parser'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
@@ -165,7 +166,24 @@ function serializeAll<T>(items: T[], serialize: (item: T) => string): { vcompone
 }
 
 function serializeEvents(events: CalendarEvent[]) {
-  return serializeAll(events, toVEvent)
+  const definitions = new Map<string, string>()
+  return serializeAll(events, (event) => {
+    const parts = splitCalendarItem(serializeCalendarEvent(event))
+    if (!parts) throw new Error('Invalid calendar item')
+    const main = parts.main.split('\r\n').map(foldRetainedLine).join('\r\n')
+    const pending = new Map<string, string>()
+    for (const block of parts.vtimezones) {
+      const id = topLevelProperty(block, 'TZID')?.value
+      const text = generateRetainedComponent(block, 'VTIMEZONE')
+      if (!id || text === null) throw new Error('Invalid time zone definition')
+      const existing = pending.get(id) ?? definitions.get(id)
+      if (existing !== undefined && existing !== text) throw new Error('Conflicting time zone definitions')
+      if (!definitions.has(id)) pending.set(id, text)
+    }
+    // Register definitions only after the entire item passes the collision check.
+    for (const [id, text] of pending) definitions.set(id, text)
+    return [...pending.values(), main, ...parts.overrides.map(block => generateRetainedComponent(block, 'VEVENT'))].join('\r\n')
+  })
 }
 
 function serializeTasks(tasks: Task[]) {

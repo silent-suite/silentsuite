@@ -26,12 +26,12 @@ The server knows:
 
 - That you have an account
 - How much encrypted data is stored
+- How many items each collection holds, and how often each one changes
 - When data was last synced
 
 The server **cannot** see:
 
 - The contents of any event, contact, task, or note
-- How many events, contacts, tasks, or notes you have (data is stored in encrypted collections, not individually)
 - Any plaintext whatsoever
 
 ## What Happens If You Forget Your Password

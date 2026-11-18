@@ -26,6 +26,7 @@ import {
   writeLogoutGeneration,
 } from '@/app/lib/account-epoch'
 import type * as EtebaseStoreModule from '@/app/stores/use-etebase-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { BillingResponseError, startSignupAnnualPayment, type AnnualOffer } from '@/app/lib/billing-v2'
 import type { OwnerSignupOptions } from '@/app/lib/etebase-auth'
 
@@ -1117,11 +1118,53 @@ function syncAdminCookie(isAdmin: boolean, rememberDevice = false) {
   }
 }
 
-async function deleteHostedServerSession(context: string) {
+async function deleteHostedServerSession(context: string, signal?: AbortSignal) {
   try {
-    await fetch(`${BILLING_API_URL}/auth/session`, { method: 'DELETE', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    await fetch(`${BILLING_API_URL}/auth/session`, { method: 'DELETE', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' }, ...(signal ? { signal } : {}) })
   } catch (err) {
     logger.warn(`[auth-store] Failed to delete server session during ${context}:`, err)
+  }
+}
+
+interface DepartingSyncSession {
+  serverUrl: string
+  token: string
+}
+
+async function revokeSyncSession(session: DepartingSyncSession, signal: AbortSignal): Promise<void> {
+  try {
+    const endpoint = new URL(session.serverUrl)
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, '')}/api/v1/authentication/logout/`
+    endpoint.search = ''
+    endpoint.hash = ''
+    // Account.logout in the pinned SDK drops the network promise. Use the same
+    // endpoint with an immutable token snapshot, without mutating an SDK account.
+    await fetch(endpoint.toString(), {
+      method: 'POST', credentials: 'omit', signal,
+      headers: { Accept: 'application/msgpack', 'Content-Type': 'application/msgpack', Authorization: `Token ${session.token}` },
+    })
+  } catch {
+    // Never log the captured token, server URL or an error carrying request data.
+    logger.warn('[auth-store] Could not end the departing sync server session')
+  }
+}
+
+async function endExplicitServerSessions(session: DepartingSyncSession | null): Promise<void> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<void>(resolve => {
+    timer = setTimeout(() => { controller.abort(); resolve() }, 2000)
+  })
+  try {
+    await Promise.race([
+      Promise.allSettled([
+        session ? revokeSyncSession(session, controller.signal) : Promise.resolve(),
+        isSelfHosted ? Promise.resolve() : deleteHostedServerSession('logout', controller.signal),
+      ]),
+      deadline,
+    ])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -1828,19 +1871,28 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       signedOutElsewhere()
       return
     }
+    const logoutEpoch = getAccountEpoch()
+    let departingSession: DepartingSyncSession | null = null
+    try {
+      const account = useEtebaseStore.getState().account
+      if (typeof account?.serverUrl === 'string' && typeof account?.authToken === 'string' && account.authToken) {
+        departingSession = { serverUrl: account.serverUrl, token: account.authToken }
+      }
+    } catch {
+      // An unavailable store cannot prevent local sign-out.
+    }
+    if (!isCurrentAccountEpoch(logoutEpoch)) return
     // Stop rendering protected account data before any network request or
     // asynchronous storage cleanup can yield.
     syncAdminCookie(false)
     set({ user: null, isAuthenticated: false, pendingSignup: null, isLoading: false, error: null, subscriptionStatus: null, hostedAccess: null, ...clearedAccountNotice })
+    // Synchronous subscribers can establish another account during publication.
+    if (get().user !== null || !isCurrentAccountEpoch(logoutEpoch)) return
     // Tell other open tabs, and adopt the write so this tab's own cleanup is not taken for theirs.
     establishLogoutGeneration(writeLogoutGeneration())
-    const logoutEpoch = getAccountEpoch()
+    await endExplicitServerSessions(departingSession)
 
-    if (!isSelfHosted) {
-      await deleteHostedServerSession('invalid-hosted-auth')
-    }
-
-    if (get().user !== null || getAccountEpoch() !== logoutEpoch) return
+    if (get().user !== null || !isCurrentAccountEpoch(logoutEpoch)) return
     await clearLocalAuthMaterial('logout', epoch => get().user === null && getAccountEpoch() === epoch)
   },
 

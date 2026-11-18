@@ -60,16 +60,23 @@ def test_windows_installer_fails_closed_on_checksum_mismatch():
     assert "Write-Ok \"Checksum verified\"" in else_body
 
 
-def test_windows_installer_polls_dashboard_after_starting_hidden_bridge():
+def test_windows_installer_starts_bridge_with_background_mode_and_polls_dashboard():
     script = read(INSTALLER)
+    login_block = script[script.index("# --- Login ---"):script.index("# --- Done ---")]
 
     assert "$BridgeDashboardUrl = \"http://127.0.0.1:37358/\"" in script
     assert "function Test-BridgeDashboardReady" in script
     assert "Invoke-WebRequest -Uri $BridgeDashboardUrl" in script
-    assert "Start-Process -FilePath $ExePath" in script and "-PassThru" in script
-    assert "SILENTSUITE_LOG_FILE" in script and "$BridgeLog" in script
-    assert "dashboard did not respond yet" in script
-    assert "Bridge exited after login" in script
+    # The installer used to start a hidden console copy without a tray icon.
+    # --background keeps the tray and detaches the bridge from the terminal.
+    assert "& $ExePath --background" in login_block
+    assert "Start-Process" not in login_block
+    assert "--no-tray" not in login_block
+    assert "$BackgroundExit -ne 0" in login_block
+    assert "Closing this window does not stop it" in login_block
+    assert "dashboard did not respond yet" in login_block
+    # Same log the sign-in start writes: bridge.log in the appdirs data dir.
+    assert 'Join-Path $env:LOCALAPPDATA "silentsuite\\silentsuite-bridge\\bridge.log"' in script
 
 
 def test_windows_installer_checks_autostart_exit_code_before_claiming_success():
@@ -90,7 +97,9 @@ def test_browser_login_success_page_distinguishes_temporary_auth_port_from_dav_p
 
     assert "temporary sign-in page" in auth_browser
     assert "not the address-bar URL" in auth_browser
-    assert "this tab will switch to the bridge dashboard" in auth_browser
+    assert "This tab switches to the bridge dashboard" in auth_browser
+    # A manual --login does not start the bridge; the page must say how to.
+    assert "silentsuite-bridge --background" in auth_browser
     assert "redirectWhenDashboardIsReady" in auth_browser
     assert "fetch(dashboardUrl, { mode: 'no-cors', cache: 'no-store' })" in auth_browser
     assert "window.location.href = dashboardUrl" in auth_browser
@@ -107,7 +116,8 @@ def test_bridge_docs_link_direct_windows_asset_and_visible_error_recovery():
     assert "temporary local sign-in page on a random port" in docs
     assert "automatically switches the tab" in docs
     assert "Thunderbird says no calendars, tasks, or contacts were found" in docs
-    assert "%LOCALAPPDATA%\\SilentSuite\\bridge.log" in docs
+    assert "%LOCALAPPDATA%\\silentsuite\\silentsuite-bridge\\bridge.log" in docs
+    assert "--background" in docs
 
 
 def test_windows_github_actions_workflow_covers_installer_and_binary_smoke_tests():

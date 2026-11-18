@@ -446,7 +446,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
             <p class="url-note" style="color:#f59e0b;">This URL is for calendar/contact apps, not a web browser. Copy it into your app &mdash; opening it in a browser can expose your password in the address bar.</p>
             DASHBOARD_BOOKMARK
             <div class="next-step">
-                You're signed in. If you installed through PowerShell, this tab will switch to the bridge dashboard as soon as the installer starts it. Wait for the installer to say the bridge dashboard is reachable before adding the URL to your app.
+                You're signed in. This tab switches to the bridge dashboard as soon as the bridge is running. The PowerShell installer starts it for you. If you ran <code>--login</code> yourself, start the bridge now: on Windows with <code>silentsuite-bridge --background</code>, so it keeps running after you close the terminal; on macOS and Linux with <code>silentsuite-bridge</code>.
             </div>
             <p class="redirect-note" id="redirectNote">Waiting for the bridge dashboard...</p>
         </div>
@@ -588,7 +588,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                 }).catch(function() {
                     if (attempts >= maxAttempts) {
                         if (note) {
-                            note.textContent = 'Dashboard did not open automatically. Keep this tab as a reference and open ' + dashboardUrl + ' after the installer reports success.';
+                            note.textContent = 'The bridge is not running yet, so the dashboard did not open. Start the bridge (on Windows: silentsuite-bridge --background), then open ' + dashboardUrl + '. Keep this tab for the app URL above.';
                         }
                         return;
                     }

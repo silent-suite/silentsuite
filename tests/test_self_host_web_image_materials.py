@@ -14,8 +14,12 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE_DIGEST = "sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914"
+BASE_DIGEST = "sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a"
 BASE = f"node:22-alpine@{BASE_DIGEST}"
+BASE_CHILDREN = {
+    "amd64": "sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c",
+    "arm64": "sha256:286344ef340c151df65af44a8c8cf2996c1783073d49b88fabcf90a56ea82023",
+}
 PY_YAML_HASHES = {
     "x86_64": "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc",
     "aarch64": "9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28",
@@ -87,6 +91,7 @@ def test_live_pinned_node_index_children_configs_and_pyyaml_hashes():
             ]
             assert len(matching) == 1, f"missing or duplicate {architecture} platform"
             descriptor = matching[0]
+            assert descriptor["digest"] == BASE_CHILDREN[architecture]
             assert descriptor["mediaType"] == IMAGE_TYPE
             if architecture == "arm64":
                 assert descriptor["platform"].get("variant") in (None, "v8")
@@ -99,6 +104,7 @@ def test_live_pinned_node_index_children_configs_and_pyyaml_hashes():
             raw, _ = fetch(f"{base}/blobs/{config_descriptor['digest']}", token)
             config = verified_json(raw, config_descriptor["digest"], config_descriptor["size"])
             assert (config["os"], config["architecture"]) == ("linux", architecture)
+            assert "NODE_VERSION=22.23.5" in config["config"]["Env"]
         assert len(set(children)) == 2
 
         raw, _ = fetch("https://pypi.org/pypi/PyYAML/6.0.3/json")

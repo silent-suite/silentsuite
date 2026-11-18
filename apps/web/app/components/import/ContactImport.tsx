@@ -194,6 +194,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         name: contact.n
           ? {
               given: contact.n.given,
+              ...(contact.n.additional ? { additional: contact.n.additional } : {}),
               family: contact.n.family,
               prefix: contact.n.prefix ?? '',
               suffix: contact.n.suffix ?? '',
@@ -203,6 +204,8 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         emails: contact.email?.map((e) => ({ type: e.type, value: e.value })),
         addresses: contact.adr?.map((a) => ({
           type: a.type,
+          ...(a.poBox ? { poBox: a.poBox } : {}),
+          ...(a.extended ? { extended: a.extended } : {}),
           street: a.street,
           city: a.city,
           state: a.state,

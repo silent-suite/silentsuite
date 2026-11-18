@@ -194,6 +194,27 @@ describe('photo', () => {
     const restored = parseVCard(vcardStr);
     expect(restored.photo).toBe('https://example.com/avatar.png');
   });
+
+  // vCard 3.0 has no data: URIs; Android (ez-vcard) reads VALUE=URI as a link to download (#1127).
+  it('writes an embedded photo as vCard 3.0 inline base64', () => {
+    const original = makeFullVCard({ photo: 'data:image/png;base64,iVBORw0KGgo=' });
+    const vcardStr = generateVCard(original);
+    expect(vcardStr).toContain('PHOTO;ENCODING=b;TYPE=PNG:iVBORw0KGgo=');
+    expect(vcardStr).not.toContain('data:image');
+    expect(parseVCard(vcardStr).photo).toBe('data:image/png;base64,iVBORw0KGgo=');
+  });
+
+  it('writes the web app JPEG photo inline and reads it back unchanged', () => {
+    const photo = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+    const vcardStr = generateVCard(makeFullVCard({ photo }));
+    expect(vcardStr).toContain('PHOTO;ENCODING=b;TYPE=JPEG:/9j/4AAQSkZJRg==');
+    expect(parseVCard(vcardStr).photo).toBe(photo);
+  });
+
+  it('keeps a data URI the parser cannot map back as VALUE=URI', () => {
+    const photo = 'data:image/svg+xml;base64,PHN2Zy8+';
+    expect(generateVCard(makeFullVCard({ photo }))).toContain(`PHOTO;VALUE=URI:${photo}`);
+  });
 });
 
 // ── Line folding ──

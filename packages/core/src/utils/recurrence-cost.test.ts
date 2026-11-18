@@ -69,3 +69,26 @@ describe('zone-aware expansion cost bound', () => {
     expect(formatToParts).toBeLessThanOrEqual(60);
   });
 });
+
+describe('old all-day series candidate cost', () => {
+  it.each([
+    ['FREQ=YEARLY', new Date(1972, 10, 17), new Date(2026, 10, 1), new Date(2026, 10, 30), new Date(2026, 10, 17), 1500],
+    ['FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1', new Date(1972, 1, 29), new Date(2026, 1, 1), new Date(2026, 2, 1), new Date(2026, 1, 28), 1500],
+    ['FREQ=MONTHLY', new Date(1972, 0, 17), new Date(2026, 10, 1), new Date(2026, 10, 30), new Date(2026, 10, 17), 12000],
+  ] as const)('%s does not enumerate unrelated dates from 1972', (rule, start, from, to, expected, budget) => {
+    const Original = Date;
+    let constructions = 0;
+    const CountingDate = new Proxy(Original, {
+      construct(target, args) { constructions++; return Reflect.construct(target, args); },
+    });
+    globalThis.Date = CountingDate;
+    let result: Date[];
+    try {
+      result = expandRecurrence(rule, start, { start: from, end: to });
+    } finally {
+      globalThis.Date = Original;
+    }
+    expect(result).toEqual([expected]);
+    expect(constructions).toBeLessThan(budget);
+  });
+});

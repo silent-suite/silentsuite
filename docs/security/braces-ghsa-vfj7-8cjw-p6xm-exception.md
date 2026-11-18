@@ -108,7 +108,7 @@ The only importer is `apps/web`. Reviewed paths:
 | Path | Consumer role |
 | --- | --- |
 | `apps/web > @ducanh2912/next-pwa@10.2.9 > fast-glob@3.3.2 > micromatch@4.0.8 > braces@3.0.3` | Webpack/workbox plugin wrapped around `next.config.js`; globs build output during `next build` |
-| `apps/web > eslint-config-next@15.5.28 > @next/eslint-plugin-next@15.5.28 > fast-glob@3.3.1 > micromatch@4.0.8 > braces@3.0.3` | Lint only (`next lint`; builds set `ignoreDuringBuilds`) |
+| `apps/web > eslint-config-next@15.5.29 > @next/eslint-plugin-next@15.5.29 > fast-glob@3.3.1 > micromatch@4.0.8 > braces@3.0.3` | Lint only (`next lint`; builds set `ignoreDuringBuilds`) |
 | `apps/web > tailwindcss@3.4.19 > chokidar@3.6.0 > braces@3.0.3` | Tailwind watch mode (dev/CLI) |
 | `apps/web > tailwindcss@3.4.19 > fast-glob@3.3.3 > micromatch@4.0.8 > braces@3.0.3` | Tailwind content scanning at CSS build |
 | `apps/web > tailwindcss@3.4.19 > micromatch@4.0.8 > braces@3.0.3` | Tailwind content scanning at CSS build |
@@ -157,7 +157,12 @@ which writes finding paths without versions; if the advisory came back in that f
 match the reviewed path set and the audit would fail closed until this record and the path set are
 updated.
 
-`next@15.5.28` vendors its own unversioned braces copy inside the nft bundle, used for build-time
+2026-11-17: Next 15.5.29 tooling rebind. The installed nft bundle retains SHA-256
+`19e4e6ea76d56deed0da625b0d9cbe5f5a761cf87a1c502bbb09c9406a70527e`; only its
+pnpm version/peer directory changed. The exact-path guard still rejects other versions.
+This byte comparison does not replace the CI image build and runtime checks.
+
+`next@15.5.29` vendors its own unversioned braces copy inside the nft bundle, used for build-time
 output tracing. It is not `braces@3.0.3`, is outside this remediation, and is evaluated only for
 reachability from the production server.
 

@@ -341,6 +341,26 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/log_paths" />
         </provider>
+        <!-- Experimental home-screen widgets: enabled by the per-account switch only. -->
+        <receiver android:name=".widgets.AgendaWidgetProvider" android:enabled="false"
+            android:exported="false" android:label="@string/widget_agenda_title">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_agenda_info" />
+        </receiver>
+        <service android:name=".widgets.AgendaWidgetService" android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+        <service android:name=".widgets.WidgetRefreshService" android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+        <receiver android:name=".widgets.WidgetRefreshReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.accounts.action.ACCOUNT_REMOVED" />
+            </intent-filter>
+        </receiver>
+        <activity android:name=".widgets.WidgetActionActivity" android:exported="false"
+            android:excludeFromRecents="true" android:taskAffinity="" android:theme="@style/Theme.Transparent" />
     </application>
 
 </manifest>

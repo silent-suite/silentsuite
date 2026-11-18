@@ -4,7 +4,7 @@ Installs/removes auto-start entries so the bridge starts
 when the system boots:
 - Linux: systemd user service
 - macOS: launchd agent
-- Windows: startup registry entry
+- Windows: startup registry entry (starts the bridge with --background)
 
 Auto-start entries execute the bridge with a clean environment, so the
 listener profile that was explicitly configured through
@@ -224,14 +224,14 @@ def install_autostart_linux() -> int:
 
     logger.info("Installed systemd service")
 
-    # Enable and start the service
+    # Restart also replaces an already-running executable after installation.
     ok = _run_reported(["systemctl", "--user", "daemon-reload"], "systemctl daemon-reload")
     ok = _run_reported(["systemctl", "--user", "enable", SYSTEMD_UNIT], "systemctl enable") and ok
-    ok = _run_reported(["systemctl", "--user", "start", SYSTEMD_UNIT], "systemctl start") and ok
+    ok = _run_reported(["systemctl", "--user", "restart", SYSTEMD_UNIT], "systemctl restart") and ok
 
     print(f"Auto-start installed: {service_path}")
     if ok:
-        print("systemd accepted the enable/start request.")
+        print("systemd accepted the enable/restart request.")
     else:
         print("The service file is installed, but systemd reported a failure; the bridge is not confirmed running.")
     print("Check status: systemctl --user status silentsuite-bridge")
@@ -631,7 +631,11 @@ def install_autostart_windows() -> int:
         print("Error: winreg not available (not on Windows)", file=sys.stderr)
         return 1
 
-    binary_cmd = render_windows_command(_get_binary_path())
+    # --background makes the sign-in start windowless; without it the console
+    # window opened at sign-in stops the bridge when the user closes it.
+    from .windows_background import BACKGROUND_FLAG
+
+    binary_cmd = render_windows_command(_get_binary_path() + [BACKGROUND_FLAG])
 
     try:
         key = winreg.OpenKey(
@@ -650,7 +654,8 @@ def install_autostart_windows() -> int:
 
     logger.info("Installed Windows startup entry")
     print("Auto-start installed (Windows Registry).")
-    print("Bridge will start at your next sign-in.")
+    print("Bridge will start in the background at your next sign-in.")
+    print("To start it now without waiting for sign-in, run: silentsuite-bridge --background")
     return 0
 
 

@@ -12,7 +12,7 @@ import { useManagedBirthdayCalendarIds } from '@/app/lib/birthday-calendar/sessi
 import { RecurrencePicker } from './RecurrencePicker'
 import { RecurrenceScopeDialog, type RecurrenceScope } from './RecurrenceScopeDialog'
 import type { CalendarEvent, DateFormat, VAlarm } from '@silentsuite/core'
-import { buildAlarmTrigger, eventOccurrenceWallClock, gapWallClock, occurrenceEnd, parseAlarmTriggerMinutes, validStartWallClock } from '@silentsuite/core'
+import { resolveTimeZone, buildAlarmTrigger, eventOccurrenceWallClock, gapWallClock, occurrenceEnd, parseAlarmTriggerMinutes, validStartWallClock } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate } from '@/app/lib/date'
@@ -37,7 +37,7 @@ function makeFormatTime(hour12: boolean, tz: string) {
       hour: 'numeric',
       minute: '2-digit',
       hour12,
-      timeZone: tz,
+      timeZone: resolveTimeZone(tz) ?? 'UTC',
     })
   }
 }
@@ -81,7 +81,7 @@ function formatTimeForInput(date: Date, tz: string | undefined): string {
     const m = String(date.getMinutes()).padStart(2, '0')
     return `${h}:${m}`
   }
-  return formatTimeForInputInZone(date, tz)
+  return formatTimeForInputInZone(date, resolveTimeZone(tz) ?? 'UTC')
 }
 
 function normalizeTimeFormat(timeFormat: string): EventTimeFormat {
@@ -203,7 +203,7 @@ export function parseEventDateInput(input: string, dateFormat: DateFormat): stri
   return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 
-const PRESET_ALARM_MINUTES = ['5', '15', '30', '60', '1440'] as const
+const PRESET_ALARM_MINUTES = ['0', '5', '15', '30', '60', '1440'] as const
 
 function isPresetAlarm(value: string): boolean {
   return PRESET_ALARM_MINUTES.includes(value as typeof PRESET_ALARM_MINUTES[number])
@@ -211,11 +211,12 @@ function isPresetAlarm(value: string): boolean {
 
 function normalizeAlarmMinutes(value: string): string | null {
   const minutes = Number(value)
-  if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 525600) return null
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > 525600) return null
   return String(minutes)
 }
 
 function alarmLabel(value: string): string {
+  if (value === '0') return 'At start'
   if (value === '60') return '1 hour before'
   if (value === '1440') return '1 day before'
   return `${value} minutes before`
@@ -231,6 +232,26 @@ function alarmToVAlarm(minutes: string, title: string): VAlarm | null {
   }
 }
 
+interface AlarmRow {
+  value: string | null
+  initial: string | null
+  source?: VAlarm
+}
+
+function alarmRow(alarm: VAlarm): AlarmRow {
+  const param = (key: string) => alarm.triggerParams?.[key]?.replace(/^"(.*)"$/, '$1').toUpperCase()
+  const minutes = parseAlarmTriggerMinutes(alarm.trigger)
+  const value = alarm.action.toUpperCase() === 'DISPLAY' && (!param('RELATED') || param('RELATED') === 'START')
+    && (!param('VALUE') || param('VALUE') === 'DURATION') && minutes !== null && Number.isInteger(minutes)
+    && minutes >= 0 && minutes <= 525600 ? String(minutes) : null
+  return { value, initial: value, source: alarm }
+}
+
+function rowAlarm(row: AlarmRow, title: string): VAlarm | null {
+  if (row.source && row.value === row.initial) return row.source
+  return row.value === null ? null : alarmToVAlarm(row.value, title)
+}
+
 function formatDateForInput(date: Date, tz: string | undefined): string {
   if (!tz) {
     const y = date.getFullYear()
@@ -238,7 +259,7 @@ function formatDateForInput(date: Date, tz: string | undefined): string {
     const d = String(date.getDate()).padStart(2, '0')
     return `${y}-${m}-${d}`
   }
-  return formatDateForInputInZone(date, tz)
+  return formatDateForInputInZone(date, resolveTimeZone(tz) ?? 'UTC')
 }
 
 function formatDateForDisplay(date: Date, tz: string | undefined): string {
@@ -249,11 +270,11 @@ function formatDateForDisplay(date: Date, tz: string | undefined): string {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
-      ...(tz ? { timeZone: tz } : {}),
+      ...(tz ? { timeZone: resolveTimeZone(tz) ?? 'UTC' } : {}),
     })
   }
 
-  const weekday = date.toLocaleDateString(undefined, { weekday: 'short', ...(tz ? { timeZone: tz } : {}) })
+  const weekday = date.toLocaleDateString(undefined, { weekday: 'short', ...(tz ? { timeZone: resolveTimeZone(tz) ?? 'UTC' } : {}) })
   const datePart = formatDate(date, pref)
   return `${weekday} ${datePart}`
 }
@@ -437,16 +458,9 @@ export function EventDialog({
   const [categories, setCategories] = useState<string[]>(
     isEdit ? (event.categories ?? []) : [],
   )
-  const [alarms, setAlarms] = useState<string[]>(() => {
-    if (isEdit && event.alarms && event.alarms.length > 0) {
-      return event.alarms
-        .map((a) => {
-          const mins = parseAlarmTriggerMinutes(a.trigger)
-          return mins > 0 ? String(mins) : 'none'
-        })
-        .filter((v) => v !== 'none')
-    }
-    return defaultReminder !== 'none' ? [defaultReminder] : []
+  const [alarms, setAlarms] = useState<AlarmRow[]>(() => {
+    if (isEdit) return (event.alarms ?? []).map(alarmRow)
+    return defaultReminder !== 'none' ? [{ value: defaultReminder, initial: defaultReminder }] : []
   })
 
   // Timezone state — per-event override, defaults to user preference
@@ -576,7 +590,7 @@ export function EventDialog({
       return new Date(y, m - 1, d, 0, 0, 0, 0)
     }
     const [h, min] = time.split(':').map(Number)
-    return instantFromWallClock(y, m, d, h, min, timezone)
+    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(timezone) ?? 'UTC')
   }, [allDay, timezone])
 
   const endFromInputs = useCallback((dateIso: string, time: string): Date => {
@@ -588,7 +602,7 @@ export function EventDialog({
       return new Date(y, m - 1, d + 1, 0, 0, 0, 0)
     }
     const [h, min] = time.split(':').map(Number)
-    return instantFromWallClock(y, m, d, h, min, timezone)
+    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(timezone) ?? 'UTC')
   }, [allDay, timezone])
 
   const buildStartDate = useCallback(
@@ -672,11 +686,9 @@ export function EventDialog({
 
         // Compare alarms
         const eventAlarms: VAlarm[] = alarms
-          .map((a) => alarmToVAlarm(a, title))
+          .map((row) => rowAlarm(row, title))
           .filter((a): a is VAlarm => a !== null)
-        const existingTriggers = (event.alarms ?? []).map((a) => a.trigger).sort().join(',')
-        const newTriggers = eventAlarms.map((a) => a.trigger).sort().join(',')
-        if (existingTriggers !== newTriggers) {
+        if (eventAlarms.length !== event.alarms.length || eventAlarms.some((alarm, i) => alarm !== event.alarms[i])) {
           patch.alarms = eventAlarms
         }
 
@@ -717,7 +729,7 @@ export function EventDialog({
             timezone,
             calendarId: selectedCalendarId,
             alarms: alarms
-              .map((a) => alarmToVAlarm(a, title))
+              .map((row) => rowAlarm(row, title))
               .filter((a): a is VAlarm => a !== null),
           })
         } catch (err) {
@@ -1253,14 +1265,16 @@ export function EventDialog({
                         aria-label="Event timezone"
                         className={`min-w-0 flex-1 ${compactFieldClass} ${disabledClass}`}
                       >
+                        {!allTimezones.includes(timezone) && <option value={timezone}>{timezone}</option>}
                         {allTimezones.map((tz) => (
                           <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
                         ))}
                       </select>
                     </div>
+                    {!resolveTimeZone(timezone) && <p className="text-xs text-[rgb(var(--muted))]">Time zone not recognised. Times are shown as a UTC approximation; the original zone is kept.</p>}
                     {timezone !== userTz && (
                       <span className="block pl-7 text-xs leading-relaxed text-[rgb(var(--muted))]">
-                        Event anchored in {shortTimezoneLabel(timezone, buildStartDate())}; your calendar shows {shortTimezoneLabel(userTz, buildStartDate())}.
+                        Event anchored in {shortTimezoneLabel(resolveTimeZone(timezone) ?? 'UTC', buildStartDate())}; your calendar shows {shortTimezoneLabel(userTz, buildStartDate())}.
                       </span>
                     )}
                   </div>
@@ -1277,7 +1291,7 @@ export function EventDialog({
                   {canWrite && (
                     <button
                       type="button"
-                      onClick={() => setAlarms((prev) => [...prev, '15'])}
+                      onClick={() => setAlarms((prev) => [...prev, { value: '15', initial: '15' }])}
                       className={`rounded-full border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold text-emerald-600 transition-colors hover:bg-emerald-500/10 dark:text-emerald-400 ${focusRing}`}
                     >
                       + Add
@@ -1291,7 +1305,9 @@ export function EventDialog({
                   </div>
                 )}
 
-                {alarms.map((alarm, i) => {
+                {alarms.map((row, i) => {
+                  const alarm = row.value
+                  if (alarm === null) return <p key={i} className="text-sm text-[rgb(var(--muted))]">Imported reminder kept unchanged; edit it in its original calendar app.</p>
                   const isCustomAlarm = !isPresetAlarm(alarm)
                   return (
                   <div key={i} className="flex flex-col gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-2 sm:flex-row sm:items-start">
@@ -1299,13 +1315,14 @@ export function EventDialog({
                       value={isCustomAlarm ? 'custom' : alarm}
                       onChange={(e) => {
                         const next = [...alarms]
-                        next[i] = e.target.value === 'custom' ? '10' : e.target.value
+                        next[i] = { ...next[i]!, value: e.target.value === 'custom' ? '10' : e.target.value }
                         setAlarms(next)
                       }}
                       disabled={!canWrite}
                       aria-label={`Reminder ${i + 1}`}
                       className={`min-w-0 flex-1 ${compactFieldClass} ${disabledClass}`}
                     >
+                      <option value="0">At start</option>
                       <option value="5">5 minutes before</option>
                       <option value="15">15 minutes before</option>
                       <option value="30">30 minutes before</option>
@@ -1317,18 +1334,18 @@ export function EventDialog({
                       <label className="flex min-w-0 flex-1 items-center gap-2 text-sm text-[rgb(var(--muted))] sm:max-w-[14rem]">
                         <input
                           type="number"
-                          min="1"
+                          min="0"
                           max="525600"
                           step="1"
                           value={alarm}
                           onChange={(e) => {
                             const next = [...alarms]
-                            next[i] = e.target.value
+                            next[i] = { ...next[i]!, value: e.target.value }
                             setAlarms(next)
                           }}
                           onBlur={(e) => {
                             const next = [...alarms]
-                            next[i] = normalizeAlarmMinutes(e.target.value) ?? '15'
+                            next[i] = { ...next[i]!, value: normalizeAlarmMinutes(e.target.value) ?? '15' }
                             setAlarms(next)
                           }}
                           aria-label={`Custom reminder ${i + 1} minutes before`}

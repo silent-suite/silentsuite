@@ -1,5 +1,6 @@
 import type { CalendarEventExternal } from '@schedule-x/calendar'
-import { expandEventRecurrence, occurrenceEnd } from '@silentsuite/core'
+import { expandEventRecurrence, occurrenceEnd, fromVEvent, parseICalDateValue } from '@silentsuite/core'
+import { topLevelProperty } from '@silentsuite/core/utils/ical-parser'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
 import { dateToPlainDate, isMultiDayTimedRange, toAllDayEndPlainDate, toTimedMonthEndPlainDate } from './all-day'
 
@@ -23,6 +24,29 @@ export interface DisplayEvent {
 }
 
 type CalendarGridView = 'week' | 'month'
+
+/**
+ * A timed event without DTEND or DURATION ends at its start (RFC 5545 §3.6.1); Android calendar
+ * apps such as Fossify write those. The grid draws them this long so they can be seen and clicked;
+ * the event itself keeps its zero length.
+ */
+export const ZERO_LENGTH_DISPLAY_MS = 30 * 60 * 1000
+
+/**
+ * Drawn end of a zero-length timed event: 30 minutes after its start, but no later than the end
+ * of its local day, so a late-evening event stays a single chip on its own day.
+ */
+export function zeroLengthDisplayEnd(start: Date, timeZone: string): Date {
+  const startMs = start.getTime()
+  const end = startMs + ZERO_LENGTH_DISPLAY_MS
+  try {
+    const day = Temporal.Instant.fromEpochMilliseconds(startMs).toZonedDateTimeISO(timeZone).toPlainDate()
+    const lastMs = startOfDay(day.add({ days: 1 }), timeZone).epochMilliseconds - 1
+    return new Date(lastMs > startMs ? Math.min(end, lastMs) : end)
+  } catch {
+    return new Date(end)
+  }
+}
 
 export interface VisibleDateRange {
   start: Temporal.PlainDate
@@ -50,9 +74,46 @@ function expandEvents(
   let droppedCount = 0
 
   for (const event of events) {
+    if (event.status?.toUpperCase() === 'CANCELLED' && !event.recurrenceRule
+      && event.unknownProperties?.some(line => /^RECURRENCE-ID[;:]/i.test(line))) continue
+    const replaced = new Set<number>()
+    const replacements: DisplayEvent[] = []
+    for (const block of event.overrides ?? []) {
+      if (!event.recurrenceRule || topLevelProperty(block, 'UID')?.value !== event.uid) continue
+      const rid = topLevelProperty(block, 'RECURRENCE-ID')
+      if (!rid) continue
+      const instance = parseICalDateValue(rid.value, rid.params.TZID ?? event.timezone).date
+      if (!Number.isFinite(instance.getTime())) continue
+      if (topLevelProperty(block, 'STATUS')?.value.toUpperCase() === 'CANCELLED') {
+        replaced.add(instance.getTime())
+        continue
+      }
+      try {
+        const changed = fromVEvent(block.join('\r\n'))
+        if (!Number.isFinite(changed.startDate.getTime()) || !Number.isFinite(changed.endDate.getTime())) continue
+        replaced.add(instance.getTime())
+        const display = expandEvents([{
+          ...changed, recurrenceRule: null, overrides: undefined, calendarId: event.calendarId,
+          title: topLevelProperty(block, 'SUMMARY') ? changed.title : event.title,
+          description: topLevelProperty(block, 'DESCRIPTION') ? changed.description : event.description,
+          location: topLevelProperty(block, 'LOCATION') ? changed.location : event.location,
+          categories: topLevelProperty(block, 'CATEGORIES') ? changed.categories : event.categories,
+          endDate: topLevelProperty(block, 'DTEND') || topLevelProperty(block, 'DURATION')
+            ? changed.endDate : occurrenceEnd(event, changed.startDate),
+        }], range, gridSemantics)
+        droppedCount += display.droppedCount
+        replacements.push(...display.events.map(occurrence => ({
+          ...occurrence, id: `${event.id}__${instance.getTime()}`, masterId: event.id,
+          isRecurring: true, instanceDate: instance,
+        })))
+      } catch {
+        // Keep the master slot if an unreadable override cannot replace it.
+      }
+    }
     if (!event.recurrenceRule) {
       const overlaps = gridSemantics
-        ? event.endDate > range.start && event.startDate < range.end
+        // A zero-length event at the range start has no length inside the range but still shows.
+        ? (event.endDate > range.start || event.startDate >= range.start) && event.startDate < range.end
         : (event.allDay ? event.endDate > range.start : event.endDate >= range.start)
           && event.startDate <= range.end
       if (overlaps) {
@@ -74,7 +135,7 @@ function expandEvents(
       }
     } else {
       const duration = event.endDate.getTime() - event.startDate.getTime()
-      if (gridSemantics && (!Number.isFinite(duration) || duration <= 0)) {
+      if (gridSemantics && (!Number.isFinite(duration) || duration < 0)) {
         droppedCount += 1
         continue
       }
@@ -98,9 +159,10 @@ function expandEvents(
       const occurrences = expandEventRecurrence(event, recurrenceRange)
 
       for (const occDate of occurrences) {
+        if (replaced.has(occDate.getTime())) continue
         // Each occurrence takes its own end: a day or week DURATION keeps its wall clock across DST.
         const occEnd = occurrenceEnd(event, occDate)
-        if (gridSemantics && !(occDate < range.end && occEnd > range.start)) continue
+        if (gridSemantics && !(occDate < range.end && (occEnd > range.start || occDate >= range.start))) continue
         result.push({
           id: `${event.id}__${occDate.getTime()}`,
           masterId: event.id,
@@ -118,6 +180,7 @@ function expandEvents(
         })
       }
     }
+    result.push(...replacements)
   }
 
   return { events: result, droppedCount }
@@ -325,12 +388,16 @@ export function toScheduleXProjection(
     try {
       const sourceStartMs = source.startDate.getTime()
       const sourceEndMs = source.endDate.getTime()
-      if (!Number.isFinite(sourceStartMs) || !Number.isFinite(sourceEndMs) || sourceEndMs <= sourceStartMs) {
+      if (!Number.isFinite(sourceStartMs) || !Number.isFinite(sourceEndMs) || sourceEndMs < sourceStartMs) {
         droppedCount += 1
         continue
       }
+      // Zero length: all-day ends clamp to their start day; timed ones get a short display end.
+      const displayEnd = sourceEndMs === sourceStartMs && !source.allDay
+        ? zeroLengthDisplayEnd(source.startDate, userTz)
+        : source.endDate
       const sourceStart = toScheduleXDateTime(source.startDate, userTz)
-      const sourceEnd = toScheduleXDateTime(source.endDate, userTz)
+      const sourceEnd = toScheduleXDateTime(displayEnd, userTz)
       const isCrossDateTimed =
         currentView === 'week'
         && !source.allDay
@@ -338,7 +405,7 @@ export function toScheduleXProjection(
 
       if (!isCrossDateTimed) {
         const event = toScheduleXEvents(
-          [source],
+          [displayEnd === source.endDate ? source : { ...source, endDate: displayEnd }],
           calendarColors,
           userTz,
           currentView,

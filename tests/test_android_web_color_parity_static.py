@@ -154,8 +154,15 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 200, f"expected 200 Android resource XML files, found {len(files)}"
-    assert {"drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml"} <= {
+    assert len(files) == 210, f"expected 210 Android resource XML files, found {len(files)}"
+    assert {
+        "drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml",
+        "drawable/ic_widget_add.xml", "drawable/widget_add_background.xml",
+        "drawable/widget_background.xml", "drawable/widget_touch_background.xml",
+        "layout/widget_agenda.xml", "layout/widget_agenda_day.xml",
+        "layout/widget_agenda_event.xml", "layout/widget_agenda_message.xml",
+        "layout/widget_agenda_preview.xml", "xml/widget_agenda_info.xml",
+    } <= {
         path.relative_to(RES).as_posix() for path in files
     }
     return files
@@ -930,7 +937,7 @@ def test_immutable_assets_and_runtime_ledger_ownership_are_exact():
     for method in ("dayNightRolesRecreateDeterministically", "systemBarProtectionMatchesApiAndInsets", "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent"):
         assert method in rendered
     runner = source("android/scripts/run-focused-runtime-tests.sh")
-    for count in ("271", '"29:account-dashboard": 38', "157", "54"):
+    for count in ("273", '"29:account-dashboard": 38', "159", "54"):
         assert count in runner
 
 
