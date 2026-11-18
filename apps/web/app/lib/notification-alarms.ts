@@ -4,7 +4,7 @@ const ALARM_DB = 'silentsuite-alarms'
 const ALARM_STORE = 'alarms'
 
 /**
- * Drop every reminder the service worker holds. Used on logout.
+ * Drop every reminder and the legacy cross-origin response cache. Used on logout.
  *
  * The controlling worker is told first, so it clears after any SCHEDULE_ALARMS
  * message still queued behind it. A page can be uncontrolled (first load, hard
@@ -16,6 +16,16 @@ const ALARM_STORE = 'alarms'
  * deleteDatabase blocked.
  */
 export async function clearScheduledAlarms(): Promise<void> {
+  // Finish both operations even if one fails; report a failure only after both settle.
+  const results = await Promise.allSettled([clearReminderRecords(), clearCrossOriginCache()])
+  for (const result of results) if (result.status === 'rejected') throw result.reason
+}
+
+async function clearCrossOriginCache(): Promise<void> {
+  if (typeof caches !== 'undefined') await caches.delete('cross-origin')
+}
+
+async function clearReminderRecords(): Promise<void> {
   const container = typeof navigator === 'undefined' ? undefined : navigator.serviceWorker
   const notified = new Set<ServiceWorker>()
   const notify = (worker: ServiceWorker | null | undefined) => {

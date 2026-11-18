@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<resources>
+    <dimen name="widget_month_corner_radius">@android:dimen/system_app_widget_background_radius</dimen>
+</resources>
