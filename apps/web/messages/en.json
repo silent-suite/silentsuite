@@ -99,6 +99,7 @@
     "saveStateSaved": "Saved",
     "saveStateFailed": "Not saved",
     "closingSave": "Saving your last changes to this note…",
+    "reopeningHeldText": "Checking this browser for text that was not saved…",
     "saveStateCopied": "Saved as a copy",
     "conflictChanged": "This note changed somewhere else after you started editing, so your text was not saved over it. Your text is still here.",
     "conflictUnproved": "This browser could not confirm that the note is unchanged since you started editing, so your text was not saved over it. Your text is still here.",

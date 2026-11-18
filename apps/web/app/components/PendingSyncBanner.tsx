@@ -29,7 +29,8 @@ const HELD_TEXT: Record<HeldReason, string> = {
   'retry-exhausted': "The server didn't confirm this change. Kept on this device.",
   'target-missing': "Not saved to the server: this item was deleted or isn't available to this account. Your edit is kept on this device.",
   unreadable: "Can't be read on this device right now; it may not have been saved.",
-  'base-changed': "Not saved to the server: this item changed after your offline edit, so it wasn't saved over it. Your edit is kept on this device.",
+  // Also refused note text kept on this device (#1113 D1), which was not an offline edit.
+  'base-changed': "Not saved to the server: this item changed somewhere else after your edit, so it wasn't saved over it. Your edit is kept on this device.",
 }
 
 /** The label of a row whose item no current store names; nothing is read from the kept record. */

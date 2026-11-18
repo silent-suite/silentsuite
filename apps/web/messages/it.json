@@ -99,6 +99,7 @@
     "saveStateSaved": "Salvata",
     "saveStateFailed": "Non salvata",
     "closingSave": "Salvataggio delle ultime modifiche a questa nota…",
+    "reopeningHeldText": "Ricerca in questo browser di testo non salvato…",
     "saveStateCopied": "Salvata come copia",
     "conflictChanged": "Questa nota è stata modificata altrove dopo che hai iniziato a scrivere, quindi il tuo testo non l'ha sovrascritta. Il tuo testo è ancora qui.",
     "conflictUnproved": "Questo browser non ha potuto verificare che la nota sia rimasta invariata da quando hai iniziato a scrivere, quindi il tuo testo non l'ha sovrascritta. Il tuo testo è ancora qui.",
