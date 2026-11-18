@@ -7,6 +7,13 @@ import { LogOut, Menu, Settings, Lock } from 'lucide-react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { ThemeToggle } from '@/app/components/theme-toggle'
 import { SyncIndicator } from '@/app/components/SyncIndicator'
+import { SignOutDialog } from '@/app/components/SignOutDialog'
+import {
+  captureSignOutAccount,
+  countLocalOnlyChanges,
+  isSignOutAccountCurrent,
+  type SignOutAccount,
+} from '@/app/lib/local-only-changes'
 
 const titles: Record<string, string> = {
   '/calendar': 'Calendar',
@@ -20,6 +27,8 @@ export function Header() {
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
   const [menuOpen, setMenuOpen] = useState(false)
+  // Changes only on this device that a sign-out would delete, counted for this account.
+  const [signOutCheck, setSignOutCheck] = useState<{ account: SignOutAccount; count: number | null } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuItemsRef = useRef<(HTMLAnchorElement | HTMLButtonElement | null)[]>([])
 
@@ -52,6 +61,26 @@ export function Header() {
       requestAnimationFrame(() => menuItemsRef.current[0]?.focus())
     }
   }, [menuOpen])
+
+  // Log out deletes this device's offline changes and held note text, so it counts them
+  // first; a count that fails counts as having changes (#1113 D1).
+  const logoutCheckRunning = useRef(false)
+  const handleLogout = async () => {
+    if (logoutCheckRunning.current) return
+    logoutCheckRunning.current = true
+    try {
+      const account = captureSignOutAccount()
+      const count = await countLocalOnlyChanges(account)
+      if (!isSignOutAccountCurrent(account)) return
+      if (count === 0) {
+        await logout()
+        return
+      }
+      setSignOutCheck({ account, count })
+    } finally {
+      logoutCheckRunning.current = false
+    }
+  }
 
   const handleMenuKeyDown = (e: React.KeyboardEvent) => {
     const items = menuItemsRef.current.filter(Boolean) as HTMLElement[]
@@ -136,7 +165,7 @@ export function Header() {
                 ref={(el) => { menuItemsRef.current[1] = el }}
                 onClick={() => {
                   setMenuOpen(false)
-                  logout()
+                  void handleLogout()
                 }}
                 role="menuitem"
                 tabIndex={-1}
@@ -149,6 +178,14 @@ export function Header() {
           )}
         </div>
       </div>
+      {signOutCheck && (
+        <SignOutDialog
+          account={signOutCheck.account}
+          count={signOutCheck.count}
+          onLogout={logout}
+          onClose={() => setSignOutCheck(null)}
+        />
+      )}
     </header>
   )
 }

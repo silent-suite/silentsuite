@@ -194,5 +194,18 @@
       "controlChars": "This contains characters that can't be sent.",
       "email": "Enter a valid email address or leave this empty."
     }
+  },
+  "SignOut": {
+    "unsyncedTitle": "Log out with changes on this device?",
+    "unsyncedCount": "{count, plural, one {# change is only on this device. Logging out deletes it.} other {# changes are only on this device. Logging out deletes them.}}",
+    "unsyncedUnknown": "This browser could not check for changes that are only on this device. Logging out deletes any it has.",
+    "syncNow": "Sync now",
+    "syncing": "Syncing…",
+    "cancel": "Cancel",
+    "logOutAndDelete": "Log out and delete",
+    "confirmTitle": "Delete these changes?",
+    "confirmCount": "{count, plural, one {# change that is only on this device will be deleted when you log out. It cannot be recovered.} other {# changes that are only on this device will be deleted when you log out. They cannot be recovered.}}",
+    "confirmUnknown": "Any changes that are only on this device will be deleted when you log out. They cannot be recovered.",
+    "deleteAndLogOut": "Delete and log out"
   }
 }

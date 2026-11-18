@@ -194,5 +194,18 @@
       "controlChars": "Il testo contiene caratteri che non possono essere inviati.",
       "email": "Inserisci un indirizzo email valido o lascia il campo vuoto."
     }
+  },
+  "SignOut": {
+    "unsyncedTitle": "Uscire con modifiche su questo dispositivo?",
+    "unsyncedCount": "{count, plural, one {# modifica è solo su questo dispositivo. Uscendo verrà eliminata.} other {# modifiche sono solo su questo dispositivo. Uscendo verranno eliminate.}}",
+    "unsyncedUnknown": "Questo browser non ha potuto controllare se ci sono modifiche solo su questo dispositivo. Uscendo verranno eliminate tutte quelle presenti.",
+    "syncNow": "Sincronizza ora",
+    "syncing": "Sincronizzazione in corso…",
+    "cancel": "Annulla",
+    "logOutAndDelete": "Esci ed elimina",
+    "confirmTitle": "Eliminare queste modifiche?",
+    "confirmCount": "{count, plural, one {# modifica presente solo su questo dispositivo verrà eliminata quando esci. Non potrà essere recuperata.} other {# modifiche presenti solo su questo dispositivo verranno eliminate quando esci. Non potranno essere recuperate.}}",
+    "confirmUnknown": "Tutte le modifiche presenti solo su questo dispositivo verranno eliminate quando esci. Non potranno essere recuperate.",
+    "deleteAndLogOut": "Elimina ed esci"
   }
 }
