@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.R
+import io.silentsuite.sync.widget.month.MonthWidgetProvider
 import java.util.concurrent.atomic.AtomicLong
 
 /** Shared opt-in and component gate. Add future widget providers to [providers]. */
@@ -38,7 +39,8 @@ object WidgetSettings {
     fun areWidgetsEnabled(context: Context): Boolean = access(context).accounts.isNotEmpty()
 
     internal fun providers(context: Context): List<ComponentName> =
-        listOf(ComponentName(context, AgendaWidgetProvider::class.java))
+        listOf(ComponentName(context, AgendaWidgetProvider::class.java),
+            ComponentName(context, MonthWidgetProvider::class.java))
 
     /** Called after a verified switch write, never from application startup or account migration. */
     fun applyComponentState(context: Context) {
@@ -50,6 +52,8 @@ object WidgetSettings {
             if (context.packageManager.getComponentEnabledSetting(provider) != state)
                 context.packageManager.setComponentEnabledSetting(provider, state, PackageManager.DONT_KILL_APP)
         }
+        // Switching one account off need not emit a CalendarProvider change for the remaining widgets.
+        MonthWidgetProvider.requestUpdate(context)
         WidgetRefresh.schedule(context)
     }
 

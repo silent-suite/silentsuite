@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_month_day"
+    android:layout_width="0dp"
+    android:layout_height="match_parent"
+    android:layout_weight="1"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="@drawable/widget_month_control_background">
+    <TextView
+        android:id="@+id/widget_month_number"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:width="32dp"
+        android:height="32dp"
+        android:gravity="center"
+        android:background="@drawable/widget_month_day_background"
+        android:includeFontPadding="false"
+        android:textSize="14sp"
+        android:maxLines="1"
+        android:textColor="@color/semantic_on_primary_container"
+        android:importantForAccessibility="no" />
+    <ImageView
+        android:id="@+id/widget_month_marker"
+        android:layout_width="4dp"
+        android:layout_height="4dp"
+        android:layout_marginTop="2dp"
+        android:src="@drawable/widget_month_marker"
+        android:importantForAccessibility="no" />
+</LinearLayout>

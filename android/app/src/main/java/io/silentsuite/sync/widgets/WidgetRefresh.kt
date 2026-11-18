@@ -20,6 +20,7 @@ import android.os.Looper
 import android.os.Bundle
 import android.provider.CalendarContract
 import io.silentsuite.sync.ui.PermissionsActivity
+import io.silentsuite.sync.widget.month.MonthWidgetProvider
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -33,7 +34,7 @@ object WidgetRefresh {
 
     fun refresh(context: Context) {
         AgendaWidgetProvider.updateAll(context)
-        // Other widget providers can refresh here when added to WidgetSettings.providers.
+        MonthWidgetProvider.requestUpdate(context)
     }
 
     fun schedule(context: Context, replaceContentJob: Boolean = false) {

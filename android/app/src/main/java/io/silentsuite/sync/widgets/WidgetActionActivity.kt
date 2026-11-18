@@ -14,6 +14,7 @@ import io.silentsuite.sync.ui.PermissionsActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.DateTimeException
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -37,6 +38,16 @@ class WidgetActionActivity : ComponentActivity() {
                 val target = when (intent.action) {
                     TODAY -> Intent(Intent.ACTION_VIEW, CalendarContract.CONTENT_URI.buildUpon()
                         .appendPath("time").appendPath(System.currentTimeMillis().toString()).build())
+                    DAY -> {
+                        val day = try {
+                            LocalDate.parse(intent.getStringExtra(DATE) ?: return@launch)
+                        } catch (_: DateTimeException) {
+                            return@launch
+                        }
+                        val millis = day.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        Intent(Intent.ACTION_VIEW, CalendarContract.CONTENT_URI.buildUpon()
+                            .appendPath("time").appendPath(millis.toString()).build())
+                    }
                     ADD -> Intent(Intent.ACTION_INSERT, CalendarContract.Events.CONTENT_URI)
                     EVENT -> {
                         val id = intent.getLongExtra(EVENT_ID, -1)
@@ -72,6 +83,8 @@ class WidgetActionActivity : ComponentActivity() {
 
     companion object {
         const val TODAY = "io.silentsuite.sync.widgets.TODAY"
+        const val DAY = "io.silentsuite.sync.widgets.DAY"
+        const val DATE = "date"
         const val ADD = "io.silentsuite.sync.widgets.ADD"
         const val EVENT = "io.silentsuite.sync.widgets.EVENT"
         const val PERMISSION = "io.silentsuite.sync.widgets.PERMISSION"
