@@ -209,10 +209,10 @@ describe('Security page account action when hosted (control)', () => {
     mocks.selfHosted = false
   })
 
-  it('keeps the permanent deletion copy and typed DELETE confirmation', () => {
+  it('explains what account deletion leaves behind and keeps typed DELETE confirmation', () => {
     renderWithIntl(<SecurityPage />)
 
-    expect(screen.getByText('This action is permanent. All your data will be deleted and cannot be recovered.')).toBeInTheDocument()
+    expect(screen.getByText('This permanently deletes your SilentSuite account and cancels any active subscription. Your encrypted calendar, contacts, tasks and notes are stored separately and are not erased by this step. Email info@silentsuite.io if you want them erased too.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Sign out of this device' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete my account' }))
@@ -357,7 +357,7 @@ describe('Security page account action on the hosted frontend with a self-hosted
     renderWithIntl(<SecurityPage />)
 
     expect(screen.getByRole('button', { name: 'Delete my account' })).toBeInTheDocument()
-    expect(screen.getByText('This action is permanent. All your data will be deleted and cannot be recovered.')).toBeInTheDocument()
+    expect(screen.getByText('This permanently deletes your SilentSuite account and cancels any active subscription. Your encrypted calendar, contacts, tasks and notes are stored separately and are not erased by this step. Email info@silentsuite.io if you want them erased too.')).toBeInTheDocument()
   })
 })
 
