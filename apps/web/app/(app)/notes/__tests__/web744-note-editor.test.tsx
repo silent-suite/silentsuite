@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { act, fireEvent, within } from '@testing-library/react'
 import { NextIntlClientProvider } from 'next-intl'
-import type { ReactNode } from 'react'
+import { StrictMode, type ReactNode } from 'react'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import messages from '@/messages/en.json'
 
@@ -86,6 +86,7 @@ import {
   getMountedNoteEditor,
   getNoteObligation,
   markNoteObligation,
+  readNewerNoteVersion,
   registerNoteEditor,
   resetNoteLifecycle,
   useNoteStore,
@@ -102,6 +103,7 @@ import {
   installNoteAccount,
   makeSavedNote,
   queueGuard,
+  respond,
   serverText,
 } from '@/app/stores/__tests__/web744-sdk-fixture'
 
@@ -119,15 +121,16 @@ function ui() {
   return within(document.body)
 }
 
-function renderNotesPage() {
+function renderNotesPage({ strict = false } = {}) {
   const container = document.body.appendChild(document.createElement('div'))
   const root = harness.createRoot(container)
+  const page = (
+    <NextIntlClientProvider locale="en" messages={messages}>
+      <NotesPage />
+    </NextIntlClientProvider>
+  )
   act(() => {
-    root.render(
-      <NextIntlClientProvider locale="en" messages={messages}>
-        <NotesPage />
-      </NextIntlClientProvider>,
-    )
+    root.render(strict ? <StrictMode>{page}</StrictMode> : page)
   })
   let unmounted = false
   const view = {
@@ -781,5 +784,749 @@ describe('#744 the rendered note editor saves only through its captured base', (
     expect([notebookPicker().value, titleBox().readOnly, bodyBox().readOnly, saveStatus().textContent]).toEqual([target.uid, false, false, ''])
     expect(ui().getAllByRole('button', { name: new RegExp(BASE_TITLE) })).toHaveLength(1)
     expect(await serverText(account, target, movedCopy(target)!.id)).toBe(BASE_BODY)
+  })
+
+  describe('#1113 D1 refused text, Save as a copy and the newer version', () => {
+    // While a save runs, the row shows that save's optimistic title.
+    const baseRow = () => ui().getByRole('button', { name: new RegExp(`^(${BASE_TITLE}|${DRAFT_TITLE})(?! [(]conflicted copy[)])`) })
+    const otherRow = () => ui().getByRole('button', { name: new RegExp(OTHER_TITLE) })
+    const otherNote = () => useNoteStore.getState().notes.find((note: any) => note.title === OTHER_TITLE)
+
+    function beforeUnloadPrevented(): boolean {
+      const event = new harness.window.Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+
+    /** The note open with a draft typed on R0 that the server refused after a peer wrote A. */
+    async function refusedDraft() {
+      const { account, collection, item } = await seedSavedNote()
+      await addOtherNote(account, collection, item)
+      renderNotesPage()
+      fireEvent.click(baseRow())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      const peerItem = await peerWritesA(account, collection, item)
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      return { account, collection, item, peerItem }
+    }
+
+    it('shows the refused text again when the note is opened after switching notes', async () => {
+      const { account, collection, item } = await refusedDraft()
+      fireEvent.click(otherRow())
+      await settle()
+      expect(titleBox().value).toBe(OTHER_TITLE)
+
+      fireEvent.click(baseRow())
+      await settle()
+
+      expect([titleBox().value, bodyBox().value]).toEqual([DRAFT_TITLE, BASE_BODY])
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
+    })
+
+    it('keeps a note read-only while its closing save runs, then shows the refused text', async () => {
+      await refusedDraft()
+      const closing = server.holdNext(isTransaction)
+      fireEvent.click(otherRow())
+      await closing.arrived
+      fireEvent.click(baseRow())
+      await settle()
+      expect(ui().queryByRole('textbox', { name: 'Note title' })).toBeNull()
+      expect(saveStatus()).toHaveTextContent('Saving your last changes to this note…')
+      expect(document.querySelector('[aria-busy="true"]')?.getAttribute('translate')).toBe('no')
+
+      closing.release(false)
+      await settle()
+
+      expect([titleBox().value, bodyBox().value, titleBox().readOnly]).toEqual([DRAFT_TITLE, BASE_BODY, false])
+      expect(saveStatus()).toHaveTextContent('Not saved')
+    })
+
+    it('keeps a note with refused text listed when the server no longer lists it', async () => {
+      await refusedDraft()
+      fireEvent.click(otherRow())
+      await settle()
+
+      act(() => useNoteStore.getState().syncFromRemote([otherNote()]))
+      await settle()
+
+      expect(ui().getAllByRole('button', { name: new RegExp(BASE_TITLE) })).toHaveLength(1)
+      fireEvent.click(baseRow())
+      await settle()
+      expect(titleBox().value).toBe(DRAFT_TITLE)
+    })
+
+    it('asks before the tab closes while refused text is kept, and not once the text is back to the saved one', async () => {
+      await refusedDraft()
+      expect(beforeUnloadPrevented()).toBe(true)
+      fireEvent.click(otherRow())
+      await settle()
+      expect(beforeUnloadPrevented()).toBe(true)
+      fireEvent.click(baseRow())
+      await settle()
+
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+
+      expect(beforeUnloadPrevented()).toBe(false)
+    })
+
+    it('opens kept text as an editable note when Strict Mode replays the editor effects', async () => {
+      const { item } = await refusedDraft()
+      fireEvent.click(otherRow())
+      await settle()
+      mounted.pop()!.unmount()
+      await settle()
+      const before = server.transactions.length
+
+      renderNotesPage({ strict: true })
+      fireEvent.click(baseRow())
+      await settle()
+
+      expect([titleBox().value, titleBox().readOnly]).toEqual([DRAFT_TITLE, false])
+      expect(useNoteStore.getState().closingNoteIds).not.toContain(item.uid)
+      // The replayed unmount flushes once, as any unmount does; it never starts a closing loop.
+      expect(server.transactions.length - before).toBeLessThanOrEqual(1)
+    })
+
+    it('stops asking once the kept text is saved', async () => {
+      const { account, collection, peerItem } = await refusedDraft()
+      expect(beforeUnloadPrevented()).toBe(true)
+      // The peer puts the body back, so the server again matches the base the draft was typed on.
+      await peerWrites(account, collection, peerItem, BASE_BODY)
+
+      hideTab()
+      await settle()
+
+      expect(saveStatus()).toHaveTextContent('Saved')
+      expect(beforeUnloadPrevented()).toBe(false)
+    })
+
+    it('drops kept text and the leave prompt on the account reset', async () => {
+      await refusedDraft()
+      fireEvent.click(otherRow())
+      await settle()
+
+      resetNoteLifecycle()
+
+      expect(beforeUnloadPrevented()).toBe(false)
+      fireEvent.click(baseRow())
+      await settle()
+      expect(titleBox().value).toBe(BASE_TITLE)
+    })
+
+    const COPY_TITLE = `${DRAFT_TITLE} (conflicted copy)`
+    const copyButton = () => ui().getByRole('button', { name: /^(Save as a copy|Saving a copy…)$/ })
+    const newerButton = () => ui().getByRole('button', { name: /^(Show|Hide) newer version$/ })
+    const newerPanel = () => ui().queryByRole('region', { name: 'Newer version, read-only' })
+    const storedCopies = () => useNoteStore.getState().notes.filter((note: any) => note.title === COPY_TITLE)
+
+    /** Every live item on the server with this title. */
+    async function serverCopies(account: any, collection: any, title = COPY_TITLE): Promise<any[]> {
+      const response = await account.getCollectionManager().getItemManager(collection).list()
+      return response.data.filter((candidate: any) => !candidate.isDeleted && candidate.getMeta().name === title)
+    }
+
+    /** A request's method and path as the reference server matches them. */
+    const requestOf = (url: string, options: any): [string, string] => [
+      String(options?.method ?? 'get').toLowerCase(),
+      new URL(url).pathname.split('/').filter(Boolean).map(decodeURIComponent).join('/'),
+    ]
+
+    /** The server stores the next transaction, then its response is lost on the way back. */
+    function loseNextTransactionResponse() {
+      let armed = true
+      EtebaseRequest.default = async (url: string, options: any) => {
+        const response = await server.handle(url, options)
+        if (armed && isTransaction(...requestOf(url, options))) {
+          armed = false
+          throw new TypeError('Network request failed')
+        }
+        return response
+      }
+    }
+
+    it('offers Save as a copy with the reason, and makes one conflicted copy in the notebook on a double click', async () => {
+      const { account, collection, item } = await refusedDraft()
+      expect(ui().getByText(/^This note changed somewhere else after you started editing/)).toBeTruthy()
+      const before = server.transactions.length
+
+      const button = copyButton()
+      fireEvent.click(button)
+      fireEvent.click(button)
+      await settle()
+
+      expect(server.transactions.length - before).toBe(1)
+      expect(storedCopies()).toHaveLength(1)
+      const [copy] = await serverCopies(account, collection)
+      expect(copy).toBeDefined()
+      expect(new TextDecoder().decode(await copy.getContent())).toBe(BASE_BODY)
+      // Fresh metadata, as Android's conflicted copy: the name and the time only.
+      expect(Object.keys(copy.getMeta()).sort()).toEqual(['mtime', 'name'])
+      expect(storedCopies()[0].notebookId).toBe(collection.uid)
+      // The copy opens with the text; the other version stays as it was.
+      expect([titleBox().value, bodyBox().value]).toEqual([COPY_TITLE, BASE_BODY])
+      expect(saveStatus()).toHaveTextContent('Saved as a copy')
+      expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
+      expect(beforeUnloadPrevented()).toBe(false)
+    })
+
+    it('keeps the title and body read-only while the copy is being made', async () => {
+      await refusedDraft()
+      const uploading = server.holdNext(isTransaction)
+      fireEvent.click(copyButton())
+      await uploading.arrived
+
+      expect([titleBox().readOnly, bodyBox().readOnly, copyButton().textContent]).toEqual([true, true, 'Saving a copy…'])
+      expect(beforeUnloadPrevented()).toBe(true)
+
+      uploading.release(false)
+      await settle()
+      expect(titleBox().value).toBe(COPY_TITLE)
+    })
+
+    it('makes one copy when the first upload reached the server but its response was lost', async () => {
+      const { account, collection } = await refusedDraft()
+      loseNextTransactionResponse()
+      fireEvent.click(copyButton())
+      await settle()
+      expect(ui().getByText(/^Not copied: the server did not confirm the copy/)).toBeTruthy()
+      expect([titleBox().value, titleBox().readOnly]).toEqual([DRAFT_TITLE, false])
+      expect(await serverCopies(account, collection)).toHaveLength(1)
+
+      fireEvent.click(copyButton())
+      await settle()
+
+      expect(await serverCopies(account, collection)).toHaveLength(1)
+      expect(storedCopies()).toHaveLength(1)
+      expect([titleBox().value, bodyBox().value]).toEqual([COPY_TITLE, BASE_BODY])
+    })
+
+    it('puts typing after an unconfirmed copy onto that one copy', async () => {
+      const { account, collection } = await refusedDraft()
+      loseNextTransactionResponse()
+      fireEvent.click(copyButton())
+      await settle()
+      fireEvent.change(bodyBox(), { target: { value: 'TYPED AFTER LOST COPY 1113' } })
+
+      fireEvent.click(copyButton())
+      await settle()
+      expect([titleBox().value, bodyBox().value]).toEqual([COPY_TITLE, 'TYPED AFTER LOST COPY 1113'])
+      hideTab()
+      await settle()
+
+      const copies = await serverCopies(account, collection)
+      expect(copies).toHaveLength(1)
+      expect(new TextDecoder().decode(await copies[0].getContent())).toBe('TYPED AFTER LOST COPY 1113')
+      expect(saveStatus()).toHaveTextContent('Saved')
+    })
+
+    it('confirms a copy that landed and changed elsewhere without overwriting it', async () => {
+      const { account, collection } = await refusedDraft()
+      loseNextTransactionResponse()
+      fireEvent.click(copyButton())
+      await settle()
+      const [landed] = await serverCopies(account, collection)
+      await peerWrites(account, collection, landed, 'PEER EDIT OF THE COPY 1113')
+
+      fireEvent.click(copyButton())
+      await settle()
+
+      const copies = await serverCopies(account, collection)
+      expect(copies).toHaveLength(1)
+      expect(new TextDecoder().decode(await copies[0].getContent())).toBe('PEER EDIT OF THE COPY 1113')
+      expect([titleBox().value, bodyBox().value]).toEqual([COPY_TITLE, 'PEER EDIT OF THE COPY 1113'])
+    })
+
+    it('says when the copy was deleted elsewhere before it was confirmed, and makes a new one next time', async () => {
+      const { account, collection } = await refusedDraft()
+      loseNextTransactionResponse()
+      fireEvent.click(copyButton())
+      await settle()
+      const [landed] = await serverCopies(account, collection)
+      const tombstone = landed._clone()
+      tombstone.delete()
+      await account.getCollectionManager().getItemManager(collection).transaction([tombstone])
+
+      fireEvent.click(copyButton())
+      await settle()
+      expect(ui().getByText(/^Not copied: the copy was deleted somewhere else/)).toBeTruthy()
+      expect(titleBox().value).toBe(DRAFT_TITLE)
+
+      fireEvent.click(copyButton())
+      await settle()
+      const copies = await serverCopies(account, collection)
+      expect(copies).toHaveLength(1)
+      expect(copies[0].uid).not.toBe(landed.uid)
+      expect(titleBox().value).toBe(COPY_TITLE)
+    })
+
+    it('says a copy needs a connection while offline, sends nothing and keeps the text', async () => {
+      await refusedDraft()
+      const before = server.transactions.length
+      Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, get: () => false })
+      try {
+        fireEvent.click(copyButton())
+        await settle()
+      } finally {
+        Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, get: () => true })
+      }
+
+      expect(ui().getByText('Not copied: you are offline, and a copy needs a connection.')).toBeTruthy()
+      expect([titleBox().value, titleBox().readOnly]).toEqual([DRAFT_TITLE, false])
+      expect(server.transactions.length).toBe(before)
+    })
+
+    it('keeps a failed copy and its reason when the editor closes and opens again', async () => {
+      const { account, collection } = await refusedDraft()
+      loseNextTransactionResponse()
+      fireEvent.click(copyButton())
+      await settle()
+      fireEvent.click(otherRow())
+      await settle()
+
+      fireEvent.click(baseRow())
+      await settle()
+      expect(titleBox().value).toBe(DRAFT_TITLE)
+      expect(ui().getByText(/^Not copied: the server did not confirm the copy/)).toBeTruthy()
+      fireEvent.click(copyButton())
+      await settle()
+
+      expect(await serverCopies(account, collection)).toHaveLength(1)
+      expect(titleBox().value).toBe(COPY_TITLE)
+    })
+
+    it('finishes a copy whose editor closed meanwhile, and keeps the text when it fails', async () => {
+      const { account, collection, item } = await refusedDraft()
+      const sourceSaves = () => server.transactions.filter((sent) => sent.items.some((entry: any) => entry.uid === item.uid)).length
+      const savesBefore = sourceSaves()
+      const uploading = server.holdNext(isTransaction)
+      fireEvent.click(copyButton())
+      await uploading.arrived
+      fireEvent.click(otherRow())
+      await settle()
+      expect(titleBox().value).toBe(OTHER_TITLE)
+      // The copy owns the text: closing the editor sends no save of the source.
+      expect(sourceSaves()).toBe(savesBefore)
+
+      // The request fails before the server handles it: no copy, and the text is kept.
+      uploading.release(true)
+      await settle()
+      expect(await serverCopies(account, collection)).toHaveLength(0)
+      expect(titleBox().value).toBe(OTHER_TITLE)
+      fireEvent.click(baseRow())
+      await settle()
+      expect(titleBox().value).toBe(DRAFT_TITLE)
+      expect(ui().getByText(/^Not copied: the server did not confirm the copy/)).toBeTruthy()
+
+      const second = server.holdNext(isTransaction)
+      fireEvent.click(copyButton())
+      await second.arrived
+      fireEvent.click(otherRow())
+      await settle()
+      second.release(false)
+      await settle()
+      // Done with the editor closed: the copy is listed, the selection stays, nothing is held.
+      expect(titleBox().value).toBe(OTHER_TITLE)
+      expect(await serverCopies(account, collection)).toHaveLength(1)
+      expect(storedCopies()).toHaveLength(1)
+      expect(beforeUnloadPrevented()).toBe(false)
+      fireEvent.click(baseRow())
+      await settle()
+      expect(titleBox().value).toBe(BASE_TITLE)
+      expect(ui().queryByRole('button', { name: 'Save as a copy' })).toBeNull()
+    })
+
+    it('makes a new copy for a later refusal once the text was saved, and leaves the earlier copy as it was', async () => {
+      const { account, collection } = await refusedDraft()
+      loseNextTransactionResponse()
+      fireEvent.click(copyButton())
+      await settle()
+      expect(await serverCopies(account, collection)).toHaveLength(1)
+      // Back to the saved text: nothing is left to copy, and the attempt goes with it.
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      fireEvent.change(titleBox(), { target: { value: 'SECOND DRAFT 1113' } })
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
+
+      fireEvent.click(copyButton())
+      await settle()
+
+      const [earlier] = await serverCopies(account, collection)
+      expect(new TextDecoder().decode(await earlier.getContent())).toBe(BASE_BODY)
+      expect(await serverCopies(account, collection, 'SECOND DRAFT 1113 (conflicted copy)')).toHaveLength(1)
+      expect(titleBox().value).toBe('SECOND DRAFT 1113 (conflicted copy)')
+    })
+
+    it('sends only the current text when it changed after a copy that never reached the server', async () => {
+      const { account, collection } = await refusedDraft()
+      const first = server.holdNext(isTransaction)
+      fireEvent.click(copyButton())
+      await first.arrived
+      first.release(true)
+      await settle()
+      expect(ui().getByText(/^Not copied: the server did not confirm the copy/)).toBeTruthy()
+      fireEvent.change(bodyBox(), { target: { value: 'CURRENT TEXT 1113' } })
+
+      fireEvent.click(copyButton())
+      await settle()
+
+      const copies = await serverCopies(account, collection)
+      expect(copies).toHaveLength(1)
+      expect(new TextDecoder().decode(await copies[0].getContent())).toBe('CURRENT TEXT 1113')
+      // One upload reached the server for the copy: the current text, never the earlier one.
+      expect(server.transactions.filter((sent) => sent.items.some((entry: any) => entry.uid === copies[0].uid))).toHaveLength(1)
+    })
+
+    it('offers no copy while a save of the note is still running', async () => {
+      await refusedDraft()
+      const saving = server.holdNext(isTransaction)
+      fireEvent.change(bodyBox(), { target: { value: 'MORE TYPING 1113' } })
+      hideTab()
+      await saving.arrived
+      expect(copyButton()).toBeDisabled()
+      fireEvent.click(copyButton())
+
+      saving.release(false)
+      await settle()
+
+      expect(storedCopies()).toHaveLength(0)
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      expect(copyButton()).toBeEnabled()
+    })
+
+    it('marks no closing save for the next account when the account resets as the editor closes', async () => {
+      const { item } = await refusedDraft()
+      const saving = server.holdNext(isTransaction)
+      fireEvent.change(bodyBox(), { target: { value: 'LAST TYPING 1113' } })
+      hideTab()
+      await saving.arrived
+
+      mounted.pop()!.unmount()
+      bumpAccountEpoch()
+      resetNoteLifecycle()
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      expect(useNoteStore.getState().closingNoteIds).not.toContain(item.uid)
+      expect(beforeUnloadPrevented()).toBe(false)
+      saving.release(true)
+      await settle()
+    })
+
+    it('says when the server still has the version the text started from', async () => {
+      const { item } = await openSavedNote()
+      expect(ui().getByTestId('note-notice')).toBeEmptyDOMElement()
+      // An owed proof skips the first write; a missing fresh copy then proves nothing.
+      markNoteObligation(item.uid)
+      const transport = EtebaseRequest.default
+      EtebaseRequest.default = async (url: string, options: any) => (
+        isItemGet(item.uid)(...requestOf(url, options)) ? respond(404, { detail: 'Not found.' }) : transport(url, options)
+      )
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      hideTab()
+      await settle()
+      EtebaseRequest.default = transport
+      expect(within(ui().getByTestId('note-notice')).getByText(/^This browser could not confirm that the note is unchanged/)).toBeTruthy()
+
+      fireEvent.click(newerButton())
+      await settle()
+
+      expect(within(newerPanel()!).getByText('The server still has the version you started from.')).toBeTruthy()
+      expect(titleBox().value).toBe(DRAFT_TITLE)
+    })
+
+    it('shows the newer version read-only and the row follows it with its SDK item, without touching the draft', async () => {
+      const { item, peerItem } = await refusedDraft()
+      expect(baseRow().textContent).not.toContain(PEER_BODY)
+
+      fireEvent.click(newerButton())
+      await settle()
+
+      const panel = newerPanel()
+      expect(panel).not.toBeNull()
+      expect(panel!.getAttribute('translate')).toBe('no')
+      expect(within(panel!).getByText(PEER_BODY)).toBeTruthy()
+      expect(within(panel!).getByText(BASE_TITLE)).toBeTruthy()
+      expect([titleBox().value, bodyBox().value]).toEqual([DRAFT_TITLE, BASE_BODY])
+      // The list row shows the version read, and the item cache holds that same revision's
+      // SDK item, as after a sync of this one note; the editor adopts none of it.
+      expect(storedNote(item.uid)).toMatchObject({ title: BASE_TITLE, content: PEER_BODY, revision: peerItem.etag })
+      expect(useEtebaseStore.getState().itemCache.get(item.uid).etag).toBe(peerItem.etag)
+      expect(baseRow().textContent).toContain(PEER_BODY)
+
+      fireEvent.click(newerButton())
+      expect(newerPanel()).toBeNull()
+    })
+
+    it('does not move the row when the note changed while the newer version was read', async () => {
+      const { item } = await refusedDraft()
+      const transport = EtebaseRequest.default
+      let replaced: any = null
+      EtebaseRequest.default = async (url: string, options: any) => {
+        const response = await transport(url, options)
+        if (isItemGet(item.uid)(...requestOf(url, options)) && !replaced) {
+          // A refresh lands between the read and its result.
+          replaced = { ...storedNote(item.uid) }
+          useNoteStore.setState((state: any) => ({ notes: state.notes.map((note: any) => (note.id === item.uid ? replaced : note)) }))
+        }
+        return response
+      }
+      fireEvent.click(newerButton())
+      await settle()
+      EtebaseRequest.default = transport
+
+      expect(within(newerPanel()!).getByText(PEER_BODY)).toBeTruthy()
+      expect(storedNote(item.uid)).toBe(replaced)
+      expect(storedNote(item.uid).content).toBe(BASE_BODY)
+      expect(useEtebaseStore.getState().itemCache.get(item.uid).etag).toBe(item.etag)
+    })
+
+    it('does not move the row when the item cache changed while the newer version was read', async () => {
+      const { item } = await refusedDraft()
+      const shown = storedNote(item.uid)
+      const transport = EtebaseRequest.default
+      let swapped: any = null
+      EtebaseRequest.default = async (url: string, options: any) => {
+        const response = await transport(url, options)
+        if (isItemGet(item.uid)(...requestOf(url, options)) && !swapped) {
+          // A sync replaces the cached SDK item between the read and its result.
+          swapped = useEtebaseStore.getState().itemCache.get(item.uid)._clone()
+          useEtebaseStore.setState({ itemCache: new Map([...useEtebaseStore.getState().itemCache, [item.uid, swapped]]) })
+        }
+        return response
+      }
+      fireEvent.click(newerButton())
+      await settle()
+      EtebaseRequest.default = transport
+
+      expect(within(newerPanel()!).getByText(PEER_BODY)).toBeTruthy()
+      expect(storedNote(item.uid)).toBe(shown)
+      expect(useEtebaseStore.getState().itemCache.get(item.uid)).toBe(swapped)
+    })
+
+    it('keeps the metadata another device wrote when the draft, typed back onto the newer version, saves again', async () => {
+      const { account, collection, item } = await seedSavedNote()
+      await addOtherNote(account, collection, item)
+      renderNotesPage()
+      fireEvent.click(baseRow())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      const peerItem = item._clone()
+      peerItem.setMeta({ ...peerItem.getMeta(), color: '#123456' })
+      await peerItem.setContent(PEER_BODY)
+      await account.getCollectionManager().getItemManager(collection).transaction([peerItem])
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      fireEvent.click(newerButton())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+      expect(bodyBox().value).toBe(PEER_BODY)
+
+      fireEvent.change(titleBox(), { target: { value: 'After the newer version 1113' } })
+      hideTab()
+      await settle()
+
+      expect(saveStatus()).toHaveTextContent('Saved')
+      const fresh = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+      expect(fresh.getMeta()).toMatchObject({ name: 'After the newer version 1113', color: '#123456' })
+      expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
+    })
+
+    it('leaves the row of a running save alone, so it ends paired with its cached item', async () => {
+      const { item } = await openSavedNote()
+      const write = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: 'Saved during the read 1113' } })
+      hideTab()
+      await write.arrived
+      // The row is the running save's optimistic record; a newer-version read lands meanwhile.
+      expect(storedNote(item.uid).revision).toBeNull()
+      const read = await readNewerNoteVersion(item.uid)
+      expect(read.kind).toBe('note')
+
+      write.release(false)
+      await settle()
+
+      const row = storedNote(item.uid)
+      expect(row.title).toBe('Saved during the read 1113')
+      expect(row.revision).not.toBeNull()
+      expect(useEtebaseStore.getState().itemCache.get(item.uid).etag).toBe(row.revision)
+    })
+
+    it('takes a refreshed note into the editor once a refused save, run while the draft was typed back, ends', async () => {
+      const { item, peerItem } = await refusedDraft()
+      const write = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: 'Second try 1113' } })
+      hideTab()
+      await write.arrived
+      // A sync brings the server's own title and text over the running save's row.
+      refreshFromServer(item.uid, peerItem, { title: BASE_TITLE, content: PEER_BODY })
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+
+      write.release(false)
+      await settle()
+
+      expect([titleBox().value, bodyBox().value]).toEqual([BASE_TITLE, PEER_BODY])
+      expect(saveStatus()).not.toHaveTextContent('Not saved')
+      expect(ui().queryByText(/This note changed somewhere else/)).toBeNull()
+    })
+
+    it('shows nothing unsaved or refused when a save refused after the draft was typed back ends', async () => {
+      await refusedDraft()
+      const write = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: 'Third try 1113' } })
+      hideTab()
+      await write.arrived
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+
+      write.release(false)
+      await settle()
+
+      expect([titleBox().value, bodyBox().value]).toEqual([BASE_TITLE, BASE_BODY])
+      expect(saveStatus()).not.toHaveTextContent('Not saved')
+      expect(ui().queryByText(/This note changed somewhere else/)).toBeNull()
+    })
+
+    it('keeps text typed back to the saved version while a save is still running', async () => {
+      await openSavedNote()
+      const write = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: 'Typed then removed 1113' } })
+      hideTab()
+      await write.arrived
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+
+      // The running save's optimistic record is not adopted as a refresh.
+      expect(titleBox().value).toBe(BASE_TITLE)
+      write.release(false)
+      await settle()
+    })
+
+    it('does not move the row for a read that ends after the draft was typed back to the saved text', async () => {
+      const { item } = await refusedDraft()
+      const read = server.holdNext(isItemGet(item.uid))
+      fireEvent.click(newerButton())
+      await read.arrived
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+      read.release(false)
+      await settle()
+
+      expect(newerPanel()).toBeNull()
+      expect(storedNote(item.uid)).toMatchObject({ content: BASE_BODY })
+      expect([titleBox().value, bodyBox().value]).toEqual([BASE_TITLE, BASE_BODY])
+    })
+
+    it('does not move the row for a newer-version read that ends after the account changed', async () => {
+      const { item } = await refusedDraft()
+      const shown = storedNote(item.uid)
+      const cachedBefore = useEtebaseStore.getState().itemCache.get(item.uid)
+      const read = server.holdNext(isItemGet(item.uid))
+      fireEvent.click(newerButton())
+      await read.arrived
+      // Boundary test: the read's account guard, the epoch check and the epoch-tagged
+      // unsaved-text check each stop this write; the row of the old account stays as it was.
+      act(() => { bumpAccountEpoch() })
+      read.release(false)
+      await settle()
+
+      expect(storedNote(item.uid)).toBe(shown)
+      expect(storedNote(item.uid).content).toBe(BASE_BODY)
+      expect(useEtebaseStore.getState().itemCache.get(item.uid)).toBe(cachedBefore)
+    })
+
+    it('adds no cached item for a note the item cache does not hold', async () => {
+      const { item } = await refusedDraft()
+      const shown = storedNote(item.uid)
+      act(() => {
+        const itemCache = new Map(useEtebaseStore.getState().itemCache)
+        itemCache.delete(item.uid)
+        useEtebaseStore.setState({ itemCache })
+      })
+
+      fireEvent.click(newerButton())
+      await settle()
+
+      expect(within(newerPanel()!).getByText(PEER_BODY)).toBeTruthy()
+      expect(useEtebaseStore.getState().itemCache.has(item.uid)).toBe(false)
+      expect(storedNote(item.uid)).toBe(shown)
+    })
+
+    it('closes the newer version and takes it into the editor once the draft is typed back to the saved text', async () => {
+      const { account, collection, item } = await refusedDraft()
+      fireEvent.click(newerButton())
+      await settle()
+      expect(newerPanel()).not.toBeNull()
+
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+
+      expect(newerPanel()).toBeNull()
+      expect([titleBox().value, bodyBox().value]).toEqual([BASE_TITLE, PEER_BODY])
+      expect(saveStatus()).not.toHaveTextContent('Not saved')
+      expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
+    })
+
+    it('closes the newer version once the note moves past the revision it shows', async () => {
+      const { account, collection, item, peerItem } = await refusedDraft()
+      fireEvent.click(newerButton())
+      await settle()
+      refreshFromServer(item.uid, peerItem, { content: PEER_BODY })
+      await settle()
+      expect(newerPanel()).not.toBeNull()
+
+      const third = await peerWrites(account, collection, peerItem, 'THIRD BODY 1113')
+      refreshFromServer(item.uid, third, { content: 'THIRD BODY 1113' })
+      await settle()
+
+      expect(newerPanel()).toBeNull()
+      expect([titleBox().value, bodyBox().value]).toEqual([DRAFT_TITLE, BASE_BODY])
+    })
+
+    it('says the note was deleted elsewhere only for a tombstone, not for a missing copy', async () => {
+      const { account, collection, item, peerItem } = await refusedDraft()
+      const transport = EtebaseRequest.default
+      EtebaseRequest.default = async (url: string, options: any) => (
+        isItemGet(item.uid)(...requestOf(url, options))
+          ? respond(404, { detail: 'Not found.' })
+          : transport(url, options)
+      )
+      fireEvent.click(newerButton())
+      await settle()
+      expect(within(newerPanel()!).getByText('The newer version could not be loaded from the server.')).toBeTruthy()
+      EtebaseRequest.default = transport
+      fireEvent.click(newerButton())
+
+      const tombstone = peerItem._clone()
+      tombstone.delete()
+      await account.getCollectionManager().getItemManager(collection).transaction([tombstone])
+      fireEvent.click(newerButton())
+      await settle()
+
+      expect(within(newerPanel()!).getByText('This note was deleted somewhere else. Save your text as a copy to keep it.')).toBeTruthy()
+      expect(titleBox().value).toBe(DRAFT_TITLE)
+    })
+
+    it('says when the newer version cannot be read, and the editor keeps working', async () => {
+      const { account, collection, peerItem } = await refusedDraft()
+      const other = peerItem._clone()
+      await other.setMeta({ ...other.getMeta(), type: 'etebase.other' })
+      await account.getCollectionManager().getItemManager(collection).transaction([other])
+
+      fireEvent.click(newerButton())
+      await settle()
+
+      expect(within(newerPanel()!).getByText('The newer version could not be read in this browser.')).toBeTruthy()
+      fireEvent.change(bodyBox(), { target: { value: 'STILL TYPING 1113' } })
+      expect(bodyBox().value).toBe('STILL TYPING 1113')
+    })
   })
 })

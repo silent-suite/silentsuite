@@ -35,6 +35,7 @@ const storeMock = vi.hoisted(() => ({
     updateNote: vi.fn(),
     deleteNote: vi.fn(),
     moveNote: vi.fn(),
+    saveNoteCopy: vi.fn(),
     canWriteNote: (note: Note) => {
       const notebook = storeMock.notebookState.lists.find((list) => list.id === note.notebookId)
       return notebook?.accessLevel === 1 || notebook?.accessLevel === 2
@@ -56,6 +57,14 @@ vi.mock('@/app/stores/use-note-store', () => ({
   proveNoteBase: async () => false,
   registerNoteEditor: () => () => {},
   releaseNoteObligation: () => {},
+  // Held text and closing saves are covered by the rendered #744 editor test.
+  getHeldNoteDraft: () => undefined,
+  holdNoteDraft: () => {},
+  releaseHeldNoteDraft: () => {},
+  beginClosingNoteSave: () => {},
+  endClosingNoteSave: () => {},
+  getNoteCopyInFlight: () => undefined,
+  readNewerNoteVersion: async () => ({ kind: 'unknown' }),
 }))
 
 vi.mock('@/app/stores/use-notebook-store', async (importOriginal) => ({
@@ -257,6 +266,34 @@ describe('NotesPage', () => {
     expect(screen.getByRole('heading', { name: 'Le note sono una funzione sperimentale' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Apri le impostazioni sperimentali' })).toHaveAttribute('href', '/settings/experimental')
     expect(screen.queryByText('Open Experimental settings')).not.toBeInTheDocument()
+  })
+
+  it('explains a refused save and offers the copy and the newer version in Italian', async () => {
+    vi.useFakeTimers()
+    storeMock.noteState.updateNote.mockImplementation(async (_id: string, _patch: unknown, capture?: { onRefused?: (reason?: 'changed') => void }) => {
+      capture?.onRefused?.('changed')
+      return false
+    })
+    loaded([note('note-1', { title: 'Originale', content: 'testo' })])
+    render(
+      <NextIntlClientProvider locale="it" messages={itMessages}>
+        <NotesPage />
+      </NextIntlClientProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Originale/ }))
+    await act(async () => {
+      await import('../MarkdownEditor')
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Corpo della nota' }), { target: { value: 'bozza' } })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500)
+    })
+
+    expect(screen.getByText(/^Questa nota è stata modificata altrove/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Salva come copia' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Mostra la versione più recente' })).toBeInTheDocument()
+    expect(screen.queryByText('Save as a copy')).not.toBeInTheDocument()
   })
 
   it('shows the translated Cancel button in the note deletion dialog', () => {

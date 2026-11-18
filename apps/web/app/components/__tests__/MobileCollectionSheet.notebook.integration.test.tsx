@@ -94,7 +94,7 @@ describe('MobileCollectionSheet notebook confirmation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete notebook' }))
 
     await waitFor(() => expect(deleteCollection).toHaveBeenCalledTimes(1))
-    expect(deleteCollection).toHaveBeenCalledWith('notes', 'nb-1')
+    expect(deleteCollection).toHaveBeenCalledWith('notes', 'nb-1', expect.objectContaining({ onRefused: expect.any(Function) }))
     expect(screen.queryByRole('dialog', { name: 'Delete notebook?' })).not.toBeInTheDocument()
 
     fireEvent.keyDown(document, { key: 'Tab' })
