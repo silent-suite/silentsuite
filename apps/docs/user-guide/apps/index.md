@@ -26,7 +26,7 @@ The hosted server at `server.silentsuite.io` (or your self-hosted URL) speaks th
 
 ## Compatible Third-Party Apps
 
-These apps connect directly to `server.silentsuite.io` or your self-hosted server with full end-to-end encryption. No bridge needed.
+These apps support end-to-end encrypted sync with the hosted or self-hosted server without a DAV Bridge. On Android, the recommended Tasks.org setup uses the SilentSuite app for sync. Tasks.org can also connect directly through EteSync.
 
 | App | Official site | Platform | Syncs |
 |---|---|---|---|

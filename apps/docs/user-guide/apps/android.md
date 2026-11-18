@@ -134,7 +134,7 @@ After that, every calendar app on the phone shows the same SilentSuite events. W
 
 For tasks, use:
 
-- [Tasks.org](./tasks-org.md) -- has built-in EteSync/Etebase support and can also read from the Android task provider.
+- [Tasks.org](./tasks-org.md) (15.14 or later) can use this SilentSuite app for sync. Choose **Continue without sync** when you first open Tasks.org, then follow the permission and sync steps in the Tasks.org guide. The guide also covers direct EteSync setup.
 - **OpenTasks** -- reads tasks from the Android task provider populated by SilentSuite.
 
 ## Notes (experimental)
