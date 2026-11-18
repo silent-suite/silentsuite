@@ -6,6 +6,8 @@
 export interface VCardName {
   family: string;
   given: string;
+  /** Opaque N component text, including its vCard escaping and comma separators. */
+  additional?: string;
   prefix?: string;
   suffix?: string;
 }
@@ -21,6 +23,9 @@ export interface VCardEmail {
 }
 
 export interface VCardAddress {
+  /** Opaque ADR component text, including its vCard escaping. */
+  poBox?: string;
+  extended?: string;
   type: string;
   street: string;
   city: string;
@@ -107,32 +112,21 @@ function splitCommaValues(value: string): string[] {
 // ── Line folding ──
 
 function foldLine(line: string): string {
-  const MAX_OCTETS = 75;
-  if (Buffer.byteLength(line, 'utf8') <= MAX_OCTETS) {
-    return line;
-  }
   const parts: string[] = [];
-  let remaining = line;
-  let isFirst = true;
-  while (Buffer.byteLength(remaining, 'utf8') > MAX_OCTETS) {
-    const limit = isFirst ? MAX_OCTETS : MAX_OCTETS - 1;
-    let cutPoint = 0;
-    let byteCount = 0;
-    for (let i = 0; i < remaining.length; i++) {
-      const charBytes = Buffer.byteLength(remaining[i]!, 'utf8');
-      if (byteCount + charBytes > limit) break;
-      byteCount += charBytes;
-      cutPoint = i + 1;
+  let current = '';
+  let octets = 0;
+  for (const character of line) {
+    const size = Buffer.byteLength(character, 'utf8');
+    if (octets + size > 75) {
+      parts.push(current);
+      current = ' '; // The continuation marker counts towards the next line's limit.
+      octets = 1;
     }
-    if (cutPoint === 0) cutPoint = 1;
-    parts.push(remaining.slice(0, cutPoint));
-    remaining = remaining.slice(cutPoint);
-    isFirst = false;
+    current += character;
+    octets += size;
   }
-  if (remaining.length > 0) {
-    parts.push(remaining);
-  }
-  return parts.join('\r\n ');
+  parts.push(current);
+  return parts.join('\r\n');
 }
 
 function unfoldLines(text: string): string {
@@ -315,7 +309,7 @@ function isRetainable(line: string, prop: ParsedProperty, consumedLabelGroups: S
   return true;
 }
 
-/** Fold a kept line at code-point boundaries. The legacy foldLine stays in use
+/** Fold a kept line at code-point boundaries. The ordinary foldLine stays in use
  *  for owned fields so their wire bytes are unchanged. QP lines, folds whose
  *  continuation a line-trimming importer would read as a card boundary, and
  *  lines that cannot be cut outside a run of '=', are emitted unfolded. */
@@ -376,6 +370,14 @@ function splitStructuredValue(value: string): string[] {
 
   parts.push(current);
   return parts;
+}
+
+/** Opaque components may not escape into an adjacent component or content line. */
+function retainedStructuredComponent(value = ''): string {
+  if (/[\r\n]/.test(value) || splitStructuredValue(value).length !== 1 || (value.match(/\\+$/)?.[0].length ?? 0) % 2 !== 0) {
+    throw new Error('Invalid retained vCard component');
+  }
+  return value;
 }
 
 // ── Birthdays ──
@@ -460,6 +462,15 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
 
     const prop = parseProperty(line);
     const text = (value = prop.value) => propertyText(prop, value, strict);
+    // Hidden components retain their source spelling. Legacy transfer encoding must first
+    // become ordinary escaped TEXT; split lists before decoding encoded commas.
+    const component = (value: string) => {
+      const retained = prop.params['ENCODING']?.toUpperCase() === 'QUOTED-PRINTABLE'
+        ? splitCommaValues(value).map(part => escapeText(text(part))).join(',') : value;
+      // Incomplete legacy fields may end in a lone backslash. Keep it as literal text
+      // rather than letting it escape the next component separator on write.
+      return (retained.match(/\\+$/)?.[0].length ?? 0) % 2 !== 0 ? `${retained}\\` : retained;
+    };
     switch (prop.name) {
       // Labels are resolved before this pass so group ordering is irrelevant.
       case 'UID':
@@ -473,6 +484,7 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
         vcard.n = {
           family: text(parts[0] ?? ''),
           given: text(parts[1] ?? ''),
+          ...(parts[2] ? { additional: component(parts[2]) } : {}),
           prefix: parts[3] ? text(parts[3]) : undefined,
           suffix: parts[4] ? text(parts[4]) : undefined,
         };
@@ -487,6 +499,8 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
       case 'ADR': {
         const adrParts = splitStructuredValue(prop.value);
         adrs.push({
+          ...(adrParts[0] ? { poBox: component(adrParts[0]) } : {}),
+          ...(adrParts[1] ? { extended: component(adrParts[1]) } : {}),
           type: labels.get(prop.group) || getTypeParam(prop.params),
           street: text(adrParts[2] ?? ''),
           city: text(adrParts[3] ?? ''),
@@ -632,7 +646,7 @@ export function generateVCard(vcard: VCard): string {
     const nParts = [
       escapeText(vcard.n.family),
       escapeText(vcard.n.given),
-      '', // additional names
+      retainedStructuredComponent(vcard.n.additional),
       vcard.n.prefix ? escapeText(vcard.n.prefix) : '',
       vcard.n.suffix ? escapeText(vcard.n.suffix) : '',
     ];
@@ -654,8 +668,8 @@ export function generateVCard(vcard: VCard): string {
   if (vcard.adr) {
     for (const adr of vcard.adr) {
       const adrParts = [
-        '', // PO box
-        '', // extended address
+        retainedStructuredComponent(adr.poBox),
+        retainedStructuredComponent(adr.extended),
         escapeText(adr.street),
         escapeText(adr.city),
         escapeText(adr.state),
@@ -684,7 +698,14 @@ export function generateVCard(vcard: VCard): string {
     lines.push(vcard.bdayIsText === true ? foldRetainedLine(bdayLine) : foldLine(bdayLine));
   }
   if (vcard.photo) {
-    if (vcard.photo.startsWith('data:') || vcard.photo.startsWith('http://') || vcard.photo.startsWith('https://')) {
+    // vCard 3.0 has no data: URIs, and Android reads PHOTO;VALUE=URI as a link to
+    // download (#1127), so embedded images are written inline. Only image types the
+    // parser maps back are inlined, so the round trip stays exact.
+    const inline = /^data:image\/(jpeg|jpg|png|gif|webp);base64,([A-Za-z0-9+/]+=*)$/i.exec(vcard.photo);
+    if (inline) {
+      const type = inline[1]!.toUpperCase() === 'JPG' ? 'JPEG' : inline[1]!.toUpperCase();
+      lines.push(foldLine(`PHOTO;ENCODING=b;TYPE=${type}:${inline[2]}`));
+    } else if (vcard.photo.startsWith('data:') || vcard.photo.startsWith('http://') || vcard.photo.startsWith('https://')) {
       lines.push(foldLine(`PHOTO;VALUE=URI:${vcard.photo}`));
     } else {
       lines.push(foldLine(`PHOTO;ENCODING=b;TYPE=JPEG:${vcard.photo}`));

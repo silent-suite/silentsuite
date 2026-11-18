@@ -42,6 +42,8 @@ import { useContactStore } from '../use-contact-store'
 import { useContactListStore } from '../use-contact-list-store'
 import { useTaskStore } from '../use-task-store'
 import { useAuthStore } from '../use-auth-store'
+import { useNoteStore } from '../use-note-store'
+import { useNotebookStore } from '../use-notebook-store'
 
 // These tests exercise real fake-IndexedDB transactions and remote-replay
 // reconciliation. Leave headroom for heavily loaded CI/review workers so a
@@ -577,6 +579,69 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     coreMock.createItem.mockRejectedValueOnce(offlineError())
     await expect(useEtebaseStore.getState().createItem('calendar', 'VEVENT', 'temp-1', 'col-1')).resolves.toBeNull()
     await expectOwned(['create'])
+  })
+
+  describe('a new note offline, through the real queue', () => {
+    const NOTEBOOK = { id: 'notes-1', name: 'Notes', color: '#fff', visible: true, accessLevel: 1 }
+
+    beforeEach(() => {
+      setNoteAccount()
+      useAuthStore.setState({ subscriptionStatus: 'active' })
+      useNotebookStore.setState({ lists: [NOTEBOOK], activeListId: 'all' })
+      useNoteStore.setState({ notes: [] })
+      coreMock.createItem.mockRejectedValue(offlineError())
+    })
+
+    it('reports a queued create through onQueued, not as a refusal, and shows no toast', async () => {
+      const onQueued = vi.fn()
+      const onRefused = vi.fn()
+
+      await expect(useEtebaseStore.getState().createItem('notes', '', undefined, 'notes-1', undefined, undefined, { suppressErrorToast: true, onQueued, onRefused })).resolves.toBeNull()
+
+      // Its own precondition: the queue really holds the create.
+      expect((await getAll(queueGuard())).map((entry) => [entry.type, entry.collectionType])).toEqual([['create', 'notes']])
+      expect(onQueued).toHaveBeenCalledTimes(1)
+      expect(onRefused).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    })
+
+    it('reports the queue refusing the create (the real class) through onRefused, not onQueued', async () => {
+      _setEncryptedQueuePersistenceAvailableForTests(false)
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const onQueued = vi.fn()
+      const onRefused = vi.fn()
+      try {
+        await expect(useEtebaseStore.getState().createItem('notes', '', undefined, 'notes-1', undefined, undefined, { suppressErrorToast: true, onQueued, onRefused })).resolves.toBeNull()
+      } finally {
+        errorSpy.mockRestore()
+      }
+
+      expect(await getAll(queueGuard())).toEqual([])
+      expect(onRefused).toHaveBeenCalledWith('queue-refused')
+      expect(onQueued).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    })
+
+    it('createNote rejects as queued when the queue holds the create, and adds no note to the list', async () => {
+      await expect(useNoteStore.getState().createNote({ notebookId: 'notes-1' })).rejects.toMatchObject({ name: 'NoteNotCreatedError', reason: 'queued' })
+
+      expect((await getAll(queueGuard())).map((entry) => entry.type)).toEqual(['create'])
+      expect(useNoteStore.getState().notes).toEqual([])
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    })
+
+    it('createNote rejects as queue-refused when the queue will not hold it, with nothing queued and no toast', async () => {
+      _setEncryptedQueuePersistenceAvailableForTests(false)
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        await expect(useNoteStore.getState().createNote({ notebookId: 'notes-1' })).rejects.toMatchObject({ name: 'NoteNotCreatedError', reason: 'queue-refused' })
+      } finally {
+        errorSpy.mockRestore()
+      }
+
+      expect(await getAll(queueGuard())).toEqual([])
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    })
   })
 
   it('real createItem fallback quietly cancels at the IndexedDB commit boundary', async () => {

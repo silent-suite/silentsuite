@@ -11,6 +11,8 @@ import type { StoredNote } from '@/app/stores/use-note-store'
 import { useSidebarStore } from '@/app/stores/use-sidebar-store'
 import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+import { NoteNotCreatedError } from '@/app/lib/note-not-created'
+import { useToastStore } from '@/app/stores/use-toast-store'
 
 vi.mock('@/app/stores/use-etebase-store', () => ({
   useEtebaseStore: (selector: (state: typeof storeMock.etebaseState) => unknown) => selector(storeMock.etebaseState),
@@ -33,6 +35,7 @@ const storeMock = vi.hoisted(() => ({
     updateNote: vi.fn(),
     deleteNote: vi.fn(),
     moveNote: vi.fn(),
+    saveNoteCopy: vi.fn(),
     canWriteNote: (note: Note) => {
       const notebook = storeMock.notebookState.lists.find((list) => list.id === note.notebookId)
       return notebook?.accessLevel === 1 || notebook?.accessLevel === 2
@@ -54,6 +57,14 @@ vi.mock('@/app/stores/use-note-store', () => ({
   proveNoteBase: async () => false,
   registerNoteEditor: () => () => {},
   releaseNoteObligation: () => {},
+  // Held text and closing saves are covered by the rendered #744 editor test.
+  getHeldNoteDraft: () => undefined,
+  holdNoteDraft: () => {},
+  releaseHeldNoteDraft: () => {},
+  beginClosingNoteSave: () => {},
+  endClosingNoteSave: () => {},
+  getNoteCopyInFlight: () => undefined,
+  readNewerNoteVersion: async () => ({ kind: 'unknown' }),
 }))
 
 vi.mock('@/app/stores/use-notebook-store', async (importOriginal) => ({
@@ -257,6 +268,34 @@ describe('NotesPage', () => {
     expect(screen.queryByText('Open Experimental settings')).not.toBeInTheDocument()
   })
 
+  it('explains a refused save and offers the copy and the newer version in Italian', async () => {
+    vi.useFakeTimers()
+    storeMock.noteState.updateNote.mockImplementation(async (_id: string, _patch: unknown, capture?: { onRefused?: (reason?: 'changed') => void }) => {
+      capture?.onRefused?.('changed')
+      return false
+    })
+    loaded([note('note-1', { title: 'Originale', content: 'testo' })])
+    render(
+      <NextIntlClientProvider locale="it" messages={itMessages}>
+        <NotesPage />
+      </NextIntlClientProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Originale/ }))
+    await act(async () => {
+      await import('../MarkdownEditor')
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Corpo della nota' }), { target: { value: 'bozza' } })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500)
+    })
+
+    expect(screen.getByText(/^Questa nota è stata modificata altrove/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Salva come copia' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Mostra la versione più recente' })).toBeInTheDocument()
+    expect(screen.queryByText('Save as a copy')).not.toBeInTheDocument()
+  })
+
   it('shows the translated Cancel button in the note deletion dialog', () => {
     loaded([note('note-1', { title: 'Doomed' })])
     render(
@@ -302,6 +341,126 @@ describe('NotesPage', () => {
     // The default title is selected so typing replaces it.
     expect(title.selectionStart).toBe(0)
     expect(title.selectionEnd).toBe('Untitled'.length)
+  })
+
+  describe('while a new note is being created', () => {
+    function pendingCreate() {
+      let finish: (created: StoredNote) => void = () => {}
+      storeMock.noteState.createNote.mockImplementation(() => new Promise<StoredNote>((resolve) => { finish = resolve }))
+      return (created: StoredNote) => finish(created)
+    }
+
+    it('creates one note for rapid clicks, and turns New note off, in the header and the empty list, until it ends', async () => {
+      const finish = pendingCreate()
+      loaded([])
+      renderWithIntl(<NotesPage />)
+      // Its own precondition: the empty list shows the header button and the empty-state action, both on.
+      const buttons = () => screen.getAllByRole('button', { name: 'New note' })
+      expect(buttons()).toHaveLength(2)
+      expect(buttons().map((button) => (button as HTMLButtonElement).disabled)).toEqual([false, false])
+
+      fireEvent.click(buttons()[1]!)
+      fireEvent.click(buttons()[0]!)
+      fireEvent.click(buttons()[0]!)
+
+      expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1)
+      // The empty-state action is gone while it runs; the header button is off.
+      expect(buttons()).toHaveLength(1)
+      expect(buttons()[0]).toBeDisabled()
+
+      storeMock.noteState.notes = [note('new-note', { title: 'Untitled' })]
+      await act(async () => { finish(note('new-note', { title: 'Untitled' })) })
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Untitled')
+      expect(screen.getByRole('button', { name: 'New note' })).toBeEnabled()
+      expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1)
+    })
+
+    it('creates one note for two clicks in the same tick, before anything has rendered', async () => {
+      const finish = pendingCreate()
+      loaded([note('existing', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+      const button = screen.getByRole<HTMLButtonElement>('button', { name: 'New note' })
+      expect(button.disabled).toBe(false)
+
+      act(() => {
+        button.click()
+        button.click()
+      })
+
+      expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1)
+      await act(async () => { finish(note('new-note', { title: 'Untitled' })) })
+    })
+
+    it('lets the next create run after one was refused', async () => {
+      storeMock.noteState.createNote
+        .mockRejectedValueOnce(new NoteNotCreatedError('failed'))
+        .mockResolvedValueOnce(note('new-note', { title: 'Untitled' }))
+      loaded([note('existing', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+
+      fireEvent.click(screen.getByRole('button', { name: 'New note' }))
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: 'New note' })).toBeEnabled())
+      expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1)
+
+      fireEvent.click(screen.getByRole('button', { name: 'New note' }))
+      await vi.waitFor(() => expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(2))
+    })
+  })
+
+  describe('when no note was created', () => {
+    const toastMessages = () => useToastStore.getState().toasts.map((toast) => toast.message)
+
+    beforeEach(() => {
+      useToastStore.setState({ toasts: [] })
+    })
+
+    async function clickNewNote() {
+      loaded([note('existing', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+      // Its own precondition: online, the button on, nothing shown yet.
+      expect(screen.getByRole('button', { name: 'New note' })).toBeEnabled()
+      expect(toastMessages()).toEqual([])
+      fireEvent.click(screen.getByRole('button', { name: 'New note' }))
+      await vi.waitFor(() => expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1))
+    }
+
+    it.each([
+      ['queue-refused', 'error', 'No note was created. The server could not be reached, and a new note needs a connection.'],
+      ['failed', 'error', 'No note was created because saving it to your account failed.'],
+      ['unavailable', 'error', 'No note was created. Your account or this notebook is not loaded on this page. Reloading the page loads them again.'],
+      ['no-session', 'error', 'No note was created. Your account is not unlocked on this page yet. If an Unlock now button is shown at the top, use it. Otherwise reload the page.'],
+      ['queued', 'warning', 'The note is not in your list yet. It is saved on this device and is added to your account when you reconnect, without a name.'],
+    ] as const)('says why for %s, once, with no "try again"', async (reason, variant, message) => {
+      storeMock.noteState.createNote.mockRejectedValue(new NoteNotCreatedError(reason))
+      await clickNewNote()
+
+      await vi.waitFor(() => expect(toastMessages()).toEqual([message]))
+      expect(useToastStore.getState().toasts[0]!.variant).toBe(variant)
+      expect(toastMessages()[0]).not.toMatch(/try again/i)
+      // Nothing was added to the list, so no editor opened.
+      expect(screen.queryByRole('textbox', { name: 'Note title' })).not.toBeInTheDocument()
+    })
+
+    it('says it in Italian when that catalog is chosen', async () => {
+      storeMock.noteState.createNote.mockRejectedValue(new NoteNotCreatedError('queue-refused'))
+      loaded([note('existing', { title: 'Existing' })])
+      render(
+        <NextIntlClientProvider locale="it" messages={itMessages}>
+          <NotesPage />
+        </NextIntlClientProvider>,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Nuova nota' }))
+
+      await vi.waitFor(() => expect(toastMessages()).toEqual(['Nessuna nota è stata creata. Il server non è raggiungibile e una nuova nota richiede una connessione.']))
+    })
+
+    it('shows nothing for a rejection the store did not name, as before', async () => {
+      storeMock.noteState.createNote.mockRejectedValue(new Error('Your subscription has ended. Upgrade to make changes.'))
+      await clickNewNote()
+      await act(async () => {})
+
+      expect(toastMessages()).toEqual([])
+    })
   })
 
   it('does not flush an old account draft into the next account on gate unmount', async () => {
@@ -759,6 +918,197 @@ describe('NotesPage', () => {
     renderWithIntl(<NotesPage />)
     expect(screen.getByText(/You are offline/)).toBeInTheDocument()
     storeMock.syncState.isOnline = true
+  })
+
+  describe('while offline, a new note needs a connection', () => {
+    const NOTICE = /You are offline\. Edits to an open note are saved encrypted on this device and sync when you reconnect, unless the note changed elsewhere or the editor shows Not saved\. New notes and moves need a connection, so New note and the notebook picker are turned off\./
+
+    const OFFLINE_EMPTY = 'New notes need a connection, so New note is turned off while you are offline.'
+
+    beforeEach(() => {
+      storeMock.syncState.isOnline = false
+    })
+    afterEach(() => {
+      storeMock.syncState.isOnline = true
+    })
+
+    it('turns the header button off and explains why in its title and its description', () => {
+      loaded([note('n1', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+      // Its own precondition: the notice is up and the notes loaded.
+      const notice = screen.getByText(NOTICE)
+      expect(screen.getByRole('button', { name: /Existing/ })).toBeInTheDocument()
+
+      const button = screen.getByRole('button', { name: 'New note' })
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', 'New note is turned off while you are offline. A new note needs a connection.')
+      expect(button).toHaveAccessibleDescription(notice.textContent!)
+
+      fireEvent.click(button)
+      expect(storeMock.noteState.createNote).not.toHaveBeenCalled()
+    })
+
+    it('offers no New note action in the empty list', () => {
+      loaded([])
+      renderWithIntl(<NotesPage />)
+      expect(screen.getByText('No notes yet')).toBeInTheDocument()
+      // Only the disabled header button remains; the empty state adds none.
+      expect(screen.getAllByRole('button', { name: 'New note' })).toHaveLength(1)
+      expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+      // The empty state does not invite a note it cannot create.
+      expect(screen.getByText(OFFLINE_EMPTY)).toBeInTheDocument()
+      expect(screen.queryByText(/Add a note to get started/)).not.toBeInTheDocument()
+    })
+
+    it('keeps the usual empty text online, and for a read-only account offline', () => {
+      storeMock.syncState.isOnline = true
+      loaded([])
+      const view = renderWithIntl(<NotesPage />)
+      expect(screen.getByText('Write privately in Markdown. Add a note to get started.')).toBeInTheDocument()
+      expect(screen.queryByText(OFFLINE_EMPTY)).not.toBeInTheDocument()
+
+      // Offline but without write access, New note was never available: nothing about connections.
+      storeMock.syncState.isOnline = false
+      storeMock.authState.canWrite.mockReturnValue(false)
+      view.rerender(<NotesPage />)
+      expect(screen.getByText(NOTICE)).toBeInTheDocument()
+      expect(screen.getByText('Write privately in Markdown. Add a note to get started.')).toBeInTheDocument()
+      expect(screen.queryByText(OFFLINE_EMPTY)).not.toBeInTheDocument()
+    })
+
+    it('says the same in Italian', () => {
+      loaded([])
+      render(
+        <NextIntlClientProvider locale="it" messages={itMessages}>
+          <NotesPage />
+        </NextIntlClientProvider>,
+      )
+      expect(screen.getByText('Le nuove note richiedono una connessione, quindi il pulsante Nuova nota è disattivato mentre sei offline.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Nuova nota' })).toBeDisabled()
+    })
+
+    it('offers no New note action in an empty notebook either', () => {
+      const EMPTY: Notebook = { id: 'notes-3', name: 'Empty', color: '#10b981', visible: true, accessLevel: 1 }
+      loaded([note('a', { title: 'Alpha', notebookId: 'notes-1' })], [NOTEBOOK, EMPTY])
+      renderWithIntl(<NotesPage />)
+      fireEvent.click(within(screen.getByRole('group', { name: 'Show notes from' })).getByRole('button', { name: 'Empty' }))
+      expect(screen.getByText('No notes in Empty')).toBeInTheDocument()
+      expect(screen.getAllByRole('button', { name: 'New note' })).toHaveLength(1)
+      expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+      expect(screen.getByText(OFFLINE_EMPTY)).toBeInTheDocument()
+      expect(screen.queryByText('New notes go here while this notebook is selected.')).not.toBeInTheDocument()
+    })
+
+    it('turns New note back on, with its usual title, once the connection returns', async () => {
+      loaded([])
+      const view = renderWithIntl(<NotesPage />)
+      expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+
+      storeMock.syncState.isOnline = true
+      view.rerender(<NotesPage />)
+
+      expect(screen.queryByText(/You are offline/)).not.toBeInTheDocument()
+      const button = screen.getAllByRole('button', { name: 'New note' })[0]!
+      expect(button).toBeEnabled()
+      expect(button).toHaveAttribute('title', 'New note in Personal Notes')
+      expect(button).not.toHaveAttribute('aria-describedby')
+      fireEvent.click(button)
+      await vi.waitFor(() => expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1))
+    })
+
+    describe('notebook picker', () => {
+      const MOVE_TITLE = 'Moving a note is turned off while you are offline. A move needs a connection.'
+      const openMover = (lists: Notebook[] = [NOTEBOOK, WORK], overrides: Partial<StoredNote> = {}) => {
+        loaded([note('n1', { title: 'Mover', content: 'body', notebookId: 'notes-1', ...overrides })], lists)
+        const view = renderWithIntl(<NotesPage />)
+        fireEvent.click(screen.getByRole('button', { name: /Mover/ }))
+        return view
+      }
+      const picker = () => screen.getByRole<HTMLSelectElement>('combobox', { name: 'Notebook' })
+
+      it('is turned off with its reason, while the title and body stay editable', async () => {
+        openMover()
+        // Its own precondition: offline, with the banner up and a note open on two notebooks.
+        const notice = screen.getByText(NOTICE)
+        expect(screen.getByRole('textbox', { name: 'Note title' })).toBeInTheDocument()
+
+        expect(picker()).toBeDisabled()
+        expect(picker()).toHaveAttribute('title', MOVE_TITLE)
+        expect(picker()).toHaveAccessibleDescription(notice.textContent!)
+        // Edits queue offline, so only the move is turned off.
+        expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Note title' }).readOnly).toBe(false)
+        expect((await noteBody()).readOnly).toBe(false)
+      })
+
+      it('is unchanged online, and turns back on when the connection returns', () => {
+        storeMock.syncState.isOnline = true
+        const view = openMover()
+        expect(screen.queryByText(/You are offline/)).not.toBeInTheDocument()
+        expect(picker()).toBeEnabled()
+        expect(picker()).not.toHaveAttribute('title')
+        expect(picker()).not.toHaveAttribute('aria-describedby')
+
+        storeMock.syncState.isOnline = false
+        view.rerender(<NotesPage />)
+        expect(picker()).toBeDisabled()
+
+        storeMock.syncState.isOnline = true
+        view.rerender(<NotesPage />)
+        expect(picker()).toBeEnabled()
+        expect(picker()).not.toHaveAttribute('title')
+        expect(picker()).not.toHaveAttribute('aria-describedby')
+      })
+
+      it('keeps the read-only state without an offline reason for a shared notebook', () => {
+        const SHARED: Notebook = { id: 'shared', name: 'Shared', color: '#111', visible: true, accessLevel: 0 }
+        openMover([SHARED, WORK], { notebookId: 'shared' })
+        expect(screen.getByText(NOTICE)).toBeInTheDocument()
+        expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Note title' }).readOnly).toBe(true)
+        expect(picker()).toBeDisabled()
+        expect(picker()).not.toHaveAttribute('title')
+        expect(picker()).not.toHaveAttribute('aria-describedby')
+      })
+
+      it('keeps the one-notebook state without an offline reason', () => {
+        openMover([NOTEBOOK])
+        expect(screen.getByText(NOTICE)).toBeInTheDocument()
+        expect(picker()).toBeDisabled()
+        expect(picker()).not.toHaveAttribute('title')
+        expect(picker()).not.toHaveAttribute('aria-describedby')
+      })
+
+      it('lets a running move keep its own state, then gives the offline reason when it ends', async () => {
+        storeMock.syncState.isOnline = true
+        let finishMove: (movedId: string | null) => void = () => {}
+        storeMock.noteState.moveNote.mockImplementation(() => new Promise<string | null>((resolve) => { finishMove = resolve }))
+        const view = openMover()
+        fireEvent.change(picker(), { target: { value: 'notes-2' } })
+        await vi.waitFor(() => expect(storeMock.noteState.moveNote).toHaveBeenCalledWith('n1', 'notes-2'))
+        // Its own precondition: the move is running.
+        expect(picker().disabled).toBe(true)
+
+        storeMock.syncState.isOnline = false
+        view.rerender(<NotesPage />)
+        expect(screen.getByText(NOTICE)).toBeInTheDocument()
+        expect(picker()).toBeDisabled()
+        expect(picker()).not.toHaveAttribute('title')
+
+        await act(async () => { finishMove(null) })
+        expect(picker()).toBeDisabled()
+        expect(picker()).toHaveAttribute('title', MOVE_TITLE)
+      })
+    })
+
+    it('keeps the subscription reason first when both apply', () => {
+      storeMock.authState.canWrite.mockReturnValue(false)
+      loaded([note('n1', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+      expect(screen.getByText(NOTICE)).toBeInTheDocument()
+      const button = screen.getByRole('button', { name: 'New note' })
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', 'Subscription required')
+      expect(button).not.toHaveAttribute('aria-describedby')
+    })
   })
 
   it('shows the compact Experimental · Web app only label next to the heading on every layout', () => {

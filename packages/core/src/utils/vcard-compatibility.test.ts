@@ -213,13 +213,13 @@ describe('exporter-added X- type prefixes', () => {
   });
 });
 
-// ── #865: legacy no-extras wire goldens (captured from the unmodified base parser) ──
+// Legacy no-extras goldens; only the emoji case was updated for intact UTF-8 folding.
 
 describe('legacy no-extras wire goldens (#865)', () => {
   const goldens: { cases: { name: string; input: string; wire: string; utf8_wire_base64: string; sha256: string }[] } =
     JSON.parse(readFileSync(new URL('../../fixtures/contact-preservation-legacy-wire.json', import.meta.url), 'utf8'));
 
-  it.each(goldens.cases.map((c) => [c.name, c] as const))('%s: wire bytes and witness round-trip are unchanged', (_name, golden) => {
+  it.each(goldens.cases.map((c) => [c.name, c] as const))('%s: pinned wire bytes and witness round-trip', (_name, golden) => {
     const bytes = Buffer.from(golden.wire, 'utf8');
     expect(bytes.toString('base64')).toBe(golden.utf8_wire_base64);
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(golden.sha256);

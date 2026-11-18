@@ -89,6 +89,65 @@ describe('ContactsPage mobile reachability', () => {
     storeMock.authState.canWrite.mockReturnValue(true)
   })
 
+  describe('contact avatars', () => {
+    function renderContact(photoUrl: string) {
+      storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+      storeMock.contactState.contacts = [{
+        id: 'ada', uid: 'ada', displayName: 'Ada Lovelace',
+        name: { prefix: '', given: 'Ada', family: 'Lovelace', suffix: '' },
+        phones: [], emails: [], addresses: [], organization: '', title: '', notes: '',
+        birthday: null, photoUrl, listId: 'book', created_at: new Date(), updated_at: new Date(),
+      }]
+      renderWithIntl(<ContactsPage />)
+    }
+
+    it.each([
+      'https://tracker.example.invalid/p.png',
+      'http://tracker.example.invalid/p.png',
+      '//tracker.example.invalid/p.png',
+      'HTTPS://tracker.example.invalid/p.png',
+      'javascript:alert(1)',
+      'data:text/plain;base64,aGVsbG8=',
+      'photo.png',
+      '/photo.png',
+    ])('shows initials without an image for %s in the list and both detail views', (photoUrl) => {
+      renderContact(photoUrl)
+
+      expect(document.querySelector('img')).toBeNull()
+      expect(screen.getByText('AL')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByText('Ada Lovelace'))
+      expect(document.querySelector('img')).toBeNull()
+      expect(within(screen.getByRole('button', { name: 'Change photo' })).getByText('AL')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Edit contact' }))
+      expect(document.querySelector('img')).toBeNull()
+      expect(within(screen.getByRole('button', { name: 'Change photo' })).getByText('AL')).toBeInTheDocument()
+      expect(storeMock.contactState.contacts[0]!.photoUrl).toBe(photoUrl)
+    })
+
+    it.each([
+      'data:image/png;base64,iVBORw0KGgo=',
+      'DATA:IMAGE/PNG;base64,iVBORw0KGgo=',
+      'blob:https://app.example.invalid/contact-photo',
+      'BLOB:https://app.example.invalid/contact-photo',
+    ])('shows an embedded photo with no referrer for %s in the list and both detail views', (photoUrl) => {
+      renderContact(photoUrl)
+
+      const expectPhoto = (image: HTMLElement) => {
+        expect(image).toHaveAttribute('src', photoUrl)
+        expect(image).toHaveAttribute('referrerpolicy', 'no-referrer')
+      }
+      expectPhoto(screen.getByRole('img', { name: 'Ada Lovelace' }))
+
+      fireEvent.click(screen.getByText('Ada Lovelace'))
+      expectPhoto(within(screen.getByRole('button', { name: 'Change photo' })).getByRole('img'))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Edit contact' }))
+      expectPhoto(within(screen.getByRole('button', { name: 'Change photo' })).getByRole('img'))
+    })
+  })
+
   it('derives its skeleton from the contacts domain and skips it for cached contacts (#747)', () => {
     const hasSkeleton = () => document.querySelector('.skeleton-shimmer') !== null
     const view = renderWithIntl(<ContactsPage />)

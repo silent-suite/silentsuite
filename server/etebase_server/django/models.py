@@ -231,6 +231,8 @@ class CollectionMember(models.Model):
 
     def revoke(self):
         with transaction.atomic():
+            Collection.objects.select_for_update().get(pk=self.collection_id)
+            CollectionInvitation.objects.filter(user=self.user, fromMember__collection_id=self.collection_id).delete()
             CollectionMemberRemoved.objects.update_or_create(
                 collection=self.collection,
                 user=self.user,
@@ -260,7 +262,6 @@ class CollectionInvitation(models.Model):
     uid = models.CharField(db_index=True, blank=False, null=False, max_length=43, validators=[UidValidator])
     version = models.PositiveSmallIntegerField(default=1)
     fromMember = models.ForeignKey(CollectionMember, on_delete=models.CASCADE)
-    # FIXME: make sure to delete all invitations for the same collection once one is accepted
     # Make sure to not allow invitations if already a member
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="incoming_invitations", on_delete=models.CASCADE)

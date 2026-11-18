@@ -178,7 +178,7 @@ export function parseNativeMappings(text) {
 }
 
 export function verifyNativeProbe(probe) {
-  assert.deepEqual(probe.versions, { next: '15.5.28', react: '19.2.4', 'react-dom': '19.2.4' })
+  assert.deepEqual(probe.versions, { next: '15.5.29', react: '19.2.4', 'react-dom': '19.2.4' })
   assert.equal(probe.sentry.declared, '10.75.2')
   assert.ok(probe.sentry.runtimeVersion === null || probe.sentry.runtimeVersion === '10.75.2')
   assert.equal(probe.sharpVersion, '0.35.5')

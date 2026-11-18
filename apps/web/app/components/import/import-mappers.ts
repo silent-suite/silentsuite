@@ -1,4 +1,4 @@
-import { gapWallClock, isFloatingICalDateTime, parseICalDateValue } from '@silentsuite/core'
+import { decodeTimeZone, gapWallClock, isFloatingICalDateTime, parseICalDateValue } from '@silentsuite/core'
 import type { VEvent, VTodo } from '@silentsuite/core/utils/ical-parser'
 import { normalizeLabels } from '@/app/components/LabelEditor'
 
@@ -15,11 +15,14 @@ export interface ImportEventPayload {
   categories: string[]
   calendarId: string
   timezone: string | undefined
+  vtimezones?: string[][]
+  importError?: string
+  unknownComponents?: string[][]
   /** Present (true) only when the source DTSTART is a floating DATE-TIME (no TZID, no Z). */
   floating?: true
   /** Present only when a timed TZID DTSTART lies in a DST gap: its original wall clock. */
   startWallClock?: string
-  /** Set only for a provider import unit (see ProviderImportVEvent); a file import leaves these out. */
+  /** Source identity and recurrence data, for both file and provider imports. */
   uid?: string
   unknownProperties?: string[]
   overrides?: string[][]
@@ -75,7 +78,7 @@ export function vEventToImportEvent(
   event: VEvent,
   calendarId: string,
 ): ImportEventPayload {
-  const startTzid = event.dtstartParams?.['TZID']
+  const startTzid = event.dtstartParams?.['TZID'] ? decodeTimeZone(event.dtstartParams['TZID']) : undefined
   const endTzid = event.dtendParams?.['TZID'] ?? startTzid
   const { date: start, allDay: isAllDay } = parseICalDateValue(event.dtstart, startTzid)
   const end = event.dtend
@@ -100,19 +103,17 @@ export function vEventToImportEvent(
     alarms: event.valarms ?? [],
     categories: normalizeLabels(event.categories ?? []),
     calendarId,
+    ...(event.vtimezones?.length ? { vtimezones: event.vtimezones } : {}),
+    ...(event.importError ? { importError: event.importError } : {}),
+    ...(event.unknownComponents?.length ? { unknownComponents: event.unknownComponents } : {}),
+    ...(event.unknownProperties?.length ? { unknownProperties: event.unknownProperties } : {}),
     timezone: isAllDay ? undefined : startTzid,
     ...(!isAllDay && isFloatingICalDateTime(event.dtstart, event.dtstartParams) ? { floating: true as const } : {}),
     ...(startWallClock ? { startWallClock } : {}),
-    // A provider unit keeps its UID, source property, overrides, STATUS and TRANSP.
-    ...(isProviderImportVEvent(event)
-      ? {
-          uid: event.uid,
-          unknownProperties: [...(event.unknownProperties ?? [])],
-          ...(event.overrides ? { overrides: event.overrides.map((block) => [...block]) } : {}),
-          ...(event.status ? { status: event.status } : {}),
-          ...(event.transp ? { transp: event.transp } : {}),
-        }
-      : {}),
+    uid: event.uid,
+    ...(event.overrides ? { overrides: event.overrides.map((block) => [...block]) } : {}),
+    ...(event.status ? { status: event.status } : {}),
+    ...(event.transp ? { transp: event.transp } : {}),
   }
 }
 

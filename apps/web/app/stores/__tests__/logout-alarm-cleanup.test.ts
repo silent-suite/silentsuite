@@ -100,6 +100,13 @@ async function runPeriodicCheck(worker: ReturnType<typeof loadWorker>) {
   await done
 }
 
+const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches')
+
+function seededCaches() {
+  const names = new Set(['cross-origin', 'cross-origin-other', 'workbox-precache'])
+  return { names, delete: vi.fn(async (name: string) => names.delete(name)) }
+}
+
 const FP_A = 'synthetic-fingerprint-A'
 const userA = { id: 'synthetic-user-A', email: 'a@synthetic.invalid', planId: 'pro', isAdmin: false, onboardedAt: null }
 
@@ -123,6 +130,8 @@ describe('logout clears service-worker reminders', () => {
   afterEach(() => {
     vi.useRealTimers()
     Reflect.deleteProperty(navigator, 'serviceWorker')
+    if (originalCaches) Object.defineProperty(globalThis, 'caches', originalCaches)
+    else Reflect.deleteProperty(globalThis, 'caches')
   })
 
   it('removes stored reminder records on logout', async () => {
@@ -211,6 +220,14 @@ describe('logout clears service-worker reminders', () => {
     await useAuthStore.getState().logout()
 
     expect(useAuthStore.getState().user).toBeNull()
+  })
+
+  it('real logout deletes only the legacy cross-origin cache', async () => {
+    const storage = seededCaches()
+    Object.defineProperty(globalThis, 'caches', { configurable: true, value: storage })
+    await useAuthStore.getState().logout()
+    expect([...storage.names]).toEqual(['cross-origin-other', 'workbox-precache'])
+    expect(storage.delete).toHaveBeenCalledWith('cross-origin')
   })
 
   it('worker drops all reminders on CLEAR_ALARMS', async () => {

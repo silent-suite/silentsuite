@@ -1,12 +1,18 @@
 /**
  * Service-worker routes placed ahead of next-pwa's default runtime caching.
  *
- * The defaults send every cross-origin GET through NetworkFirst into a "cross-origin"
- * CacheStorage cache, which would keep the Google import's requests (with their
- * Authorization header) and plaintext responses (#48). Google's API hosts are therefore
- * NetworkOnly: never read from or written to any cache. No `options`, so next-pwa adds no
- * fallback plugin and no cache name to it.
+ * All cross-origin GETs use NetworkOnly before any default cache route, including
+ * requests to user-configured servers and external assets. No options means no
+ * cache name or fallback plugin. Keep the explicit Google and Microsoft routes
+ * below for their existing exports and tests.
  */
+// Match by origin, including user-configured servers, before any default route.
+const crossOriginNetworkOnly = {
+  urlPattern: ({ sameOrigin }) => !sameOrigin,
+  handler: 'NetworkOnly',
+  method: 'GET',
+}
+
 const GOOGLE_API_URL = /^https:\/\/(?:www|people)\.googleapis\.com\//
 
 const googleApiNetworkOnly = {
@@ -30,5 +36,5 @@ const microsoftGraphNetworkOnly = {
 module.exports = {
   GOOGLE_API_URL,
   MICROSOFT_GRAPH_URL,
-  runtimeCachingBeforeDefaults: [googleApiNetworkOnly, microsoftGraphNetworkOnly],
+  runtimeCachingBeforeDefaults: [crossOriginNetworkOnly, googleApiNetworkOnly, microsoftGraphNetworkOnly],
 }
