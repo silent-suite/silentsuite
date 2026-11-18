@@ -93,4 +93,4 @@ Install commands are in *Settings → Desktop* in the web app.
 
 ### Will offline edits sync when I reconnect?
 
-Yes. The web app is an offline-first PWA — encrypted writes queue while offline and flush on reconnect.
+Yes. The web app is an offline-first PWA — encrypted writes queue while offline and flush on reconnect. Logging out deletes changes that have not synced yet, so **Log out** says how many there are first and offers to sync them.
