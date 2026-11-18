@@ -51,7 +51,7 @@ describe('service worker never caches Google import traffic (#48)', () => {
 
   it('puts cross-origin GETs first, as NetworkOnly without a cache, ahead of the defaults', () => {
     expect(options.extendDefaultRuntimeCaching).toBe(true)
-    expect(options.workboxOptions?.importScripts).toContain('/notification-worker.js')
+    expect(options.workboxOptions?.importScripts).toEqual(['/sw-cache-cleanup.js'])
     const ours = options.workboxOptions!.runtimeCaching!
     expect(ours[0]).toMatchObject({ handler: 'NetworkOnly', method: 'GET' })
     expect(ours[0]!.options).toBeUndefined()

@@ -89,10 +89,6 @@ async function clearAllAlarms() {
   await storeAlarms([])
 }
 
-async function clearCrossOriginCache() {
-  if (typeof caches !== 'undefined') await caches.delete('cross-origin')
-}
-
 // ── Check and fire alarms (called from periodic sync or setInterval) ──
 
 async function checkAndFireAlarms() {
@@ -146,15 +142,9 @@ self.addEventListener('message', (event) => {
     // alarms: Array<{ id, title, time, triggerAt, triggerLabel }>
     scheduleAlarms(alarms)
   } else if (event.data && event.data.type === 'CLEAR_ALARMS') {
-    // Keep both cleanup operations alive, even if one of them fails.
-    event.waitUntil(Promise.allSettled([clearAllAlarms(), clearCrossOriginCache()]))
+    // Sent on logout: drop every stored and snoozed reminder.
+    clearAllAlarms()
   }
-})
-
-// Existing installations may still have the cache created by the previous routing rules.
-self.addEventListener('activate', (event) => {
-  // Storage failure must not prevent activation of the new network-only routes.
-  event.waitUntil(Promise.allSettled([clearCrossOriginCache()]))
 })
 
 // ── Periodic sync handler ──

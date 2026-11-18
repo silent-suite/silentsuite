@@ -83,7 +83,7 @@ const pwaConfig = withPWA({
   // Our routes first, then next-pwa's defaults unchanged (see pwa-runtime-caching.js).
   extendDefaultRuntimeCaching: true,
   workboxOptions: {
-    importScripts: ['/notification-worker.js'],
+    importScripts: ['/sw-cache-cleanup.js'],
     runtimeCaching: runtimeCachingBeforeDefaults,
   },
 })(withNextIntl(nextConfig))
