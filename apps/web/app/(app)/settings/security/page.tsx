@@ -457,7 +457,7 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
         <p className="text-xs text-[rgb(var(--muted))]">
           {isLocal
             ? "Self-hosted accounts can't be deleted from here. Signing out removes this device's session and locally cached data, including changes not yet synced. Your account and data on your server are not deleted."
-            : 'This action is permanent. All your data will be deleted and cannot be recovered.'}
+            : 'This permanently deletes your SilentSuite account and cancels any active subscription. Your encrypted calendar, contacts, tasks and notes are stored separately and are not erased by this step. Email info@silentsuite.io if you want them erased too.'}
         </p>
         <Button
           variant="destructive"
