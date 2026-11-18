@@ -2,7 +2,7 @@
 
 Note titles, note text and notebook names are encrypted on your device, and the server has no key to read them. It still sees some facts about your notes, listed here.
 
-"The server" is the sync server your account uses: the hosted one, or your own if you self-host. Calendars, task lists, address books and notebooks are all collections.
+"The server" is the sync server your account uses: the hosted one, or your own if you self-host. Calendars, task lists, address books and notebooks are all collections. The web app also keeps collections for settings and labels.
 
 [How Encryption Works](./encryption-explained.md#what-the-server-can-see) summarizes what the server knows about all your data. This page gives the details for Notes.
 
@@ -14,13 +14,13 @@ Note titles, note text and notebook names are encrypted on your device, and the 
 | Last-edited times | Not the stored value | It is encrypted, but the server sees when each save arrives. |
 | Note text | No | It is encrypted content. |
 | Notebook names, colors and descriptions | No | They are in encrypted metadata. |
-| Which collections are notebooks | Yes, in practice | The type is an opaque value, a code the server cannot decode, but all your notebooks share it and the apps list notebooks after the other types. |
+| Which collections are notebooks | Yes, in practice | The type is an opaque value, a code the server cannot decode, but all your notebooks share it, and the apps ask for the types in a fixed order: the web app asks for notebooks fourth, after calendars, task lists and address books, and Android asks for them last. |
 | Note and notebook IDs | Yes | Random IDs made on your device, with none of your text. They appear in request addresses. |
 | How many notebooks you have, and how many notes each one holds | Yes | Each note is a separate item in its notebook. |
 | How often each note changed | Yes | Each save adds a version, and earlier versions are kept. |
 | The order of changes | Yes | Each change gets a number from a rising counter. |
 | The exact length of each title | Yes | The title is stored with only one byte of padding. See [Sizes](#sizes). |
-| The size of note text | Roughly | Text is padded to steps of 1 KiB. A long note is split into pieces at points that do not depend on a key. See [Sizes](#sizes). |
+| The size of note text | Roughly | Short text is padded to steps of 1 KiB, and larger pieces to coarser steps. Text over 16 KiB can be split into pieces at points that do not depend on a key. See [Sizes](#sizes). |
 | Which notes and notebooks are deleted | Yes | The deleted mark is not encrypted. Deleting a note adds a deleted version and keeps the earlier ones. See [Deleting](#deleting). |
 | Members and invitations | Yes | Usernames, access levels, and who invited whom. |
 | When you use Notes | Partly | See [Timing and logs](#timing-and-logs). |
@@ -35,14 +35,14 @@ Note titles, note text and notebook names are encrypted on your device, and the 
 
 ## Sizes
 
-- Note text is padded to steps of 1 KiB (1,024 bytes), so a 300-byte note and a 900-byte note look the same.
-- Text over 16 KiB is usually split into padded pieces. The split points come from the text alone, with no key, so the same long text is split at the same points, into pieces of the same sizes, in any account. The server sees how many pieces a note has and how large each one is.
+- Note text, and each piece of a long note, is padded to steps of 1 KiB (1,024 bytes) up to 32 KiB, so a 300-byte note and a 900-byte note look the same. Pieces between 32 KiB and 64 KiB are padded to steps of 2 KiB.
+- Text over 16 KiB can be split into padded pieces, and text over 64 KiB always is. The split points come from the text alone, with no key, so the same long text is split at the same points, into pieces of the same sizes, in any account. The server sees how many pieces a note has and how large each one is.
 - A note with no text has no stored piece, so the server can tell that it is empty.
 - The title and last-edited time are encrypted together with only one byte of padding. The stored size is therefore the exact length of the title in bytes plus a nearly fixed number of bytes, in every version, so the server can work out how long each title is. A notebook's name and description work the same way.
 
 ## Deleting
 
-- A deleted note keeps its ID. Its newest version is marked deleted and has no text (the web app keeps the encrypted title in it; Android blanks it). Earlier versions stay with their encrypted text, so deleting a note does not remove it from the server.
+- A deleted note keeps its ID. Its newest version is marked deleted and has no text (the web app keeps the encrypted title in it; Android blanks it when it can read the metadata). Earlier versions stay with their encrypted text, so deleting a note does not remove it from the server.
 - The mark is not encrypted, so the server can tell which notes and notebooks are deleted.
 - In the web app, a deleted notebook is only marked deleted. Its notes are not marked deleted and keep their encrypted text.
 
@@ -70,7 +70,7 @@ Behind a proxy listed in `TRUSTED_PROXY_IPS`, the server logs the device address
 
 - The web app's host, such as app.silentsuite.io, does not relay Notes requests. They go from your browser to the sync server, also when you use your own server.
 - The host can log your address, your browser and the pages you load, such as `/notes`, as web servers do.
-- On app.silentsuite.io, error reports go through the host's `/api/error` relay to the error tracker, without your address or browser. They hold an error type, a fixed code such as "sync notes failed", the page, the browser family and code positions, and no message or note data.
+- On app.silentsuite.io, error reports go through the host's `/api/error` relay to the error tracker, without your address or full browser user agent. They hold an error type, a fixed code such as "sync notes failed", the page, the browser family and code positions, and no message or note data.
 - Analytics events run only on the sign-in, sign-up and subscription pages. The Android app has no crash reporter.
 
 ## On your device
