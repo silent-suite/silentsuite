@@ -1,3 +1,4 @@
+import { WINDOWS_TO_IANA } from './windows-zones.js';
 /**
  * Wall-clock <-> instant conversion for IANA zones, shared by the event parser, the task model
  * and recurrence expansion.
@@ -68,4 +69,22 @@ export function wallTimeToInstant(timeZone: string, wallAsUtcMs: number): number
   } catch {
     return null;
   }
+}
+
+/** Decode a parameter token without changing retained wire properties. */
+export function decodeTimeZone(value: string): string {
+  return /^".*"$/.test(value) ? value.slice(1, -1) : value;
+}
+
+/** Encode a decoded TZID for use as an iCalendar parameter, never as a property value. */
+export function encodeTimeZone(value: string): string {
+  if (/["\u0000-\u0008\u000a-\u001f\u007f]/.test(value)) throw new Error('Invalid time zone identifier');
+  return /[:;,]/.test(value) ? `"${value}"` : value;
+}
+
+/** IANA computation zone; undefined means the source label is not recognised. */
+export function resolveTimeZone(value: string): string | undefined {
+  const decoded = decodeTimeZone(value);
+  const candidate = Object.prototype.hasOwnProperty.call(WINDOWS_TO_IANA, decoded) ? WINDOWS_TO_IANA[decoded]! : decoded;
+  return isKnownTimeZone(candidate) ? candidate : undefined;
 }

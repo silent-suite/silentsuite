@@ -89,6 +89,7 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
         ]
     )
     models.Config.create(db_version=1)
+    local_cache_module._ensure_cache_tables(database)
     user = models.User.create(username=USERNAME)
     cache_col = models.CollectionEntity.create(
         local_user=user,

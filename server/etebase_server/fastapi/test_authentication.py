@@ -80,6 +80,44 @@ class TestLoginChallenge:
 
 @pytest.mark.django_db(transaction=True)
 class TestLogin:
+    def test_login_rechecks_cached_password_material_after_lock(self, auth_client, user_factory, signing_key, monkeypatch):
+        from etebase_server.django.models import UserInfo
+        from etebase_server.django.token_auth.models import AuthToken
+        from etebase_server.fastapi.routers import authentication
+
+        user = user_factory(username="test_user_login_race")
+        replacement = nacl.signing.SigningKey.generate()
+        original = authentication.get_login_user
+
+        def replace_after_lookup(*args, **kwargs):
+            cached_user = original(*args, **kwargs)
+            assert bytes(cached_user.userinfo.loginPubkey) == bytes(signing_key.verify_key)
+            UserInfo.objects.filter(owner=user).update(loginPubkey=bytes(replacement.verify_key))
+            return cached_user
+
+        # Obtain a challenge before injecting a password change between the
+        # login lookup and its locked, authoritative UserInfo read.
+        _, challenge = login_challenge(auth_client, user.username)
+        body = build_signed_response(username=user.username, challenge_bytes=challenge["challenge"], signing_key=signing_key)
+        monkeypatch.setattr(authentication, "get_login_user", replace_after_lookup)
+        reply = msgpack_post(auth_client, f"{AUTH_PREFIX}/login/", body)
+        assert reply.status_code == 401
+        assert not AuthToken.objects.filter(user=user).exists()
+        monkeypatch.setattr(authentication, "get_login_user", original)
+        assert perform_login(auth_client, username=user.username, signing_key=replacement).status_code == 200
+
+    def test_bad_login_proof_does_not_take_password_row_lock(self, auth_client, user_factory, monkeypatch):
+        from etebase_server.django.models import UserInfo
+
+        user = user_factory(username="test_user_bad_proof_lock")
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("bad signature took a password row lock")
+
+        monkeypatch.setattr(UserInfo.objects, "select_for_update", forbidden)
+        reply = perform_login(auth_client, username=user.username, signing_key=nacl.signing.SigningKey.generate())
+        assert reply.status_code == 401
+
     def test_login_with_valid_signature_returns_token(
         self, auth_client, user_factory, signing_key
     ):

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="12dp"
+    android:background="@drawable/widget_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:gravity="center_vertical" android:orientation="horizontal">
+        <LinearLayout android:id="@+id/widget_header" android:layout_width="0dp"
+            android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="56dp"
+            android:orientation="vertical" android:gravity="center_vertical"
+            android:contentDescription="@string/widget_open_today" android:background="@drawable/widget_touch_background">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/widget_agenda_title" android:textColor="@color/semantic_on_surface"
+                android:textStyle="bold" android:textSize="20sp" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/widget_agenda_window" android:textColor="@color/semantic_on_surface_variant"
+                android:textSize="12sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <ImageButton android:id="@+id/widget_add" android:layout_width="48dp" android:layout_height="48dp"
+            android:src="@drawable/ic_widget_add" android:padding="12dp"
+            android:background="@drawable/widget_add_background" android:contentDescription="@string/widget_add_event" />
+    </LinearLayout>
+    <ListView android:id="@+id/widget_list" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:layout_marginTop="8dp" android:divider="@null"
+        android:scrollbars="none" android:visibility="gone" />
+    <TextView android:id="@+id/widget_status" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:minHeight="48dp" android:gravity="center"
+        android:padding="12dp" android:text="@string/widget_agenda_description" android:textSize="14sp"
+        android:textColor="@color/semantic_on_surface_variant" />
+</LinearLayout>

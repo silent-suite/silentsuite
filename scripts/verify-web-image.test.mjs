@@ -254,7 +254,7 @@ test('native proof admits only the authenticated musl mappings and an executed S
   const sharp = '/app/node_modules/.pnpm/@img+sharp-linuxmusl-x64@0.35.5/node_modules/@img/sharp-linuxmusl-x64/lib/sharp-linuxmusl-x64-0.35.5.node'
   const vips = '/app/node_modules/.pnpm/@img+sharp-libvips-linuxmusl-x64@1.3.4/node_modules/@img/sharp-libvips-linuxmusl-x64/lib/libvips-cpp.so.8.18.7'
   assert.deepEqual(parseNativeMappings(`1-2 r-xp 0 0 1 ${sharp}\n2-3 r--p 0 0 1 ${vips}\n3-4 r--p 0 0 1 ${sharp}`), [sharp, vips])
-  const probe = { versions: { next: '15.5.28', react: '19.2.4', 'react-dom': '19.2.4' },
+  const probe = { versions: { next: '15.5.29', react: '19.2.4', 'react-dom': '19.2.4' },
     sentry: { declared: '10.75.2', runtimeVersion: null },
     sharpVersion: '0.35.5', vipsVersion: '8.18.7', rsvg: '2.63.2', svgPixel: [12, 34, 56, 255],
     png: { width: 4, height: 4, format: 'png' },

@@ -12,6 +12,7 @@ import hashlib
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 from contextlib import contextmanager
@@ -33,6 +34,48 @@ DAV_UNRESOLVED_RETRY_LIMIT = 8
 
 class DavUnresolvedItemsError(RuntimeError):
     """A sync applied safe changes but retained unresolved DAV conflicts."""
+
+
+class DavCollectionPathError(ValueError):
+    """A DAV collection path has more than one live owner."""
+
+
+def resolve_dav_collection_uid(username, segment):
+    if getattr(db.database_proxy, "obj", None) is None:
+        return segment
+    with db.atomic_connection():
+        if not db.database_proxy.table_exists("collectionentity"):
+            return segment
+        matches = list(
+            models.CollectionEntity.select(models.CollectionEntity.uid)
+            .join(models.User)
+            .where(
+                (models.User.username == username)
+                & ~models.CollectionEntity.deleted
+                & ((models.CollectionEntity.uid == segment)
+                   | (models.CollectionEntity.dav_href == segment))
+            ).limit(2)
+        )
+    if len(matches) > 1:
+        raise DavCollectionPathError("ambiguous DAV collection path")
+    return matches[0].uid if matches else segment
+
+
+def dav_collection_path(username, uid):
+    if getattr(db.database_proxy, "obj", None) is None:
+        return uid
+    with db.atomic_connection():
+        if not db.database_proxy.table_exists("collectionentity"):
+            return uid
+        row = (
+            models.CollectionEntity.select(models.CollectionEntity.dav_href)
+            .join(models.User)
+            .where((models.User.username == username)
+                   & (models.CollectionEntity.uid == uid)
+                   & ~models.CollectionEntity.deleted)
+            .first()
+        )
+    return row.dav_href if row is not None and row.dav_href else uid
 
 
 def _bounded_integrity(diagnostic_code):
@@ -109,6 +152,7 @@ def _init_cache_database(db_path=None):
     with _private_umask():
         database = SqliteExtDatabase(
             path,
+            timeout=5.0,
             pragmas={
                 "journal_mode": "wal",
                 "foreign_keys": 1,
@@ -140,7 +184,7 @@ def _create_and_migrate_base_tables(database):
 
 
 def _ensure_cache_tables(database):
-    with _private_umask():
+    with _private_umask(), database.atomic():
         _create_and_migrate_base_tables(database)
         database.create_tables(
             [
@@ -167,8 +211,13 @@ def _migrate_cache_schema(database):
     if "collectionentity" not in tables or "itementity" not in tables:
         return
 
+    indexes = {
+        row[0] for row in database.execute_sql("SELECT name FROM sqlite_master WHERE type='index'")
+    }
     collection_columns = {column.name for column in database.get_columns("collectionentity")}
     item_columns = {column.name for column in database.get_columns("itementity")}
+    if "dav_href" not in collection_columns:
+        database.execute_sql("ALTER TABLE collectionentity ADD COLUMN dav_href VARCHAR(255)")
     if "dav_revision" not in collection_columns:
         database.execute_sql(
             "ALTER TABLE collectionentity "
@@ -178,16 +227,17 @@ def _migrate_cache_schema(database):
         database.execute_sql(
             "ALTER TABLE itementity ADD COLUMN remote_uid VARCHAR(255)"
         )
-    try:
-        database.execute_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS "
-            "itementity_collection_remote_uid "
-            "ON itementity (collection_id, remote_uid)"
-        )
-    except pw.IntegrityError:
-        raise BoundedDiagnosticError(
-            "CacheSchemaRemoteUidIntegrityError"
-        ) from None
+    if "itementity_collection_remote_uid" not in indexes:
+        try:
+            database.execute_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "itementity_collection_remote_uid "
+                "ON itementity (collection_id, remote_uid)"
+            )
+        except pw.IntegrityError:
+            raise BoundedDiagnosticError(
+                "CacheSchemaRemoteUidIntegrityError"
+            ) from None
     if "davsynctoken" in tables:
         token_columns = {
             column.name for column in database.get_columns("davsynctoken")
@@ -196,16 +246,17 @@ def _migrate_cache_schema(database):
             database.execute_sql(
                 "ALTER TABLE davsynctoken ADD COLUMN state_hash VARCHAR(255)"
             )
-        try:
-            database.execute_sql(
-                "CREATE UNIQUE INDEX IF NOT EXISTS "
-                "davsynctoken_collection_revision "
-                "ON davsynctoken (collection_id, revision)"
-            )
-        except pw.IntegrityError:
-            raise BoundedDiagnosticError(
-                "CacheSchemaTokenRevisionIntegrityError"
-            ) from None
+        if "davsynctoken_collection_revision" not in indexes:
+            try:
+                database.execute_sql(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "davsynctoken_collection_revision "
+                    "ON davsynctoken (collection_id, revision)"
+                )
+            except pw.IntegrityError:
+                raise BoundedDiagnosticError(
+                    "CacheSchemaTokenRevisionIntegrityError"
+                ) from None
     if "davrevision" in tables:
         revision_columns = {
             column.name for column in database.get_columns("davrevision")
@@ -233,6 +284,16 @@ def _migrate_cache_schema(database):
             database.execute_sql(
                 "ALTER TABLE davunresolveditem ADD COLUMN local_item_id INTEGER"
             )
+    # Ordinary session initialization must remain a reader when no cleanup is due.
+    if database.execute_sql(
+        "SELECT 1 FROM collectionentity WHERE deleted=1 AND dav_href IS NOT NULL LIMIT 1"
+    ).fetchone() is not None:
+        database.execute_sql("UPDATE collectionentity SET dav_href=NULL WHERE deleted=1 AND dav_href IS NOT NULL")
+    if "collectionentity_local_user_dav_href" not in indexes:
+        database.execute_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS collectionentity_local_user_dav_href "
+            "ON collectionentity (local_user_id, dav_href)"
+        )
 
 
 def _activate_dav_revision_ledger():
@@ -363,7 +424,7 @@ def get_millis():
 
 
 def dav_collection_state_hash(cache_col):
-    """Hash DAV-relevant encrypted cache state without exposing its contents."""
+    """Keep the legacy content proof, reading optional hrefs in one join."""
     digest = hashlib.sha256()
 
     def add(value):
@@ -377,33 +438,84 @@ def dav_collection_state_hash(cache_col):
         digest.update(payload)
 
     current_col = models.CollectionEntity.get_by_id(cache_col.id)
-    for value in (
-        current_col.eb_col,
-        current_col.new,
-        current_col.dirty,
-        current_col.deleted,
-        current_col.dav_revision,
-    ):
+    for value in (current_col.eb_col, current_col.new, current_col.dirty,
+                  current_col.deleted, current_col.dav_revision):
         add(value)
-    items = (
-        models.ItemEntity.select()
+    rows = (
+        models.ItemEntity.select(
+            models.ItemEntity.id, models.ItemEntity.uid, models.ItemEntity.remote_uid,
+            models.ItemEntity.eb_item, models.ItemEntity.new, models.ItemEntity.dirty,
+            models.ItemEntity.deleted, models.HrefMapper.href,
+        )
+        .join(models.HrefMapper, pw.JOIN.LEFT_OUTER,
+              on=(models.HrefMapper.content == models.ItemEntity.id))
         .where(models.ItemEntity.collection == current_col)
         .order_by(models.ItemEntity.id)
+        .tuples()
     )
-    for item in items:
-        href = models.HrefMapper.get_or_none(models.HrefMapper.content == item)
-        for value in (
-            item.id,
-            item.uid,
-            item.remote_uid,
-            item.eb_item,
-            item.new,
-            item.dirty,
-            item.deleted,
-            href.href if href is not None else None,
-        ):
+    for row in rows:
+        for value in row:
             add(value)
     return digest.hexdigest()
+
+
+class _DavStateBatch:
+    """Carry proof links only within an existing multi-item writer transaction."""
+
+    def __init__(self, cache_col):
+        if not db.database_proxy.in_transaction():
+            raise RuntimeError("DAV batch requires a writer transaction")
+        self.collection = cache_col
+        self.initial_hash = dav_collection_state_hash(cache_col)
+        self.state_hash = self.initial_hash
+        self.prefix = f"dav-batch:{secrets.token_hex(12)}:{cache_col.id}"
+        self.last_revision = None
+        self.reanchored = False
+        self.tainted = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, _exc, _traceback):
+        if exc_type is None:
+            self.finish()
+
+    def marker(self, revision):
+        return f"{self.prefix}:{revision}"
+
+    def previous_hash(self):
+        if self.tainted:
+            # An unrecorded write must break the next historical link.
+            return f"{self.prefix}:gap:{secrets.token_hex(8)}"
+        return self.state_hash
+
+    def recorded(self, revision):
+        self.last_revision = revision
+        self.state_hash = self.marker(revision)
+        self.tainted = False
+
+    def finish(self):
+        if self.last_revision is None:
+            if self.reanchored and not self.tainted:
+                reanchor_dav_state(self.collection, self.initial_hash)
+            return
+        current_revision = models.CollectionEntity.get_by_id(self.collection.id).dav_revision
+        tail = (
+            (models.DavRevision.collection == self.collection.id)
+            & (models.DavRevision.revision == current_revision)
+            & (models.DavRevision.revision == self.last_revision)
+            & (models.DavRevision.state_hash == self.state_hash)
+        )
+        rows = list(models.DavRevision.select(models.DavRevision.id).where(tail).limit(2))
+        if len(rows) != 1:
+            raise RuntimeError("DAV batch lost its current proof")
+        if self.tainted:
+            # A later unrecorded write leaves the current proof unprovable.
+            return
+        state_hash = dav_collection_state_hash(self.collection)
+        changed = models.DavRevision.update(state_hash=state_hash).where(tail).execute()
+        if changed != 1:
+            raise RuntimeError("DAV batch could not finalize its current proof")
 
 
 def is_safe_dav_href(href):
@@ -425,11 +537,43 @@ def opaque_dav_href(identity, suffix):
 _dav_href_allocation_lock = threading.RLock()
 
 
+@contextmanager
+def _dav_href_writer_lock(cache_item):
+    database = db.database_proxy.obj
+    borrowed = database.in_transaction()
+    with database.atomic("IMMEDIATE"):
+        if borrowed:
+            # A nested atomic block is a savepoint, not an IMMEDIATE upgrade.
+            database.execute_sql(
+                "UPDATE collectionentity SET dav_revision=dav_revision WHERE id=?",
+                (cache_item.collection_id,),
+            )
+        with _dav_href_allocation_lock:
+            yield
+
+
 def ensure_dav_href(
     cache_item, preferred_href, suffix, *, strict=False, replace_existing=False
 ):
     """Return one collection-unique href, including retained tombstones."""
-    with _dav_href_allocation_lock:
+    def conflicts_for(item, href):
+        return list(
+            models.HrefMapper.select(models.HrefMapper)
+            .join(models.ItemEntity)
+            .where(
+                (models.HrefMapper.href == href)
+                & (models.ItemEntity.collection == item.collection_id)
+                & (models.HrefMapper.content != item.id)
+            )
+            .order_by(models.ItemEntity.remote_uid, models.ItemEntity.uid)
+        )
+
+    if not replace_existing:
+        mapper = models.HrefMapper.get_or_none(models.HrefMapper.content == cache_item)
+        if mapper is not None and is_safe_dav_href(mapper.href) and not conflicts_for(cache_item, mapper.href):
+            return mapper
+
+    with _dav_href_writer_lock(cache_item):
         mapper = models.HrefMapper.get_or_none(
             models.HrefMapper.content == cache_item
         )
@@ -455,18 +599,6 @@ def ensure_dav_href(
                 identity(item),
                 str(item.remote_uid or ""),
                 str(item.uid or ""),
-            )
-
-        def conflicts_for(item, href):
-            return list(
-                models.HrefMapper.select(models.HrefMapper)
-                .join(models.ItemEntity)
-                .where(
-                    (models.HrefMapper.href == href)
-                    & (models.ItemEntity.collection == item.collection_id)
-                    & (models.HrefMapper.content != item.id)
-                )
-                .order_by(models.ItemEntity.remote_uid, models.ItemEntity.uid)
             )
 
         def fallback_candidates(item):
@@ -499,15 +631,12 @@ def ensure_dav_href(
         # lets attacker-controlled encrypted href metadata exhaust Python's call
         # stack; this loop is bounded by the number of collection items and
         # resolves every retained/legacy claimant, not only the first row.
-        item_count = models.ItemEntity.select().where(
-            models.ItemEntity.collection == cache_item.collection_id
-        ).count()
-        max_steps = max(32, item_count * 8)
+        max_steps = None
         steps = 0
         stack = [("assign", cache_item, mapper, candidate, frozenset())]
         while stack:
             steps += 1
-            if steps > max_steps:
+            if max_steps is not None and steps > max_steps:
                 raise RuntimeError("DAV href allocation did not converge")
             operation, target_item, target_mapper, href, excluded = stack.pop()
             if operation == "persist":
@@ -520,6 +649,11 @@ def ensure_dav_href(
                 continue
             if strict:
                 raise ValueError("DAV href already exists")
+            if max_steps is None:
+                item_count = models.ItemEntity.select().where(
+                    models.ItemEntity.collection == cache_item.collection_id
+                ).count()
+                max_steps = max(32, item_count * 8)
 
             claimants = [(target_item, target_mapper)] + [
                 (conflict_mapper.content, conflict_mapper)
@@ -580,7 +714,7 @@ def retire_settled_tombstone(cache_item):
 
 @_bounded_integrity("CacheRevisionIntegrityError")
 def record_dav_change(
-    cache_col, href, *, previous_state_hash, etag=None, deleted=False
+    cache_col, href, *, previous_state_hash, etag=None, deleted=False, batch=None
 ):
     """Atomically advance a collection revision and record its latest href change."""
     with db.database_proxy.atomic("IMMEDIATE"):
@@ -594,6 +728,10 @@ def record_dav_change(
             or 0
         )
         revision = max(current_revision, retained_revision) + 1
+        if batch is not None:
+            if batch.collection.id != cache_col.id:
+                raise RuntimeError("DAV batch collection mismatch")
+            previous_state_hash = batch.previous_hash()
         (
             models.CollectionEntity.update(dav_revision=revision)
             .where(models.CollectionEntity.id == cache_col.id)
@@ -627,13 +765,16 @@ def record_dav_change(
             etag=etag,
             deleted=deleted,
             previous_state_hash=previous_state_hash,
-            state_hash=dav_collection_state_hash(cache_col),
+            state_hash=(batch.marker(revision) if batch is not None
+                        else dav_collection_state_hash(cache_col)),
         )
         cache_col.dav_revision = revision
+        if batch is not None:
+            batch.recorded(revision)
         return revision
 
 
-def reanchor_dav_state(cache_col, previous_state_hash):
+def reanchor_dav_state(cache_col, previous_state_hash, *, batch=None):
     """Carry current-revision DAV proofs across a non-DAV-visible cache write.
 
     Ordinary writers such as the collection-envelope refresh and the upload
@@ -649,6 +790,12 @@ def reanchor_dav_state(cache_col, previous_state_hash):
     in ``Collection.sync`` keeps failing closed. Must run inside the writer's
     own transaction. Returns True when at least one proof was re-anchored.
     """
+    if batch is not None:
+        if batch.collection.id != cache_col.id:
+            raise RuntimeError("DAV batch collection mismatch")
+        # Only these already-proven writes may fold into the batch's tail.
+        batch.reanchored = True
+        return False
     current_col = models.CollectionEntity.get_by_id(cache_col.id)
     state_hash = dav_collection_state_hash(current_col)
     if state_hash == previous_state_hash:
@@ -807,6 +954,7 @@ class Etebase:
                             unresolved,
                         )
         _restrict_cache_database_files(getattr(database, "database", None))
+
 
     def _init_db(self, db_path):
         _ensure_private_cache_dir(db_path)
@@ -1039,6 +1187,14 @@ class Etebase:
         with self._mutation_session_guard():
             with db.database_proxy.atomic("IMMEDIATE"):
                 for col in col_list.data:
+                    if not col.deleted and models.CollectionEntity.select().where(
+                        (models.CollectionEntity.local_user == self.user)
+                        & ~models.CollectionEntity.deleted
+                        & (models.CollectionEntity.dav_href == col.uid)
+                        & (models.CollectionEntity.uid != col.uid)
+                    ).exists():
+                        logger.warning("Collection list rejected (dav_collection_path_conflict)")
+                        raise DavCollectionPathError("ambiguous DAV collection path")
                     collection = models.CollectionEntity.get_or_none(
                         local_user=self.user, uid=col.uid
                     )
@@ -1069,6 +1225,8 @@ class Etebase:
                     collection.eb_col = col_mgr.cache_save(col)
                     collection.stoken = col.stoken
                     collection.deleted = col.deleted
+                    if collection.deleted:
+                        collection.dav_href = None
                     collection.save(
                         only=[
                             models.CollectionEntity.local_user,
@@ -1076,6 +1234,7 @@ class Etebase:
                             models.CollectionEntity.eb_col,
                             models.CollectionEntity.stoken,
                             models.CollectionEntity.deleted,
+                            models.CollectionEntity.dav_href,
                         ]
                     )
                     if previous_state_hash is not None:
@@ -1100,7 +1259,8 @@ class Etebase:
                             collection.save(only=[models.CollectionEntity.dirty])
                             continue
                         collection.deleted = True
-                        collection.save(only=[models.CollectionEntity.deleted])
+                        collection.dav_href = None
+                        collection.save(only=[models.CollectionEntity.deleted, models.CollectionEntity.dav_href])
                         models.DavUnresolvedItem.delete().where(
                             models.DavUnresolvedItem.collection == collection
                         ).execute()
@@ -1255,6 +1415,7 @@ class Etebase:
         resolve_unresolved=True,
         prepared_meta=None,
         allow_settle=True,
+        batch=None,
     ):
         if prepared_meta is None:
             metadata = item.meta
@@ -1263,7 +1424,9 @@ class Etebase:
             # Retry callers pass a dict copied from one authenticated read.
             metadata = meta = prepared_meta
         with db.database_proxy.atomic("IMMEDIATE"):
-            previous_state_hash = dav_collection_state_hash(cache_col)
+            previous_state_hash = (
+                batch.state_hash if batch is not None else dav_collection_state_hash(cache_col)
+            )
             cache_item = models.ItemEntity.get_or_none(
                 (models.ItemEntity.collection == cache_col)
                 & (models.ItemEntity.remote_uid == item.uid)
@@ -1321,7 +1484,7 @@ class Etebase:
                 if cache_item.remote_uid is None:
                     cache_item.remote_uid = item.uid
                     cache_item.save(only=[models.ItemEntity.remote_uid])
-                    reanchor_dav_state(cache_col, previous_state_hash)
+                    reanchor_dav_state(cache_col, previous_state_hash, batch=batch)
                 if resolve_unresolved:
                     models.DavUnresolvedItem.delete().where(
                         (models.DavUnresolvedItem.collection == cache_col)
@@ -1329,6 +1492,8 @@ class Etebase:
                     ).execute()
                 return "preserved"
 
+            old_state = (cache_item.uid, cache_item.remote_uid, cache_item.eb_item,
+                         cache_item.new, cache_item.dirty, cache_item.deleted)
             cache_item.remote_uid = item.uid
             cache_item.eb_item = item_mgr.cache_save(item)
             cache_item.deleted = item.deleted
@@ -1379,7 +1544,14 @@ class Etebase:
                     previous_state_hash=previous_state_hash,
                     etag=item.etag,
                     deleted=item.deleted,
+                    batch=batch,
                 )
+            elif batch is not None and old_state != (
+                cache_item.uid, cache_item.remote_uid, cache_item.eb_item,
+                cache_item.new, cache_item.dirty, cache_item.deleted,
+            ):
+                # An identical mapper-less tombstone re-save changes no proof.
+                batch.tainted = True
             if resolve_unresolved:
                 models.DavUnresolvedItem.delete().where(
                     (models.DavUnresolvedItem.collection == cache_col)
@@ -1763,21 +1935,23 @@ class Etebase:
                 ) = 0
                 with self._mutation_session_guard():
                     with db.database_proxy.atomic("IMMEDIATE"):
-                        for item in items_data:
-                            outcome = self._apply_pulled_item(
-                                cache_col, col, item_mgr, item
-                            )
-                            if outcome == "preserved":
-                                preserved_local_intent += 1
-                            elif outcome == "settled":
-                                # A never-held deletion applies nothing.
-                                pass
-                            elif outcome:
-                                applied += 1
-                                if item.deleted:
-                                    tombstones_applied += 1
-                            else:
-                                page_quarantined += 1
+                        if items_data:
+                            with _DavStateBatch(cache_col) as batch:
+                                for item in items_data:
+                                    outcome = self._apply_pulled_item(
+                                        cache_col, col, item_mgr, item, batch=batch
+                                    )
+                                    if outcome == "preserved":
+                                        preserved_local_intent += 1
+                                    elif outcome == "settled":
+                                        # A never-held deletion applies nothing.
+                                        pass
+                                    elif outcome:
+                                        applied += 1
+                                        if item.deleted:
+                                            tombstones_applied += 1
+                                    else:
+                                        page_quarantined += 1
 
                         done = item_list.done
                         stoken = item_list.stoken
@@ -2003,58 +2177,61 @@ class Etebase:
                             "copy; the local edit stays pending"
                         )
                         return 0
-                # Server version wins for the original item and its href.
-                state_before_original = dav_collection_state_hash(cache_col)
-                current.eb_item = item_mgr.cache_save(remote)
-                current.deleted = remote.deleted
-                current.dirty = False
-                current.new = False
-                current.save(
-                    only=[
-                        models.ItemEntity.eb_item,
-                        models.ItemEntity.deleted,
-                        models.ItemEntity.dirty,
-                        models.ItemEntity.new,
-                    ]
-                )
-                mapper = models.HrefMapper.get_or_none(
-                    models.HrefMapper.content == current
-                )
-                if mapper is not None:
+                with _DavStateBatch(cache_col) as batch:
+                    # Server version wins for the original item and its href.
+                    state_before_original = batch.state_hash
+                    current.eb_item = item_mgr.cache_save(remote)
+                    current.deleted = remote.deleted
+                    current.dirty = False
+                    current.new = False
+                    current.save(
+                        only=[
+                            models.ItemEntity.eb_item,
+                            models.ItemEntity.deleted,
+                            models.ItemEntity.dirty,
+                            models.ItemEntity.new,
+                        ]
+                    )
+                    mapper = models.HrefMapper.get_or_none(
+                        models.HrefMapper.content == current
+                    )
+                    if mapper is not None:
+                        record_dav_change(
+                            cache_col,
+                            mapper.href,
+                            previous_state_hash=state_before_original,
+                            etag=remote.etag,
+                            deleted=remote.deleted,
+                            batch=batch,
+                        )
+                    else:
+                        reanchor_dav_state(cache_col, state_before_original, batch=batch)
+                    if copy_identity is None:
+                        return 0
+                    copy_uid, copy_href = copy_identity
+                    # Taken after the first revision so the ledger stays chained.
+                    state_before_copy = batch.state_hash
+                    copy_item = item_mgr.create(
+                        {"name": copy_uid, "mtime": get_millis(), "dav_href": copy_href},
+                        _conflict_copy_content(parsed, copy_uid),
+                    )
+                    copy_row = models.ItemEntity.create(
+                        collection=cache_col,
+                        uid=copy_uid,
+                        remote_uid=copy_item.uid,
+                        eb_item=item_mgr.cache_save(copy_item),
+                        new=True,
+                        dirty=True,
+                    )
+                    models.HrefMapper.create(content=copy_row, href=copy_href)
                     record_dav_change(
                         cache_col,
-                        mapper.href,
-                        previous_state_hash=state_before_original,
-                        etag=remote.etag,
-                        deleted=remote.deleted,
+                        copy_href,
+                        previous_state_hash=state_before_copy,
+                        etag=copy_item.etag,
+                        batch=batch,
                     )
-                else:
-                    reanchor_dav_state(cache_col, state_before_original)
-                if copy_identity is None:
-                    return 0
-                copy_uid, copy_href = copy_identity
-                # Taken after the first revision so the ledger stays chained.
-                state_before_copy = dav_collection_state_hash(cache_col)
-                copy_item = item_mgr.create(
-                    {"name": copy_uid, "mtime": get_millis(), "dav_href": copy_href},
-                    _conflict_copy_content(parsed, copy_uid),
-                )
-                copy_row = models.ItemEntity.create(
-                    collection=cache_col,
-                    uid=copy_uid,
-                    remote_uid=copy_item.uid,
-                    eb_item=item_mgr.cache_save(copy_item),
-                    new=True,
-                    dirty=True,
-                )
-                models.HrefMapper.create(content=copy_row, href=copy_href)
-                record_dav_change(
-                    cache_col,
-                    copy_href,
-                    previous_state_hash=state_before_copy,
-                    etag=copy_item.etag,
-                )
-                return 1
+                    return 1
 
     # --- CRUD operations ---
 
@@ -2188,10 +2365,12 @@ class Collection:
             current_cache = models.CollectionEntity.get_by_id(self.cache_col.id)
             current_cache.deleted = True
             current_cache.dirty = True
+            current_cache.dav_href = None
             current_cache.save(
                 only=[
                     models.CollectionEntity.deleted,
                     models.CollectionEntity.dirty,
+                    models.CollectionEntity.dav_href,
                 ]
             )
             self.cache_col = current_cache

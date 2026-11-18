@@ -207,6 +207,7 @@ constructor(internal val context: Context, internal val account: Account) {
         const val KEY_CONTEXTUAL_PERMISSION_DENIALS = "post_login_contextual_permission_denials_v1"
         const val KEY_NOTES_ENABLED = "notes_enabled_v1"
         const val KEY_BIRTHDAYS_ENABLED = "birthdays_enabled_v1"
+        const val KEY_WIDGETS_ENABLED = "home_screen_widgets_enabled_v1"
         const val KEY_COLLECTION_LIST_TYPES = "collection_list_types_v1"
         const val KEY_NOTES_AUTOMATIC_NETWORK = "notes_automatic_network_v1"
         const val KEY_NOTES_SYNC_NOW_NETWORK = "notes_sync_now_network_v1"
@@ -348,6 +349,16 @@ constructor(internal val context: Context, internal val account: Account) {
 
         fun writeBirthdaysEnabled(accountManager: AccountManager, account: Account, enabled: Boolean): Boolean =
             writeVerified(accountManager, account, KEY_BIRTHDAYS_ENABLED, if (enabled) "true" else "false")
+
+        /** Experimental home-screen widgets: absent or unreadable consent means off. */
+        fun widgetsEnabled(accountManager: AccountManager, account: Account): Boolean = try {
+            accountManager.getUserData(account, KEY_WIDGETS_ENABLED) == "true"
+        } catch (_: Exception) {
+            false
+        }
+
+        fun writeWidgetsEnabled(accountManager: AccountManager, account: Account, enabled: Boolean): Boolean =
+            writeVerified(accountManager, account, KEY_WIDGETS_ENABLED, if (enabled) "true" else "false")
 
         /**
          * The collection types the saved account-wide collection-list cursor covers. When the app

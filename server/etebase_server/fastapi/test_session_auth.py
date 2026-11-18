@@ -14,7 +14,9 @@ from fastapi.testclient import TestClient
 
 from etebase_server.fastapi.conftest import (
     AUTH_PREFIX,
+    build_signed_response,
     decode_response,
+    login_challenge,
     msgpack_post,
     perform_login,
 )
@@ -56,6 +58,72 @@ def _login_and_get_token(client, signing_key, username="test_user_alice"):
     response = perform_login(client, username=username, signing_key=signing_key)
     assert response.status_code == 200, decode_response(response)
     return decode_response(response)["token"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("valid_proof", [True, False])
+def test_password_change_preserves_caller_and_other_user_sessions(session_client, user_factory, signing_key, valid_proof):
+    from nacl.signing import SigningKey
+
+    from etebase_server.django.models import UserInfo
+
+    owner = user_factory(username="test_user_password_sessions")
+    other = user_factory(username="test_user_password_other")
+    caller = _login_and_get_token(session_client, signing_key, owner.username)
+    second = _login_and_get_token(session_client, signing_key, owner.username)
+    unrelated = _login_and_get_token(session_client, signing_key, other.username)
+    replacement = SigningKey.generate()
+    _, challenge = login_challenge(session_client, owner.username)
+    body = build_signed_response(
+        username=owner.username, challenge_bytes=challenge["challenge"],
+        signing_key=signing_key if valid_proof else replacement, action="changePassword",
+        extra={"loginPubkey": bytes(replacement.verify_key), "encryptedContent": b"synthetic-new-content"},
+    )
+    response = msgpack_post(session_client, f"{AUTH_PREFIX}/change_password/", body,
+                            headers={"Authorization": f"Token {caller}"})
+    assert response.status_code == (204 if valid_proof else 401)
+    info = UserInfo.objects.get(owner=owner)
+    assert bytes(info.loginPubkey) == bytes((replacement if valid_proof else signing_key).verify_key)
+    for token, expected in [(caller, 200), (second, 401 if valid_proof else 200), (unrelated, 200)]:
+        assert session_client.get("/whoami", headers={"Authorization": f"Token {token}"}).status_code == expected
+
+
+@pytest.mark.django_db(transaction=True)
+def test_password_save_rolls_back_if_session_revocation_fails(session_client, user_factory, signing_key, monkeypatch):
+    from django.db.models.query import QuerySet
+    from nacl.signing import SigningKey
+
+    from etebase_server.django.models import UserInfo
+    from etebase_server.django.token_auth.models import AuthToken
+
+    user = user_factory(username="test_user_password_rollback")
+    caller = _login_and_get_token(session_client, signing_key, user.username)
+    other = _login_and_get_token(session_client, signing_key, user.username)
+    original_info = UserInfo.objects.get(owner=user)
+    _, challenge = login_challenge(session_client, user.username)
+    body = build_signed_response(
+        username=user.username, challenge_bytes=challenge["challenge"], signing_key=signing_key,
+        action="changePassword",
+        extra={"loginPubkey": bytes(SigningKey.generate().verify_key), "encryptedContent": b"synthetic-replacement"},
+    )
+    original_delete = QuerySet.delete
+
+    def failed_delete(queryset):
+        if queryset.model is AuthToken:
+            # Make a real deletion before failing, so the transaction must
+            # roll back both the password save and the token deletion.
+            original_delete(queryset)
+            raise RuntimeError("synthetic revocation failure")
+        return original_delete(queryset)
+
+    monkeypatch.setattr(QuerySet, "delete", failed_delete)
+    with pytest.raises(RuntimeError, match="synthetic revocation failure"):
+        msgpack_post(session_client, f"{AUTH_PREFIX}/change_password/", body,
+                     headers={"Authorization": f"Token {caller}"})
+    info = UserInfo.objects.get(owner=user)
+    assert bytes(info.loginPubkey) == bytes(original_info.loginPubkey)
+    assert bytes(info.encryptedContent) == bytes(original_info.encryptedContent)
+    assert set(AuthToken.objects.filter(user=user).values_list("key", flat=True)) == {caller, other}
 
 
 @pytest.mark.django_db(transaction=True)
