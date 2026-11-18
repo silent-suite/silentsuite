@@ -52,6 +52,7 @@ const EDIT_TITLE = 'PRIVATE EDIT TITLE 744'
 const FIRST_BODY = 'PRIVATE AUTOSAVE ONE 744'
 const SECOND_BODY = 'PRIVATE AUTOSAVE TWO 744'
 const RETAINED_BODY = 'PRIVATE RETAINED DRAFT B 744'
+const NEWER_BODY = 'PRIVATE NEWER DRAFT C 1113'
 
 async function readAllRecords(dbName: string, storeName: string): Promise<any[]> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -544,50 +545,91 @@ describe('#1113 D1 the note store refuses with a reason and saves copies once', 
     expect(useEtebaseStore.getState().itemCache.has(landed.uid)).toBe(false)
   })
 
-  it('writes no display record for a confirmed copy whose server text this tab cannot read', async () => {
-    const { account, collection, item, peerItem, held } = await staleDraft()
+  /** Loses the response to the first copy upload; the copy still lands. */
+  function loseFirstCopyResponse(): void {
+    let lose = true
+    EtebaseRequest.default = async (url: string, options: any) => {
+      const response = await server.handle(url, options)
+      if (lose && String(options?.method).toLowerCase() === 'post' && url.includes('item/transaction')) {
+        lose = false
+        throw new TypeError('Network request failed')
+      }
+      return response
+    }
+  }
+
+  /** Breaks the stored body of the item: its metadata still decrypts here, its content does not. */
+  async function breakStoredBody(itemManager: any, collection: any, uid: string): Promise<void> {
+    const stored = (server as any).collections.get(collection.uid).items.get(uid)
+    const [chunkUid, bytes] = stored.content.chunks[0]
+    const broken = Uint8Array.from(bytes)
+    broken[broken.length - 1] ^= 0xff
+    stored.content = { ...stored.content, chunks: [[chunkUid, broken]] }
+    const fetched = await itemManager.fetch(uid)
+    expect(() => fetched.getMeta()).not.toThrow()
+    await expect(fetched.getContent()).rejects.toThrow()
+  }
+
+  it('does not count a copy whose server text this tab cannot read, and writes no display record of it', async () => {
+    const { account, collection, item, held } = await staleDraft()
     vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
     _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
     _setEncryptedCacheAvailableForTests(true)
     try {
       await ensureFingerprint(FINGERPRINT, getAccountEpoch())
       expect(isCacheEnabled()).toBe(true)
-      let lose = true
-      EtebaseRequest.default = async (url: string, options: any) => {
-        const response = await server.handle(url, options)
-        if (lose && String(options?.method).toLowerCase() === 'post' && url.includes('item/transaction')) {
-          lose = false
-          throw new TypeError('Network request failed')
-        }
-        return response
-      }
+      loseFirstCopyResponse()
       expect(await useNoteStore.getState().saveNoteCopy(item.uid, held)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
       const itemManager = account.getCollectionManager().getItemManager(collection)
       const listed = await itemManager.list()
       const landed = listed.data.find((candidate: any) => candidate.uid !== item.uid)
       const copyUid: string = landed.uid
-      // Another device writes the copy again; its body then cannot be decrypted here, while its
-      // metadata still can, so only the body check stands between it and the display cache.
+      // Another device writes the copy again, and its body then cannot be decrypted here.
       const peer = landed._clone()
       await peer.setContent('PEER BODY OF THE COPY 1113')
       await itemManager.transaction([peer])
-      const stored = (server as any).collections.get(collection.uid).items.get(copyUid)
-      const [chunkUid, bytes] = stored.content.chunks[0]
-      const broken = Uint8Array.from(bytes)
-      broken[broken.length - 1] ^= 0xff
-      stored.content = { ...stored.content, chunks: [[chunkUid, broken]] }
+      await breakStoredBody(itemManager, collection, copyUid)
 
       const retried = await useNoteStore.getState().saveNoteCopy(item.uid, held)
 
-      expect(retried).toEqual({ kind: 'copied', id: copyUid })
-      // This tab's own text at an unknown revision, until a paired read; nothing of it in the display cache.
-      expect(useNoteStore.getState().notes.find((note) => note.id === copyUid)).toMatchObject({ content: RETAINED_BODY, revision: null })
+      // The server holds a revision this tab did not send and cannot read: not copied.
+      expect(retried).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+      expect(getHeldNoteDraft(item.uid)).toMatchObject({ draft: held.draft, copy: 'unconfirmed' })
+      expect(useNoteStore.getState().notes.some((note) => note.id === copyUid)).toBe(false)
+      expect(useEtebaseStore.getState().itemCache.has(copyUid)).toBe(false)
       expect((await getItemsByType('notes')).some((record) => record.itemUid === copyUid)).toBe(false)
     } finally {
       vi.unstubAllEnvs()
       _setEncryptedCacheAvailableForTests(null)
       _setEnvelopeKeyForTests(null)
     }
+  })
+
+  it('keeps newer text held when the copy it grew from landed unseen and cannot be read', async () => {
+    const { account, collection, item, held } = await staleDraft()
+    loseFirstCopyResponse()
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, held)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    const itemManager = account.getCollectionManager().getItemManager(collection)
+    const landed = (await itemManager.list()).data.find((candidate: any) => candidate.uid !== item.uid)
+    const copyUid: string = landed.uid
+    const landedRevision: string = landed.etag
+    await breakStoredBody(itemManager, collection, copyUid)
+    // The user keeps typing after the lost response.
+    const newer = { ...held, draft: { title: EDIT_TITLE, content: NEWER_BODY } }
+
+    const retried = await useNoteStore.getState().saveNoteCopy(item.uid, newer)
+    const again = await useNoteStore.getState().saveNoteCopy(item.uid, newer)
+
+    // The 409 proves the server holds another revision, and this tab cannot read it: the newer
+    // text is not on the server, so it stays held on the source note and no copy is published.
+    expect([retried, again]).toEqual([{ kind: 'failed', reason: 'unconfirmed' }, { kind: 'failed', reason: 'unconfirmed' }])
+    expect(getHeldNoteDraft(item.uid)).toMatchObject({ draft: newer.draft, copy: 'unconfirmed' })
+    expect(getHeldNoteDraft(copyUid)).toBeUndefined()
+    expect(useNoteStore.getState().notes.some((note) => note.id === copyUid)).toBe(false)
+    expect(useEtebaseStore.getState().itemCache.has(copyUid)).toBe(false)
+    // One copy, never overwritten.
+    const copies = (await itemManager.list()).data.filter((candidate: any) => candidate.uid !== item.uid)
+    expect(copies.map((candidate: any) => [candidate.uid, candidate.etag])).toEqual([[copyUid, landedRevision]])
   })
 
   it('drops the attempt and held text on the account reset, and a late result is not published', async () => {

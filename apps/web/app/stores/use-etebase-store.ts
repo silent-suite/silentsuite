@@ -1003,8 +1003,9 @@ function sdkErrorNamed(err: unknown, name: string): boolean {
  * so a retry carries the same UID at the same revision, which the server answers
  * as a success when it already holds it. The upload is a transaction: a copy that
  * another device changed since it landed gets a 409, never an overwrite, and that
- * 409 counts as copied only once a fresh fetch of the UID finds the copy live.
- * Only a confirmed copy is published to the item cache and the display cache.
+ * 409 counts as copied only once a fresh fetch of the UID finds the copy live,
+ * still a note, and readable here. Only a confirmed copy is published to the item
+ * cache and the display cache.
  */
 export async function uploadNoteCopyItem(collectionUid: string, prepared: any, own: { title: string; content: string }): Promise<NoteCopyUpload> {
   const accountEpoch = getAccountEpoch()
@@ -1045,10 +1046,9 @@ export async function uploadNoteCopyItem(collectionUid: string, prepared: any, o
     fetched = true
   }
   let { title, content } = own
-  let revision = core.savedRevisionOf(committed)
-  let serverText = true
+  const revision = core.savedRevisionOf(committed)
   if (fetched) {
-    // The copy landed earlier and may have changed since: show the server's text.
+    // The copy landed earlier at a revision other than the one just sent: show the server's text.
     try {
       const meta = committed.getMeta()
       // Another app made it something other than a note: it is not published as one.
@@ -1058,10 +1058,8 @@ export async function uploadNoteCopyItem(collectionUid: string, prepared: any, o
       title = core.noteFromEtebaseItem(committed.uid, '', meta).title
       content = text
     } catch {
-      // Unreadable here: this tab's own text at an unknown revision, until a paired read.
-      title = own.title
-      revision = null
-      serverText = false
+      // Unreadable here, so nothing shows which text the server holds: this tab's text stays held.
+      return { kind: 'unconfirmed' }
     }
     assertGuard()
   }
@@ -1073,10 +1071,9 @@ export async function uploadNoteCopyItem(collectionUid: string, prepared: any, o
   itemTypeMap.set(committed.uid, 'notes')
   itemCollectionMap.set(committed.uid, collection.uid)
   useEtebaseStore.setState({ itemCache, itemTypeMap, itemCollectionMap })
-  // The copy is on the server; a failed display write does not undo that. Only the
-  // server's own text goes to the display cache.
+  // The copy is on the server; a failed display write does not undo that.
   try {
-    if (serverText) await writeItemToCache('notes', collection.uid, committed.uid, content, accountEpoch, itemMetaOf(committed))
+    await writeItemToCache('notes', collection.uid, committed.uid, content, accountEpoch, itemMetaOf(committed))
   } catch (displayErr) {
     if (displayErr instanceof AccountBoundaryChangedError && !isCurrentAccountEpoch(accountEpoch)) throw displayErr
     logger.warn('[etebase-store] Display write after a note copy failed', getSafeErrorDetails(displayErr))
