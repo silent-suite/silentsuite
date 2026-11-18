@@ -4,7 +4,7 @@ Your notes live at [app.silentsuite.io/notes](https://app.silentsuite.io/notes).
 
 Notes use the [Etebase Markdown notes](https://docs.etebase.com/type-specs/notes) collection type (`etebase.md.note`), so existing EteSync Notes notebooks on the same account appear in SilentSuite without conversion.
 
-Notes is an experimental feature. You can create and edit notes in the web app, including mobile browsers, and in the Android app once you turn Notes on for your account there. If the same note changes in two places, SilentSuite does not overwrite either version. In the web app, a save that conflicts is refused: the editor shows **Not saved** and keeps your text. An edit made offline that conflicts is not sent when you reconnect. It stays in this browser, and a banner says it was not saved to the server because the note changed after your offline edit, with **Retry** and **Discard** buttons. Android keeps both: the other version stays, and your text becomes a separate note whose title ends in "(conflicted copy)". Other apps that use the same notes format may overwrite a newer version without warning, so avoid editing the same note in SilentSuite and in another app at the same time.
+Notes is an experimental feature. You can create and edit notes in the web app, including mobile browsers, and in the Android app once you turn Notes on for your account there. If the same note changes in two places, SilentSuite does not overwrite either version. In the web app, a save that conflicts is refused: the editor shows **Not saved**, keeps your text and says why. **Save as a copy** saves your text as a new note in the same notebook, with a title that ends in "(conflicted copy)", and opens it; the other version stays as it is. **Show newer version** shows the other version, read-only, and changes nothing in your text; the note's row in the list then shows that version too. An edit made offline that conflicts is not sent when you reconnect. It stays in this browser, and a banner says it was not saved to the server because the note changed after your offline edit, with **Retry** and **Discard** buttons. Android keeps both: the other version stays, and your text becomes a separate note whose title ends in "(conflicted copy)". Other apps that use the same notes format may overwrite a newer version without warning, so avoid editing the same note in SilentSuite and in another app at the same time.
 
 ## Notebooks
 
@@ -18,7 +18,7 @@ If your account has no notebooks yet, SilentSuite creates a **Personal Notes** n
 - The **Notebook** menu below a note's title moves the note to another notebook. The note keeps its text and its last-edited time.
 - New notes go to the notebook the list is narrowed to. With **All** selected they go to the starred default notebook, or, if none is starred, to the notebook of the note you are reading, or else to the first notebook by name. The **New note** button's tooltip names the target.
 - Rename, recolour, star, show or hide, and delete notebooks from the sidebar. When the sidebar is collapsed, the folder button next to **New note** opens it; on a phone it opens the notebooks sheet.
-- Deleting a notebook deletes every note in it. The confirmation says how many notes that is.
+- Deleting a notebook deletes every note in it. The confirmation says how many notes that is. On the web, the notebook is not deleted while a note in it has changes that are not on the server yet (such as a note marked **Not saved**), or while this browser cannot confirm that it shows everything in it (for example after a change on another device, or for a note just moved there); a message says which, and nothing is deleted.
 
 ## Create a Note
 
@@ -30,7 +30,7 @@ If your account has no notebooks yet, SilentSuite creates a **Personal Notes** n
 
 The editor highlights Markdown as you type, continues lists and quotes when you press Enter, and keeps an undo history that survives switching to the preview and back. Tab and Shift+Tab indent and outdent list items. To move keyboard focus out of the editor, press Escape and then Tab, or press Ctrl+M (Shift+Alt+M on macOS) to make Tab move focus until you press it again. Press Ctrl+F (Cmd+F on macOS) to find or replace text inside the note. What you type is stored exactly as written; nothing is reformatted. Browser spellcheck, autocorrect, and writing suggestions are turned off in the editor, because those features can send your text to third-party services.
 
-While you type, a label next to the editor shows **Unsaved changes**, **Saving**, **Saved**, or **Not saved**. **Not saved** means the last save failed (for example while offline without local storage); keep the note open or try again.
+While you type, a label next to the editor shows **Unsaved changes**, **Saving**, **Saved**, or **Not saved**. **Not saved** means the last save failed, for example while offline without local storage, or was refused because the note changed somewhere else. Text that was not saved stays in this browser when you switch notes or leave Notes, and comes back when you open the note again. Closing or reloading the tab loses it; the page asks the browser to confirm first, but not every browser shows that question. A note whose last save is still running opens read-only until that save ends.
 
 ## Search
 
@@ -52,7 +52,7 @@ On Android, open the note, open the menu in the top bar and choose **Delete note
 
 ## Offline
 
-Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect, unless the note changed somewhere else in the meantime; then your edit stays in this browser and is not sent. Creating a brand-new note or moving one to another notebook requires a connection.
+Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect, unless the note changed somewhere else in the meantime; then your edit stays in this browser and is not sent. Creating a brand-new note, moving one to another notebook, or saving one as a copy requires a connection.
 
 Reloading the page while offline and reading previously opened notes depends on how the deployment is configured: it needs the encrypted local cache to be enabled, and it only covers notes already loaded on that device. Where the cache is not enabled, an offline reload cannot show your notes.
 

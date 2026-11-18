@@ -224,14 +224,14 @@ def install_autostart_linux() -> int:
 
     logger.info("Installed systemd service")
 
-    # Enable and start the service
+    # Restart also replaces an already-running executable after installation.
     ok = _run_reported(["systemctl", "--user", "daemon-reload"], "systemctl daemon-reload")
     ok = _run_reported(["systemctl", "--user", "enable", SYSTEMD_UNIT], "systemctl enable") and ok
-    ok = _run_reported(["systemctl", "--user", "start", SYSTEMD_UNIT], "systemctl start") and ok
+    ok = _run_reported(["systemctl", "--user", "restart", SYSTEMD_UNIT], "systemctl restart") and ok
 
     print(f"Auto-start installed: {service_path}")
     if ok:
-        print("systemd accepted the enable/start request.")
+        print("systemd accepted the enable/restart request.")
     else:
         print("The service file is installed, but systemd reported a failure; the bridge is not confirmed running.")
     print("Check status: systemctl --user status silentsuite-bridge")

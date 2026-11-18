@@ -16,11 +16,11 @@ import re
 import secrets
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 import peewee as pw
 import vobject
-from radicale import pathutils
+from radicale import pathutils, xmlutils
 from radicale.item import Item
 from radicale.storage import (
     BaseCollection,
@@ -36,6 +36,8 @@ from ..local_cache import (
     is_safe_dav_href,
     opaque_dav_href,
     record_dav_change,
+    resolve_dav_collection_uid,
+    dav_collection_path,
     retire_settled_tombstone,
 )
 from ..local_cache.models import (
@@ -665,7 +667,7 @@ class Collection(BaseCollection):
         self.etesync = self._storage.etesync
         if len(attributes) == 2:
             self.is_fake = False
-            self.uid = attributes[-1]
+            self.uid = resolve_dav_collection_uid(attributes[0], attributes[-1])
             self.collection = self.etesync.get(self.uid)
             col_type = self.collection.col_type
 
@@ -1127,11 +1129,16 @@ class Collection(BaseCollection):
             return {}
 
         if key is None:
-            ret = {}
+            ret = {"tag": self.tag}
             meta = self.collection.meta
-            for k in meta.keys():
-                ret[k] = self.meta_mappings.map_get(meta, k)[1]
-            ret["tag"] = self.tag
+            for prop in set(self.meta_mappings._mappings) | set(meta):
+                try:
+                    xmlutils.make_clark(prop)
+                except ValueError:
+                    continue
+                value = self.get_meta(prop)
+                if value is not None:
+                    ret[prop] = value
             return ret
         elif key == "tag":
             return self.tag
@@ -1198,6 +1205,18 @@ class Storage(BaseStorage):
         """Verify storage is accessible."""
         return True
 
+    @contextmanager
+    def write_scope(self, method, path):
+        """Only depth-three item requests need check-through-write atomicity."""
+        previous = getattr(self._request_context, "collection_write", False)
+        self._request_context.collection_write = (
+            method in {"PUT", "DELETE"} and len(_get_attributes_from_path(path)) <= 2
+        )
+        try:
+            yield
+        finally:
+            self._request_context.collection_write = previous
+
     def _path_belongs_to_user(self, path):
         attributes = _get_attributes_from_path(path)
         return not self.user or not attributes or attributes[0] == self.user
@@ -1252,6 +1271,8 @@ class Storage(BaseStorage):
                 return
 
             collection = Collection(self, path)
+        except pw.OperationalError:
+            raise
         except Exception:
             return
 
@@ -1268,7 +1289,7 @@ class Storage(BaseStorage):
                 if journal.col_type not in config.COL_TYPES:
                     continue
                 yield Collection(
-                    self, posixpath.join(path, journal.uid)
+                    self, posixpath.join(path, dav_collection_path(attributes[0], journal.uid))
                 )
         elif len(attributes) == 2:
             for href in collection._list():
@@ -1299,6 +1320,8 @@ class Storage(BaseStorage):
         if len(attributes) < 2:
             # Creating the user principal itself — nothing to do
             return Collection(self, href)
+        if len(attributes) != 2 or not is_safe_dav_href(attributes[1]):
+            raise ValueError("invalid DAV collection path")
 
         props = props or {}
         tag = props.get("tag", "")
@@ -1337,14 +1360,27 @@ class Storage(BaseStorage):
         # Create and cache locally. The background generation queued by the
         # write lock performs the potentially unbounded upstream upload.
         col_mgr = self.etesync.etebase.get_collection_manager()
-        col = col_mgr.create(col_type, meta, b"")
-
-        # Cache it locally
         from ..local_cache import db, models
-        with db.atomic_connection():
+        with db.database_proxy.atomic("IMMEDIATE"):
+            existing = models.CollectionEntity.get_or_none(
+                (models.CollectionEntity.local_user == self.etesync.user)
+                & ~models.CollectionEntity.deleted
+                & ((models.CollectionEntity.uid == attributes[1])
+                   | (models.CollectionEntity.dav_href == attributes[1]))
+            )
+            if existing is not None and items is None:
+                raise ValueError("DAV collection path already exists")
+            col = col_mgr.create(col_type, meta, b"")
+            if models.CollectionEntity.select().where(
+                (models.CollectionEntity.local_user == self.etesync.user)
+                & ((models.CollectionEntity.uid == col.uid)
+                   | (~models.CollectionEntity.deleted & (models.CollectionEntity.dav_href == col.uid)))
+            ).exists():
+                raise ValueError("DAV collection identity already exists")
             cache_col = models.CollectionEntity(
                 local_user=self.etesync.user,
                 uid=col.uid,
+                dav_href=attributes[1] if existing is None and col.uid != attributes[1] else None,
             )
             cache_col.eb_col = col_mgr.cache_save(col)
             cache_col.stoken = col.stoken or ""
@@ -1403,7 +1439,17 @@ class Storage(BaseStorage):
             self.user = user
             self.etesync = etesync
             try:
-                yield
+                database = db.database_proxy.obj
+                owns_connection = database.is_closed()
+                connection = database.connection_context() if owns_connection else nullcontext()
+                with connection:
+                    transaction = (
+                        database.atomic("IMMEDIATE")
+                        if mode == "w" and not getattr(self._request_context, "collection_write", False)
+                        else nullcontext()
+                    )
+                    with transaction:
+                        yield
             finally:
                 self.etesync = None
                 self.user = None

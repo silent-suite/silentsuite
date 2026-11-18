@@ -17,6 +17,7 @@ import pytest
 from playhouse.sqlite_ext import SqliteExtDatabase
 
 from silentsuite_bridge.local_cache import (
+    _ensure_cache_tables,
     Etebase,
     SessionSuperseded,
     db,
@@ -76,6 +77,7 @@ class _World:
         )
         models.Config.create(db_version=1)
         models.SchemaMigration.create(name="dav-revision-v1", applied_at=0)
+        _ensure_cache_tables(self.database)
         self.user = models.User.create(username="isolation@example.test")
         self.store = _Store()
         self.col_mgr = MagicMock()

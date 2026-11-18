@@ -154,8 +154,35 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 200, f"expected 200 Android resource XML files, found {len(files)}"
-    assert {"drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml"} <= {
+    assert len(files) == 229, f"expected 229 Android resource XML files, found {len(files)}"
+    assert {
+        "drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml",
+        # The month widget adds 19 XML files; all remain subject to the color rules below.
+        "drawable/widget_month_add.xml",
+        "drawable/widget_month_background.xml",
+        "drawable/widget_month_control_background.xml",
+        "drawable/widget_month_day_background.xml",
+        "drawable/widget_month_marker.xml",
+        "drawable/widget_month_next.xml",
+        "drawable/widget_month_previous.xml",
+        "drawable/widget_month_preview.xml",
+        "layout/widget_month.xml",
+        "layout/widget_month_day.xml",
+        "layout/widget_month_day_outside.xml",
+        "layout/widget_month_day_today.xml",
+        "layout/widget_month_week.xml",
+        "layout/widget_month_weekday.xml",
+        "layout/widget_month_preview.xml",
+        "values/widget_month_dimens.xml",
+        "values/widget_month_preview_styles.xml",
+        "values-v31/widget_month_dimens.xml",
+        "xml/widget_month_info.xml",
+        "drawable/ic_widget_add.xml", "drawable/widget_add_background.xml",
+        "drawable/widget_background.xml", "drawable/widget_touch_background.xml",
+        "layout/widget_agenda.xml", "layout/widget_agenda_day.xml",
+        "layout/widget_agenda_event.xml", "layout/widget_agenda_message.xml",
+        "layout/widget_agenda_preview.xml", "xml/widget_agenda_info.xml",
+    } <= {
         path.relative_to(RES).as_posix() for path in files
     }
     return files

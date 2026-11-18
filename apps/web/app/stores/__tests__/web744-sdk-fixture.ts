@@ -25,7 +25,7 @@ function stored(item: any) {
   return { uid: item.uid, version: item.version, encryptionKey: item.encryptionKey ?? null, content: item.content }
 }
 
-function respond(status: number, body: unknown) {
+export function respond(status: number, body: unknown) {
   return { type: 'default', status, statusText: '', ok: status >= 200 && status < 300, body: msgpackEncode(body) }
 }
 
@@ -154,15 +154,18 @@ export class ReferenceServer {
           const current = this.lookup(col, dep.uid)
           if (!current || current.content.uid !== dep.etag) return conflict()
         }
-        for (const item of body.items) {
+        // Reference server (collection.py item_create): an item sent again at the revision
+        // the server already holds as current is a success that changes nothing.
+        const changed = body.items.filter((item: any) => this.lookup(col, item.uid)?.content.uid !== item.content.uid)
+        for (const item of changed) {
           const current = this.lookup(col, item.uid)
           if (current ? current.content.uid !== item.etag : item.etag != null) return conflict()
         }
-        for (const item of body.items) {
+        for (const item of changed) {
           if (item.uid === col.main.uid) col.main = stored(item)
           else col.items.set(item.uid, stored(item))
         }
-        this.stoken += 1
+        if (changed.length > 0) this.stoken += 1
         return respond(200, {})
       }
     }
