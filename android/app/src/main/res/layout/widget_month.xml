@@ -29,7 +29,7 @@
             android:autoSizeMinTextSize="12sp"
             android:autoSizeMaxTextSize="18sp"
             android:autoSizeStepGranularity="1sp"
-            android:maxLines="1"
+            android:maxLines="2"
             android:ellipsize="end" />
         <TextView
             android:id="@+id/widget_month_today"
