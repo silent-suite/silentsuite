@@ -10,7 +10,7 @@ How to use SilentSuite: your end-to-end encrypted sync for calendar, contacts, t
 | [Calendar](./calendar.md) | Events, recurrence, timezones, ICS import/export |
 | [Contacts](./contacts.md) | Contact CRUD, vCard import/export |
 | [Tasks](./tasks.md) | Tasks, priorities, due dates, ICS task export |
-| [Notes](./notes.md) | Encrypted Markdown notebooks (EteSync-compatible), Markdown export |
+| [Notes](./notes.md) | Encrypted Markdown notebooks (EteSync-compatible), Markdown export, and [what the server can and can't see](./notes-server-sees.md) |
 | [How Encryption Works](./encryption-explained.md) | What's encrypted, how, and what the server can and can't see |
 | [FAQ](./faq.md) | Common questions |
 
