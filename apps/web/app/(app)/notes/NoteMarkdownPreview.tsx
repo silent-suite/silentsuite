@@ -18,34 +18,58 @@ function allowedLinkTarget(url: string): string {
 // quotes: measured in Node 22, 15 s for 10,000 `- ` markers on one line (20 KB)
 // and 92 s for 20,000 (40 KB), and the same again for a body that nests by
 // indentation over many lines. It overflows the stack at a few thousand levels.
-// A line that looks like it opens more than 100 levels is therefore enough to
-// show the whole body as plain text instead of parsing it. A line's level is
-// its container markers (`>`, or a bullet or number followed by a space or tab)
-// plus half its leading indentation, since a nested list item sits at least two
-// columns inside its parent. A tab counts as four columns.
+// A body with a line that looks deeper than 100 levels is therefore shown as
+// plain text instead of being parsed. A line's level is its container markers
+// (`>`, or a bullet or number followed by a space or tab) plus half the
+// whitespace that is not a marker's single separator, since a nested item sits
+// at least two columns inside its parent. A tab counts as four columns, and a
+// leading U+FEFF is skipped because the parser skips it.
 const MAX_NESTING_LEVELS = 100
-const CONTAINER_MARKER = /(?:>|(?:[-*+]|\d{1,9}[.)])[ \t])[ \t]*/y
+const LINE_END = /\r\n|\r|\n/g
+const isBlank = (code: number) => code === 32 || code === 9
+const isDigit = (code: number) => code >= 48 && code <= 57
 
 function nestsTooDeep(content: string): boolean {
-  const lineEnds = /\r\n|\r|\n/g
-  let lineStart = 0
-  for (;;) {
-    const found = lineEnds.exec(content)
-    let index = lineStart
-    let columns = 0
-    for (; index < content.length; index++) {
-      const code = content.charCodeAt(index)
-      if (code === 32) columns += 1
-      else if (code === 9) columns += 4
-      else break
+  const length = content.length
+  let index = content.charCodeAt(0) === 0xfeff ? 1 : 0
+  while (index <= length) {
+    let levels = 0
+    let extraColumns = 0
+    let afterMarker = false
+    for (;;) {
+      let run = 0
+      while (index < length && isBlank(content.charCodeAt(index))) {
+        run += content.charCodeAt(index) === 9 ? 4 : 1
+        index += 1
+      }
+      extraColumns += afterMarker ? Math.max(0, run - 1) : run
+      const code = index < length ? content.charCodeAt(index) : -1
+      let markerEnd = -1
+      if (code === 62) {
+        markerEnd = index + 1
+      } else if (code === 45 || code === 42 || code === 43) {
+        if (index + 1 < length && isBlank(content.charCodeAt(index + 1))) markerEnd = index + 1
+      } else if (isDigit(code)) {
+        let digitsEnd = index
+        while (digitsEnd < length && digitsEnd - index < 9 && isDigit(content.charCodeAt(digitsEnd))) digitsEnd += 1
+        const delimiter = digitsEnd < length ? content.charCodeAt(digitsEnd) : -1
+        if ((delimiter === 46 || delimiter === 41) && digitsEnd + 1 < length && isBlank(content.charCodeAt(digitsEnd + 1))) {
+          markerEnd = digitsEnd + 1
+        }
+      }
+      if (markerEnd < 0) break
+      levels += 1
+      index = markerEnd
+      afterMarker = true
+      if (levels + (extraColumns >> 1) > MAX_NESTING_LEVELS) return true
     }
-    let levels = columns >> 1
-    CONTAINER_MARKER.lastIndex = index
-    while (levels <= MAX_NESTING_LEVELS && CONTAINER_MARKER.exec(content)) levels += 1
-    if (levels > MAX_NESTING_LEVELS) return true
+    if (levels + (extraColumns >> 1) > MAX_NESTING_LEVELS) return true
+    LINE_END.lastIndex = index
+    const found = LINE_END.exec(content)
     if (!found) return false
-    lineStart = found.index + found[0].length
+    index = found.index + found[0].length
   }
+  return false
 }
 
 /**

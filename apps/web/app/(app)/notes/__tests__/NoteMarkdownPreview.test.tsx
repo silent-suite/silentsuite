@@ -156,6 +156,26 @@ describe('NoteMarkdownPreview', () => {
     expect(tabs.container.querySelector('[data-note-preview="plain-text"]')).not.toBeNull()
   })
 
+  it('is not got around by a leading byte order mark or by whitespace after a quote marker', () => {
+    // The guard, not the parser's own overflow, must catch these: parsing them takes seconds.
+    const plain = (content: string) => {
+      const started = performance.now()
+      const view = renderWithIntl(<NoteMarkdownPreview content={content} />)
+      const found = view.container.querySelector('[data-note-preview="plain-text"]') !== null
+      view.unmount()
+      expect(performance.now() - started).toBeLessThan(1500)
+      return found
+    }
+    const bom = String.fromCharCode(0xfeff)
+    expect(plain(`${bom}${'- '.repeat(5000)}x`)).toBe(true)
+    // A list inside a quote continues on the whitespace after the `>`.
+    expect(plain(`>${'\t'.repeat(60)}- a\n>${'\t'.repeat(120)}- b`)).toBe(true)
+    expect(plain(`> ${' '.repeat(250)}- deep`)).toBe(true)
+    // Ordinary spacing is not counted: a quote, a list and an ordered list stay Markdown.
+    expect(plain(`${bom}> - 1. a\n>   - b`)).toBe(false)
+    expect(plain(`${'> '.repeat(100)}x`)).toBe(false)
+  })
+
   it('counts list markers only when a space follows, so a long rule is still a rule', () => {
     const view = renderWithIntl(<NoteMarkdownPreview content={`${'-'.repeat(300)}\n\n${'+'.repeat(300)} not a list`} />)
     expect(view.container.querySelector('[data-note-preview="plain-text"]')).toBeNull()
