@@ -1,6 +1,6 @@
 // @vitest-environment node
 import 'fake-indexeddb/auto'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import {
   _resetForTests as resetOfflineQueue,
   casStub,
@@ -46,6 +46,7 @@ import {
   installNoteAccount,
   makeSavedNote,
   queueGuard,
+  respond,
   serverText,
 } from './web744-sdk-fixture'
 
@@ -538,6 +539,67 @@ describe('#1113 D1 refused note text kept in a sealed record', () => {
     expect(server.transactions.length).toBe(before)
     expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(DRAFT_BODY)
     void base
+  })
+
+  /** The server answers the next item write with a 500: the save fails without a refusal. */
+  function failNextWrite(): void {
+    let fail = true
+    EtebaseRequest.default = async (url: string, options: any) => {
+      if (fail && String(options?.method).toLowerCase() === 'post' && url.includes('item/transaction')) {
+        fail = false
+        return respond(500, { detail: 'Server error' })
+      }
+      return server.handle(url, options)
+    }
+  }
+
+  it('stores text whose save failed with an error as held retry-exhausted, reopens it, and saves it', async () => {
+    const { account, collection, item } = await makeSavedNote(BASE_TITLE, BASE_BODY)
+    server.seed(collection, [item])
+    installNoteAccount(account, collection, item)
+    showServerRow(collection, item, BASE_BODY)
+    const base = { title: BASE_TITLE, content: BASE_BODY, revision: item.etag as string }
+    // Online, so the failure is an error and not an offline save.
+    const onLine = Object.getOwnPropertyDescriptor(globalThis.navigator, 'onLine')
+    Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, get: () => true })
+    onTestFinished(() => {
+      if (onLine) Object.defineProperty(globalThis.navigator, 'onLine', onLine)
+      else delete (globalThis.navigator as any).onLine
+    })
+    failNextWrite()
+    const reasons: unknown[] = []
+    const saved = await useNoteStore.getState().updateNote(item.uid, { title: DRAFT_TITLE, content: DRAFT_BODY }, { base, onRefused: (reason) => reasons.push(reason) })
+    expect([saved, reasons]).toEqual([false, []])
+    // As the editor holds it.
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: DRAFT_BODY }, base, failed: 'error' })
+    await settleNoteTextForCount()
+
+    const [record] = await getAll(queueGuard())
+    expect([record?.held, (await openRecord(record))?.body.content]).toEqual(['retry-exhausted', DRAFT_BODY])
+    await reload(collection, item)
+    const reopened = getHeldNoteDraft(item.uid)
+    expect(reopened).toMatchObject({ draft: { content: DRAFT_BODY }, failed: 'error' })
+    const again = await useNoteStore.getState().updateNote(item.uid, reopened!.draft, { base: reopened!.base })
+    releaseHeldNoteDraft(item.uid)
+    await settleNoteTextForCount()
+
+    expect(again).toBe(true)
+    expect(await serverText(account, collection, item.uid)).toBe(DRAFT_BODY)
+    expect(await getAll(queueGuard())).toEqual([])
+  })
+
+  it('moves a stored failed text to base-changed once a later save of it is refused', async () => {
+    const { item, base } = await refusedText()
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: `${DRAFT_BODY} 2` }, base, failed: 'error' })
+    await settleNoteTextForCount()
+    expect((await getAll(queueGuard())).map((record) => record.held)).toEqual(['retry-exhausted'])
+
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: `${DRAFT_BODY} 3` }, base, failed: 'changed' })
+    await settleNoteTextForCount()
+
+    const records = await getAll(queueGuard())
+    expect(records.map((record) => record.held)).toEqual(['base-changed'])
+    expect((await openRecord(records[0]))?.body.content).toBe(`${DRAFT_BODY} 3`)
   })
 
   it('keeps a reopened held text when the page already holds newer text for the note', async () => {

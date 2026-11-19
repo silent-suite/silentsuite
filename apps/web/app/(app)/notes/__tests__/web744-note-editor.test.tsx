@@ -961,6 +961,39 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(await getAll(queueGuard())).toEqual([])
     })
 
+    it('reopens text whose save failed with an error after a reload, and saves it', async () => {
+      const { account, collection, item } = await seedSavedNote()
+      await addOtherNote(account, collection, item)
+      // Every write fails until the page has reloaded, as the closing editor saves again.
+      let failing = true
+      EtebaseRequest.default = async (url: string, options: any) => {
+        if (failing && isTransaction(...requestOf(url, options))) return respond(500, { detail: 'Server error' })
+        return server.handle(url, options)
+      }
+      renderNotesPage()
+      fireEvent.click(baseRow())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      expect((await getAll(queueGuard())).map((record) => record.held)).toEqual(['retry-exhausted'])
+
+      await reloadPage()
+      expect(await serverTitle(account, collection, item.uid)).toBe(BASE_TITLE)
+      failing = false
+      fireEvent.click(baseRow())
+      await settle()
+      // Text whose save failed saves again once its editor opens, as before a reload.
+      expect([titleBox().value, saveStatus().textContent]).toEqual([DRAFT_TITLE, 'Unsaved changes'])
+      hideTab()
+      await settle()
+
+      expect(saveStatus()).toHaveTextContent('Saved')
+      expect(await serverTitle(account, collection, item.uid)).toBe(DRAFT_TITLE)
+      expect(await getAll(queueGuard())).toEqual([])
+    })
+
     it('keeps reopened text unsaved even when it is empty, so the newer version is not adopted over it', async () => {
       const { account, collection, item } = await seedSavedNote()
       await addOtherNote(account, collection, item)

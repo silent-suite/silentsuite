@@ -564,8 +564,9 @@ export interface SealedNoteCopy {
 }
 
 /**
- * v1: queued note custody (#744). v2: the same, written for refused note text
- * held as 'base-changed' (#1113 D1), with an optional prepared copy. Replay of
+ * v1: queued note custody (#744). v2: the same, written for note text whose save
+ * was refused (held 'base-changed') or failed (held 'retry-exhausted') (#1113 D1),
+ * with an optional prepared copy. Replay of
  * v2 ignores `copy`; a build that knows only v1 holds a v2 record as 'unreadable'.
  */
 interface SealedNotePayload {
@@ -725,9 +726,20 @@ async function replaceNoteStubWithDescendant(
 }
 
 /**
- * Whether a note's outstanding custody is exactly its own refused text (#1113 D1):
- * one sealed v2 note record held as 'base-changed' that opens and validates in this
- * account. Anything else, including an unreadable record, is not.
+ * How a note's held page text record is held (#1113 D1): 'base-changed' for text
+ * whose save was refused, 'retry-exhausted' for text whose save failed otherwise.
+ * Both are existing held reasons; replay never sends either until the user retries.
+ */
+export type HeldTextReason = 'base-changed' | 'retry-exhausted'
+
+function isHeldTextReason(held: QueueEntry['held']): held is HeldTextReason {
+  return held === 'base-changed' || held === 'retry-exhausted'
+}
+
+/**
+ * Whether a note's outstanding custody is exactly its own held text (#1113 D1):
+ * one sealed v2 note record held as 'base-changed' or 'retry-exhausted' that opens
+ * and validates in this account. Anything else, including an unreadable record, is not.
  */
 async function isHeldRefusedTextRecord(
   outstanding: QueueEntry[],
@@ -737,7 +749,7 @@ async function isHeldRefusedTextRecord(
 ): Promise<boolean> {
   const record = outstanding[0]
   if (outstanding.length !== 1 || !record || record.type !== 'sealed-update' || !record.sealed) return false
-  if (record.held !== 'base-changed' || typeof record.rev !== 'number' || record.itemUid !== itemUid) return false
+  if (!isHeldTextReason(record.held) || typeof record.rev !== 'number' || record.itemUid !== itemUid) return false
   const opened = await cacheOpenQueuePayload(record.sealed, `${guard.accountFingerprint}|notes|${itemUid}`, accountEpoch)
   if (opened.kind !== 'opened') return false
   return parseSealedNotePayload(opened.plaintext)?.v === 2
@@ -758,6 +770,8 @@ export interface ReopenedHeldNote {
   mtime: number
   /** Only the base's revision and digest are stored; its text is not. */
   base: { revision: string | null; digest: string }
+  /** Refused, or failed otherwise. */
+  reason: HeldTextReason
   copy?: SealedNoteCopy
 }
 
@@ -777,7 +791,7 @@ function base64ToBytes(text: string): Uint8Array {
 }
 
 /**
- * Writes refused note text as a sealed v2 record held as 'base-changed' (#1113 D1):
+ * Writes held note text as a sealed v2 record held for `reason` (#1113 D1):
  * an update of `known` at its revision when given, else a new record, inserted only
  * while the note has no outstanding custody. The record keeps the draft, the base
  * revision and digest, and the prepared copy, all inside the AES-GCM payload bound
@@ -793,6 +807,7 @@ export async function writeHeldNoteRecord(
   base: SealedEditingBase,
   copy: SealedNoteCopy | undefined,
   known: HeldNoteRecordRef | undefined,
+  reason: HeldTextReason = 'base-changed',
 ): Promise<HeldNoteRecordRef | null | 'blocked'> {
   const accountEpoch = getAccountEpoch()
   const { account, accountFingerprint } = useEtebaseStore.getState()
@@ -824,7 +839,7 @@ export async function writeHeldNoteRecord(
   assertGuard()
   if (!sealed) return null
   if (known) {
-    const updated = await casStub(known.id, known.rev, { sealed }, guard)
+    const updated = await casStub(known.id, known.rev, { sealed, held: reason }, guard)
     assertGuard()
     if (updated) return { id: known.id, rev: known.rev + 1 }
     // The record moved on (the banner's Retry, replay holding it again): while it is still this
@@ -833,16 +848,16 @@ export async function writeHeldNoteRecord(
     const current = (await readOutstanding({ collectionType: 'notes', itemUid }, guard)).find((entry) => entry.id === known.id)
     assertGuard()
     if (current) {
-      const ours = current.held === 'base-changed' && typeof current.rev === 'number'
+      const ours = isHeldTextReason(current.held) && typeof current.rev === 'number'
         && await isHeldRefusedTextRecord([current], itemUid, guard, accountEpoch)
       assertGuard()
-      if (!ours || !await casStub(current.id, current.rev, { sealed }, guard)) return 'blocked'
+      if (!ours || !await casStub(current.id, current.rev, { sealed, held: reason }, guard)) return 'blocked'
       assertGuard()
       return { id: current.id, rev: (current.rev as number) + 1 }
     }
   }
   const inserted = await insertIfNoOutstanding(
-    { type: 'sealed-update', collectionType: 'notes', collectionUid, itemUid, sealed, rev: 1, held: 'base-changed' },
+    { type: 'sealed-update', collectionType: 'notes', collectionUid, itemUid, sealed, rev: 1, held: reason },
     guard,
   )
   assertGuard()
@@ -869,7 +884,7 @@ export async function deleteHeldNoteRecord(known: HeldNoteRecordRef): Promise<bo
 
 /**
  * Opens this account's held refused-text records (#1113 D1): sealed v2 note records
- * held as 'base-changed'. Only records of the current account fingerprint are read,
+ * held as 'base-changed' or 'retry-exhausted'. Only records of the current account fingerprint are read,
  * and each opens only under its own `<fingerprint>|notes|<itemUid>` binding. Each is
  * decoded on its own; one that does not open or validate is left as it is. Resolves
  * 'not-ready' when the key is not available yet, so nothing can be known.
@@ -885,7 +900,8 @@ export async function openHeldNoteRecords(): Promise<ReopenedHeldNote[] | 'not-r
   const reopened: ReopenedHeldNote[] = []
   for (const entry of entries) {
     if (entry.accountFingerprint !== guard.accountFingerprint) continue
-    if (entry.type !== 'sealed-update' || entry.collectionType !== 'notes' || entry.held !== 'base-changed') continue
+    if (entry.type !== 'sealed-update' || entry.collectionType !== 'notes' || !isHeldTextReason(entry.held)) continue
+    const reason = entry.held
     if (!entry.sealed || typeof entry.rev !== 'number' || !entry.itemUid || !entry.collectionUid) continue
     const opened = await cacheOpenQueuePayload(entry.sealed, `${guard.accountFingerprint}|notes|${entry.itemUid}`, accountEpoch)
     assertGuard()
@@ -907,6 +923,7 @@ export async function openHeldNoteRecords(): Promise<ReopenedHeldNote[] | 'not-r
       draft: { title: payload.body.meta.name, content: payload.body.content },
       mtime: payload.body.meta.mtime,
       base: payload.base,
+      reason,
       ...(payload.copy ? { copy: payload.copy } : {}),
     })
   }

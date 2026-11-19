@@ -171,9 +171,9 @@ function getHeldNoteRecord(id: string): { ref: HeldNoteRecordRef; collectionUid:
   return entry
 }
 
-/** Held text that a refusal or a copy left, or that already has a record, is stored. */
+/** Held text that a failed or refused save or a copy left, or that already has a record, is stored. */
 function storesHeldText(held: HeldNoteDraft, id: string): boolean {
-  return held.failed === 'changed' || held.failed === 'unproved' || held.copy !== undefined || getHeldNoteRecord(id) !== undefined
+  return held.failed !== undefined || held.copy !== undefined || getHeldNoteRecord(id) !== undefined
 }
 
 /**
@@ -197,7 +197,9 @@ async function writeHeldRecordNow(id: string, accountEpoch: number): Promise<Hel
     if (!storesHeldText(held, id)) return 'page-only'
     const collectionUid = known?.collectionUid ?? useNoteStore.getState().notes.find((n) => n.id === id)?.notebookId
     if (!collectionUid) return 'page-only'
-    const ref = await writeHeldNoteRecord(id, collectionUid, held.draft, held.base, getNoteCopyAttempt(id)?.stored, known?.ref)
+    // A save that failed without a refusal is held as the server not confirming it.
+    const reason = held.failed === 'error' ? 'retry-exhausted' : 'base-changed'
+    const ref = await writeHeldNoteRecord(id, collectionUid, held.draft, held.base, getNoteCopyAttempt(id)?.stored, known?.ref, reason)
     if (!isCurrentAccountEpoch(accountEpoch)) return 'page-only'
     if (ref === 'blocked') {
       // The record still exists and may hold older text or another copy: it stays known, so no copy
@@ -610,7 +612,8 @@ function adoptReopenedHeldNotes(records: ReopenedHeldNote[], accountEpoch: numbe
         draft: record.draft,
         // Only the base's revision and digest were stored: the reopened text always counts as unsaved.
         base: { title: '', content: '', revision: record.base.revision, digestOnly: record.base.digest },
-        failed: 'unproved',
+        // Failed text saves again when its editor opens; refused text waits for an edit or a copy.
+        failed: record.reason === 'retry-exhausted' ? 'error' : 'unproved',
         ...(record.copy ? { copy: 'unconfirmed' as const } : {}),
       },
       accountEpoch,
