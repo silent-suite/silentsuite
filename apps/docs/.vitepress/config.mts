@@ -45,10 +45,15 @@ export default defineConfig({
           text: 'User Guide',
           items: [
             { text: 'Getting Started', link: '/user-guide/getting-started' },
+            { text: 'Collections', link: '/user-guide/collections' },
             { text: 'Calendar', link: '/user-guide/calendar' },
             { text: 'Contacts', link: '/user-guide/contacts' },
             { text: 'Tasks', link: '/user-guide/tasks' },
-            { text: 'Notes', link: '/user-guide/notes' },
+            {
+              text: 'Notes',
+              link: '/user-guide/notes',
+              items: [{ text: 'What the Server Sees', link: '/user-guide/notes-server-sees' }],
+            },
             { text: 'How Encryption Works', link: '/user-guide/encryption-explained' },
             { text: 'FAQ', link: '/user-guide/faq' },
             { text: 'Reporting a Problem', link: '/user-guide/reporting-a-problem' },

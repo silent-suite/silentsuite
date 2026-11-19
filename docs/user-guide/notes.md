@@ -18,7 +18,7 @@ If your account has no notebooks yet, SilentSuite creates a **Personal Notes** n
 - The **Notebook** menu below a note's title moves the note to another notebook. The note keeps its text and its last-edited time.
 - New notes go to the notebook the list is narrowed to. With **All** selected they go to the starred default notebook, or, if none is starred, to the notebook of the note you are reading, or else to the first notebook by name. The **New note** button's tooltip names the target.
 - Rename, recolour, star, show or hide, and delete notebooks from the sidebar. When the sidebar is collapsed, the folder button next to **New note** opens it; on a phone it opens the notebooks sheet.
-- Deleting a notebook deletes every note in it. The confirmation says how many notes that is. On the web, the notebook is not deleted while a note in it has changes that are not on the server yet (such as a note marked **Not saved**), or while this browser cannot confirm that it shows everything in it (for example after a change on another device, or for a note just moved there); a message says which, and nothing is deleted.
+- Deleting a notebook removes it and every note in it from your apps. The server keeps them, encrypted; see [What the Server Sees in Notes](./notes-server-sees.md#deleting). The confirmation says how many notes that is. On the web, the notebook is not deleted while a note in it has changes that are not on the server yet (such as a note marked **Not saved**), or while this browser cannot confirm that it shows everything in it (for example after a change on another device, or for a note just moved there); a message says which, and nothing is deleted.
 
 ## Create a Note
 
@@ -75,3 +75,7 @@ The export lists your notebooks and notes from the server again, so it needs a c
 ## Not in this release
 
 Moving notes on Android, the DAV bridge, attachments, importing notes, and rich-text editing are not available yet. Use Markdown in the web app for now.
+
+## What the server can see
+
+Note titles, note text and notebook names are encrypted, but the server still sees some facts, such as how many notes you have, how often each one was saved, and who is in a shared notebook. [What the Server Sees in Notes](./notes-server-sees.md) lists them.
