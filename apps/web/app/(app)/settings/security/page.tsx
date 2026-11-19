@@ -13,6 +13,13 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
+import { SignOutDialog } from '@/app/components/SignOutDialog'
+import {
+  captureSignOutAccount,
+  countLocalOnlyChanges,
+  isSignOutAccountCurrent,
+  type SignOutAccount,
+} from '@/app/lib/local-only-changes'
 import {
   buildRestoreDiagnosticsCopyText,
   canExposeRestoreDiagnosticsCopy,
@@ -393,9 +400,19 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const ownerRef = useRef<AccountOwner | null>(null)
+  // A device sign-out deletes this device's offline changes and held note text, so it counts
+  // them first, as the header's Log out does (#1113 D1).
+  const [signOutCheck, setSignOutCheck] = useState<{ account: SignOutAccount; count: number | null } | null>(null)
   // Self-hosted accounts cannot be erased from here; the action only signs out.
   const isLocal = mode === 'local'
   const confirmToken = isLocal ? 'SIGNOUT' : 'DELETE'
+
+  // logout() clears the user before it yields, so a signed-in user after it
+  // returns is a newer account that must not be redirected.
+  const signOutAndLeave = async () => {
+    await logout()
+    if (useAuthStore.getState().user === null) router.push('/')
+  }
 
   const handleDelete = async () => {
     // The dialog was opened for one account; act only if it is still current
@@ -409,15 +426,22 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
     setDeleting(true)
     setError(null)
 
-    // logout() clears the user before it yields, so a signed-in user after it
-    // returns is a newer account that must not be redirected.
-    const signOutAndLeave = async () => {
-      await logout()
-      if (useAuthStore.getState().user === null) router.push('/')
-    }
-
     try {
       if (isLocal) {
+        const account = captureSignOutAccount()
+        const count = await countLocalOnlyChanges(account)
+        if (!isSignOutAccountCurrent(account) || !isAccountOwner(owner)) {
+          setDeleting(false)
+          return
+        }
+        // Changes only on this device, or a count that failed: the same dialog as Log out decides.
+        if (count !== 0) {
+          setDialogOpen(false)
+          setConfirmText('')
+          setDeleting(false)
+          setSignOutCheck({ account, count })
+          return
+        }
         await signOutAndLeave()
         return
       }
@@ -515,6 +539,14 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
             </div>
           </div>
         </div>
+      )}
+      {signOutCheck && (
+        <SignOutDialog
+          account={signOutCheck.account}
+          count={signOutCheck.count}
+          onLogout={signOutAndLeave}
+          onClose={() => setSignOutCheck(null)}
+        />
       )}
     </>
   )

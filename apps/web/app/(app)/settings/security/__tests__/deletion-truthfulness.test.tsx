@@ -36,8 +36,16 @@ const mocks = vi.hoisted(() => {
     secureSet: vi.fn(),
     secureRemoveIfEqual: vi.fn(),
   }
-  return { logout, push, etebaseState, etebaseStore, core, secureStorage, selfHosted: false }
+  // Changes only on this device as the sign-out count reports them (#1113 D1); null is a failed count.
+  const localOnly = { count: 0 as number | null }
+  return { logout, push, etebaseState, etebaseStore, core, secureStorage, selfHosted: false, localOnly }
 })
+
+vi.mock('@/app/lib/local-only-changes', () => ({
+  captureSignOutAccount: () => ({ accountEpoch: 0, accountFingerprint: 'fp-test-123' }),
+  countLocalOnlyChanges: async () => mocks.localOnly.count,
+  isSignOutAccountCurrent: () => true,
+}))
 
 vi.mock('@silentsuite/core', () => mocks.core)
 
@@ -104,6 +112,7 @@ beforeEach(() => {
     authStore.setState({ user: null })
   })
   mocks.push.mockReset()
+  mocks.localOnly.count = 0
   authStore.setState({ user: HOSTED_USER, logout: mocks.logout })
   mocks.etebaseState.account = null
   for (const fn of [...Object.values(mocks.core), ...Object.values(mocks.secureStorage)]) fn.mockReset()
@@ -185,6 +194,42 @@ describe('Security page account action when self-hosted', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign out of this device' }))
     fireEvent.change(screen.getByPlaceholderText('Type SIGNOUT'), { target: { value: 'SIGNOUT' } })
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith('/'))
+    expect(mocks.logout).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('counts changes only on this device first, and Cancel keeps them signed in', async () => {
+    mocks.localOnly.count = 2
+    renderWithIntl(<SecurityPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out of this device' }))
+    fireEvent.change(screen.getByPlaceholderText('Type SIGNOUT'), { target: { value: 'SIGNOUT' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    expect((await screen.findAllByText('2 changes are only on this device. Logging out deletes them.')).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('heading', { name: 'Confirm sign out' })).not.toBeInTheDocument()
+    expect(mocks.logout).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(mocks.logout).not.toHaveBeenCalled()
+    expect(mocks.push).not.toHaveBeenCalled()
+  })
+
+  it('treats a failed count as having changes, and signs out only after Log out and delete is confirmed', async () => {
+    mocks.localOnly.count = null
+    renderWithIntl(<SecurityPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out of this device' }))
+    fireEvent.change(screen.getByPlaceholderText('Type SIGNOUT'), { target: { value: 'SIGNOUT' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    expect((await screen.findAllByText(/could not check for changes that are only on this device/)).length).toBeGreaterThan(0)
+    expect(mocks.logout).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Log out and delete' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete and log out' }))
 
     await waitFor(() => expect(mocks.push).toHaveBeenCalledWith('/'))
     expect(mocks.logout).toHaveBeenCalledTimes(1)
