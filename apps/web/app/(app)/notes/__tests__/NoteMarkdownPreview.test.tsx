@@ -134,6 +134,28 @@ describe('NoteMarkdownPreview', () => {
     expect(over.container.querySelector('[data-note-preview="plain-text"]')).toHaveTextContent(`${'> '.repeat(101)}deep`)
   })
 
+  it('counts nesting by indentation over many lines too', () => {
+    const nested = (depth: number, eol = '\n') =>
+      Array.from({ length: depth }, (_, i) => `${' '.repeat(2 * i)}- item ${i}`).join(eol)
+
+    const ok = renderWithIntl(<NoteMarkdownPreview content={nested(100)} />)
+    expect(ok.container.querySelector('[data-note-preview="plain-text"]')).toBeNull()
+    expect(ok.container.querySelectorAll('li')).toHaveLength(100)
+    ok.unmount()
+
+    for (const eol of ['\n', '\r\n', '\r']) {
+      const started = performance.now()
+      const over = renderWithIntl(<NoteMarkdownPreview content={nested(300, eol)} />)
+      expect(over.container.querySelector('[data-note-preview="plain-text"]')).not.toBeNull()
+      expect(over.container.querySelector('li')).toBeNull()
+      expect(performance.now() - started).toBeLessThan(2000)
+      over.unmount()
+    }
+
+    const tabs = renderWithIntl(<NoteMarkdownPreview content={`${'\t'.repeat(60)}- tabbed`} />)
+    expect(tabs.container.querySelector('[data-note-preview="plain-text"]')).not.toBeNull()
+  })
+
   it('counts list markers only when a space follows, so a long rule is still a rule', () => {
     const view = renderWithIntl(<NoteMarkdownPreview content={`${'-'.repeat(300)}\n\n${'+'.repeat(300)} not a list`} />)
     expect(view.container.querySelector('[data-note-preview="plain-text"]')).toBeNull()

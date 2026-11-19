@@ -26,7 +26,7 @@ A link is live only when its target starts with `http:`, `https:` or `mailto:`. 
 
 Everything else is shown as the link text, with no link: other schemes (`javascript:`, `data:`, `vbscript:`, `file:`, `intent:`, `content:`, `irc:`, `xmpp:` and the rest), relative paths, `//host/path`, `#fragments`, and empty or missing targets. This holds for inline links, reference links and `<...>` autolinks alike. A live link opens in a new tab or the system handler, never inside the app.
 
-A target is kept exactly as written, so `HTTPS://Example.com/Path` stays that way.
+The profile does not rewrite a target: `HTTPS://Example.com/Path` keeps its case. A client may still percent-encode characters that cannot appear in a URL (the web does: a space becomes `%20` and a non-ASCII letter becomes `%XX` escapes), so the vectors use only targets that need no encoding.
 
 Links between notes come after 1.0 and will need their own rule.
 
@@ -49,7 +49,7 @@ Not interpreted in 1.0. A leading `---` block is ordinary Markdown: a thematic b
 ## Limits
 
 - **Size:** the profile sets no limit. Each client should keep a 1 MB body from blocking input, and its pull request records the time it takes. The web does not meet that yet: 1 MB of dense Markdown holds the browser's main thread for 2.4 to 6 seconds, which is the parser's cost and not specific to the profile.
-- **Nesting:** a line that opens up to 100 list or quote containers (`- - - ...`) must render as Markdown. Past that, a client may show the body as plain text, or degrade in another way, but it must not crash or stall and the text must stay visible. The web does both: it shows the whole body as plain text for a line with more than 100, because the parser's time grows with the square of that count (15 seconds for 10,000, which is 20 KB), and it shows the body as plain text when the parser still overflows its stack on a body nested deeply over many lines.
+- **Nesting:** up to 100 levels must render as Markdown. A line's level is its container markers (`>`, or a bullet or number followed by a space or tab) plus half its leading indentation, with a tab counted as four columns, so `- - - ...` and a list indented deeper on every line count alike. Past 100 on any line, a client may show the body as plain text, or degrade in another way, but it must not crash or stall and the text must stay visible. The parser's time grows with the square of the depth (15 seconds for 10,000 markers on one line, which is 20 KB), and it overflows its stack at a few thousand levels. The web shows the whole body as plain text when a line measures over 100, and also when the parser throws. The measure is a guess made without parsing, so it can be wrong in rare cases: a spaced rule such as `- - - ...` with more than 100 dashes, or a code block line indented more than 200 columns, also shows the body as plain text.
 - **Characters:** U+0000 never reaches the output (CommonMark replaces it with U+FFFD). Lone surrogates must not crash a client.
 
 ## Decisions made for 1.0
@@ -67,7 +67,7 @@ Each can be reopened with the maintainer.
 
 ## Shared test vectors
 
-[`contracts/notes-markdown/v1-vectors.json`](https://github.com/silent-suite/silentsuite/blob/main/contracts/notes-markdown/v1-vectors.json) holds the cases. Each client reads the file in place from its own tests, as the Birthdays calendar does with `contracts/birthday-calendar/v1-vectors.json`. The file has `"contract": "silentsuite.notes.markdown"` and `"version": 1`; a test in each client checks both.
+[`contracts/notes-markdown/v1-vectors.json`](https://github.com/silent-suite/silentsuite/blob/main/contracts/notes-markdown/v1-vectors.json) holds the cases. A client's tests read the file in place, as Android's Birthdays test does with `contracts/birthday-calendar/v1-vectors.json`. The file has `"contract": "silentsuite.notes.markdown"` and `"version": 1`; each reader checks both. The web test exists now; Android's comes with its reading view.
 
 Each case has:
 
