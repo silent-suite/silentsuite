@@ -1,0 +1,772 @@
+{
+  "contract": "silentsuite.notes.markdown",
+  "version": 1,
+  "notes": [
+    "Shared vectors for the Notes Markdown profile on web (TypeScript) and Android (Kotlin). The profile is docs/contributing/notes-markdown.md.",
+    "Each case has an id, a since tag (commonmark or gfm), the Markdown text, and an expect object that each client compares with the result of its own renderer. The fields are defined on the profile page.",
+    "Characters that are hard to see (controls, bidi overrides, lone surrogates) are written as escapes so the exact code units are in the file."
+  ],
+  "cases": [
+    {
+      "id": "headings-all-levels",
+      "since": "commonmark",
+      "markdown": "# H1\n\n## H2\n\n### H3\n\n#### H4\n\n##### H5\n\n###### H6",
+      "expect": {
+        "blocks": ["heading:1","heading:2","heading:3","heading:4","heading:5","heading:6"],
+        "links": [],
+        "images": [],
+        "text": ["H1","H6"]
+      }
+    },
+    {
+      "id": "inline-emphasis",
+      "since": "commonmark",
+      "markdown": "*em* **strong** `code` ***both***",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "inline": [{"kind":"em","text":"em"},{"kind":"strong","text":"strong"},{"kind":"code","text":"code"},{"kind":"em","text":"both"},{"kind":"strong","text":"both"}]
+      },
+      "note": "Nested inline spans are listed in the order their opening markers appear, outer span first."
+    },
+    {
+      "id": "backslash-escapes",
+      "since": "commonmark",
+      "markdown": "\\*not emphasis\\* and a \\[bracket\\]",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["*not emphasis* and a [bracket]"],
+        "inline": []
+      }
+    },
+    {
+      "id": "nested-lists",
+      "since": "commonmark",
+      "markdown": "- a\n  - b\n    1. c\n- d\n\n1. x\n2. y",
+      "expect": {
+        "blocks": ["list:bullet","list:ordered"],
+        "links": [],
+        "images": [],
+        "text": ["a","b","c","d","x","y"]
+      },
+      "note": "Only top-level blocks are listed; nested content is checked through text."
+    },
+    {
+      "id": "fenced-code-with-language",
+      "since": "commonmark",
+      "markdown": "```js\nconst x = 1 < 2 && 3\n```",
+      "expect": {
+        "blocks": ["code"],
+        "links": [],
+        "images": [],
+        "text": ["const x = 1 < 2 && 3"]
+      }
+    },
+    {
+      "id": "indented-code",
+      "since": "commonmark",
+      "markdown": "    indented\n    code",
+      "expect": {
+        "blocks": ["code"],
+        "links": [],
+        "images": [],
+        "text": ["indented","code"]
+      }
+    },
+    {
+      "id": "quote-containing-list",
+      "since": "commonmark",
+      "markdown": "> intro\n>\n> - a\n> - b",
+      "expect": {
+        "blocks": ["quote"],
+        "links": [],
+        "images": [],
+        "text": ["intro","a","b"]
+      }
+    },
+    {
+      "id": "thematic-break",
+      "since": "commonmark",
+      "markdown": "above\n\n---\n\nbelow",
+      "expect": {
+        "blocks": ["paragraph","rule","paragraph"],
+        "links": [],
+        "images": []
+      }
+    },
+    {
+      "id": "soft-break-is-not-a-line-break",
+      "since": "commonmark",
+      "markdown": "line one\nline two",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "hardBreaks": 0,
+        "text": ["line one","line two"]
+      },
+      "note": "A single newline is a soft break: no line break element."
+    },
+    {
+      "id": "hard-break-two-spaces",
+      "since": "commonmark",
+      "markdown": "line one  \nline two",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "hardBreaks": 1
+      }
+    },
+    {
+      "id": "hard-break-backslash",
+      "since": "commonmark",
+      "markdown": "line one\\\nline two",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "hardBreaks": 1
+      }
+    },
+    {
+      "id": "frontmatter-is-ordinary-markdown",
+      "since": "commonmark",
+      "markdown": "---\ntitle: x\ntags: [a]\n---\n\nBody",
+      "expect": {
+        "blocks": ["rule","heading:2","paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["title: x","tags: [a]","Body"]
+      },
+      "note": "Frontmatter is not interpreted in 1.0: the first line is a thematic break and the next two lines with the closing dashes form a setext heading."
+    },
+    {
+      "id": "unicode-text",
+      "since": "commonmark",
+      "markdown": "caf\u00e9 \u65e5\u672c\u8a9e \ud83d\ude00",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["caf\u00e9 \u65e5\u672c\u8a9e \ud83d\ude00"]
+      }
+    },
+    {
+      "id": "task-list",
+      "since": "gfm",
+      "markdown": "- [x] done\n- [ ] todo",
+      "expect": {
+        "blocks": ["list:task"],
+        "links": [],
+        "images": [],
+        "tasks": ["checked","unchecked"]
+      }
+    },
+    {
+      "id": "task-list-nested",
+      "since": "gfm",
+      "markdown": "- [ ] parent\n  - [x] child",
+      "expect": {
+        "blocks": ["list:task"],
+        "links": [],
+        "images": [],
+        "tasks": ["unchecked","checked"]
+      }
+    },
+    {
+      "id": "table-with-alignment",
+      "since": "gfm",
+      "markdown": "| a | b | c |\n|:--|:-:|--:|\n| 1 | 2 | 3 |",
+      "expect": {
+        "blocks": ["table:2x3"],
+        "links": [],
+        "images": [],
+        "text": ["a","b","c","1","2","3"]
+      },
+      "note": "table:RxC counts the header row in R."
+    },
+    {
+      "id": "table-code-with-escaped-pipe",
+      "since": "gfm",
+      "markdown": "| a | b |\n|---|---|\n| `x\\|y` | z |",
+      "expect": {
+        "blocks": ["table:2x2"],
+        "links": [],
+        "images": [],
+        "inline": [{"kind":"code","text":"x|y"}]
+      }
+    },
+    {
+      "id": "strikethrough-double-tilde",
+      "since": "gfm",
+      "markdown": "~~gone~~ kept",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "inline": [{"kind":"del","text":"gone"}]
+      }
+    },
+    {
+      "id": "strikethrough-single-tilde",
+      "since": "gfm",
+      "markdown": "~gone~ kept",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "inline": [{"kind":"del","text":"gone"}]
+      }
+    },
+    {
+      "id": "link-inline",
+      "since": "commonmark",
+      "markdown": "[docs](https://example.com/docs)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "images": [],
+        "links": [{"text":"docs","href":"https://example.com/docs"}]
+      }
+    },
+    {
+      "id": "link-reference-style",
+      "since": "commonmark",
+      "markdown": "[docs][r]\n\n[r]: https://example.com/ref \"Title\"",
+      "expect": {
+        "blocks": ["paragraph"],
+        "images": [],
+        "links": [{"text":"docs","href":"https://example.com/ref"}]
+      },
+      "note": "The definition line produces no block."
+    },
+    {
+      "id": "link-autolink",
+      "since": "commonmark",
+      "markdown": "<https://example.com/auto>",
+      "expect": {
+        "blocks": ["paragraph"],
+        "images": [],
+        "links": [{"text":"https://example.com/auto","href":"https://example.com/auto"}]
+      }
+    },
+    {
+      "id": "link-email-autolink",
+      "since": "commonmark",
+      "markdown": "<a@example.com>",
+      "expect": {
+        "blocks": ["paragraph"],
+        "images": [],
+        "links": [{"text":"a@example.com","href":"mailto:a@example.com"}]
+      }
+    },
+    {
+      "id": "link-mailto",
+      "since": "commonmark",
+      "markdown": "[mail me](mailto:a@example.com)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "images": [],
+        "links": [{"text":"mail me","href":"mailto:a@example.com"}]
+      }
+    },
+    {
+      "id": "link-uppercase-scheme",
+      "since": "commonmark",
+      "markdown": "[Up](HTTPS://Example.com/Path)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "images": [],
+        "links": [{"text":"Up","href":"HTTPS://Example.com/Path"}]
+      },
+      "note": "The scheme is compared without regard to case; the target is kept exactly as written."
+    },
+    {
+      "id": "bare-url-stays-text",
+      "since": "commonmark",
+      "markdown": "see https://example.com/page now",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["see https://example.com/page now"]
+      },
+      "note": "Bare URLs are not links in 1.0 (decided in PR 1 of the profile)."
+    },
+    {
+      "id": "www-stays-text",
+      "since": "commonmark",
+      "markdown": "visit www.example.com today",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["visit www.example.com today"]
+      }
+    },
+    {
+      "id": "link-relative-path-is-text",
+      "since": "commonmark",
+      "markdown": "[settings](/settings)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["settings"],
+        "absent": ["/settings"]
+      }
+    },
+    {
+      "id": "link-protocol-relative-is-text",
+      "since": "commonmark",
+      "markdown": "[p](//example.com/p)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["p"],
+        "absent": ["example.com"]
+      }
+    },
+    {
+      "id": "link-fragment-is-text",
+      "since": "commonmark",
+      "markdown": "[top](#top)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["top"],
+        "absent": ["#top"]
+      }
+    },
+    {
+      "id": "link-empty-target-is-text",
+      "since": "commonmark",
+      "markdown": "[nothing]()\n\n[angle](<>)",
+      "expect": {
+        "blocks": ["paragraph","paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["nothing","angle"]
+      }
+    },
+    {
+      "id": "link-unresolved-reference-is-text",
+      "since": "commonmark",
+      "markdown": "[label][missing]",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["[label][missing]"]
+      }
+    },
+    {
+      "id": "link-percent-encoded-scheme-is-text",
+      "since": "commonmark",
+      "markdown": "[a](https%3A//example.com/)\n\n[b](javascript%3Aalert(1))",
+      "expect": {
+        "blocks": ["paragraph","paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a","b"],
+        "absent": ["example.com","javascript"]
+      },
+      "note": "Percent escapes are not decoded for the scheme check: a target that does not start with the scheme itself is relative, so not live."
+    },
+    {
+      "id": "html-script-block",
+      "since": "commonmark",
+      "markdown": "<script>alert(1)</script>",
+      "expect": {
+        "blocks": ["html"],
+        "links": [],
+        "images": [],
+        "text": ["<script>alert(1)</script>"]
+      },
+      "note": "Raw HTML is literal text. The html block kind means a block shown as literal text."
+    },
+    {
+      "id": "html-img-tag-block",
+      "since": "commonmark",
+      "markdown": "<img src=\"https://tracker.example/p.png\" onerror=alert(1)>",
+      "expect": {
+        "blocks": ["html"],
+        "links": [],
+        "images": [],
+        "text": ["<img src=\"https://tracker.example/p.png\" onerror=alert(1)>"],
+        "absent": ["tracker.example","onerror"]
+      }
+    },
+    {
+      "id": "html-div-block-keeps-markdown-literal",
+      "since": "commonmark",
+      "markdown": "<div>\n**bold**\n</div>",
+      "expect": {
+        "blocks": ["html"],
+        "links": [],
+        "images": [],
+        "text": ["<div>","**bold**","</div>"],
+        "inline": []
+      }
+    },
+    {
+      "id": "html-inline-tags",
+      "since": "commonmark",
+      "markdown": "a <b>bold</b> and <i onclick=alert(1)>x</i> c",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["<b>bold</b>","<i onclick=alert(1)>x</i>"],
+        "inline": [],
+        "absent": ["onclick"]
+      }
+    },
+    {
+      "id": "html-raw-anchor-is-text",
+      "since": "commonmark",
+      "markdown": "open <a href=\"https://example.com/\">raw</a> now",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["<a href=\"https://example.com/\">raw</a>"]
+      }
+    },
+    {
+      "id": "html-comment",
+      "since": "commonmark",
+      "markdown": "a <!-- hidden --> b\n\n<!-- block comment -->",
+      "expect": {
+        "blocks": ["paragraph","html"],
+        "links": [],
+        "images": [],
+        "text": ["<!-- hidden -->","<!-- block comment -->"]
+      }
+    },
+    {
+      "id": "html-in-fenced-code",
+      "since": "commonmark",
+      "markdown": "```html\n<script>alert(1)</script>\n```",
+      "expect": {
+        "blocks": ["code"],
+        "links": [],
+        "images": [],
+        "text": ["<script>alert(1)</script>"]
+      }
+    },
+    {
+      "id": "image-markdown-never-loads",
+      "since": "commonmark",
+      "markdown": "![x](https://tracker.example/p.png)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": ["x"],
+        "absent": ["tracker.example"]
+      }
+    },
+    {
+      "id": "image-reference-style",
+      "since": "commonmark",
+      "markdown": "![pic][r]\n\n[r]: https://tracker.example/p.png",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": ["pic"],
+        "absent": ["tracker.example"]
+      }
+    },
+    {
+      "id": "image-without-alt",
+      "since": "commonmark",
+      "markdown": "![](https://tracker.example/p.png)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [""],
+        "absent": ["tracker.example"]
+      }
+    },
+    {
+      "id": "image-inside-link",
+      "since": "commonmark",
+      "markdown": "[![x](https://tracker.example/p.png)](https://example.com/)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [{"text":"","href":"https://example.com/"}],
+        "images": ["x"],
+        "absent": ["tracker.example"]
+      },
+      "note": "A link text does not count image placeholders."
+    },
+    {
+      "id": "link-javascript-inline",
+      "since": "commonmark",
+      "markdown": "[a](javascript:alert(1))",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["javascript"]
+      }
+    },
+    {
+      "id": "link-javascript-mixed-case",
+      "since": "commonmark",
+      "markdown": "[a](JaVaScRiPt:alert(1))",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["javascript"]
+      }
+    },
+    {
+      "id": "link-javascript-entity-encoded",
+      "since": "commonmark",
+      "markdown": "[a](jav&#x61;script:alert(1))",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["javascript"]
+      },
+      "note": "The parser decodes the entity, so the target is javascript: before the scheme check."
+    },
+    {
+      "id": "link-javascript-entity-tab",
+      "since": "commonmark",
+      "markdown": "[a](jav&Tab;ascript:alert(1))",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["javascript","jav"]
+      },
+      "note": "Browsers strip a tab inside a scheme; the decoded target does not start with an allowed scheme, so it is not live."
+    },
+    {
+      "id": "link-javascript-literal-tab",
+      "since": "commonmark",
+      "markdown": "[a](java\tscript:alert(1))",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "absent": ["javascript","java"]
+      },
+      "note": "A tab is not allowed in an inline destination, so this is not a link at all; nothing may become live either way."
+    },
+    {
+      "id": "link-javascript-angle-brackets",
+      "since": "commonmark",
+      "markdown": "[a](<javascript:alert(1)>)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["javascript"]
+      }
+    },
+    {
+      "id": "link-javascript-reference-definition",
+      "since": "commonmark",
+      "markdown": "[a][x]\n\n[x]: javascript:alert(1)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["javascript"]
+      }
+    },
+    {
+      "id": "link-javascript-autolink",
+      "since": "commonmark",
+      "markdown": "<javascript:alert(1)>",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["javascript:alert(1)"],
+        "absent": ["href"]
+      },
+      "note": "A valid CommonMark autolink by syntax; shown as its text, not live."
+    },
+    {
+      "id": "link-data-scheme",
+      "since": "commonmark",
+      "markdown": "[a](data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["data:"]
+      }
+    },
+    {
+      "id": "link-vbscript-scheme",
+      "since": "commonmark",
+      "markdown": "[a](vbscript:msgbox)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["vbscript"]
+      }
+    },
+    {
+      "id": "link-file-scheme",
+      "since": "commonmark",
+      "markdown": "[a](file:///etc/passwd)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["file:","passwd"]
+      }
+    },
+    {
+      "id": "link-intent-scheme",
+      "since": "commonmark",
+      "markdown": "[a](intent://scan/#Intent;scheme=zxing;end)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["intent:"]
+      }
+    },
+    {
+      "id": "link-content-scheme",
+      "since": "commonmark",
+      "markdown": "[a](content://com.android.contacts/contacts)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["content:"]
+      }
+    },
+    {
+      "id": "link-irc-scheme",
+      "since": "commonmark",
+      "markdown": "[a](irc://irc.example/room)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["irc:"]
+      },
+      "note": "react-markdown 10.1.0 allows irc, ircs and xmpp by default; the profile does not."
+    },
+    {
+      "id": "link-xmpp-scheme",
+      "since": "commonmark",
+      "markdown": "[a](xmpp:user@example.com)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a"],
+        "absent": ["xmpp:"]
+      }
+    },
+    {
+      "id": "link-text-with-right-to-left-override",
+      "since": "commonmark",
+      "markdown": "[\u202eexe.txt](https://example.com/a)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "images": [],
+        "links": [{"text":"\u202eexe.txt","href":"https://example.com/a"}]
+      },
+      "note": "The profile does not change link text: bidi controls are kept. Known limit, see the page."
+    },
+    {
+      "id": "link-text-shows-other-url",
+      "since": "commonmark",
+      "markdown": "[https://bank.example/](https://evil.example/login)",
+      "expect": {
+        "blocks": ["paragraph"],
+        "images": [],
+        "links": [{"text":"https://bank.example/","href":"https://evil.example/login"}]
+      },
+      "note": "Known limit: the profile does not compare link text with its target."
+    },
+    {
+      "id": "nesting-100-levels",
+      "since": "commonmark",
+      "markdown": "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - deep",
+      "expect": {
+        "blocks": ["list:bullet"],
+        "links": [],
+        "images": [],
+        "text": ["deep"]
+      },
+      "note": "A line that opens 100 containers must render as Markdown."
+    },
+    {
+      "id": "deeply-nested-quotes",
+      "since": "commonmark",
+      "markdown": "> > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > deep",
+      "expect": {
+        "links": [],
+        "images": [],
+        "text": ["deep"]
+      },
+      "note": "blocks is omitted on purpose: past 100 containers on one line a client may degrade (the web shows the whole body as plain text). It must not crash or stall, and the text must stay visible."
+    },
+    {
+      "id": "deeply-nested-lists",
+      "since": "commonmark",
+      "markdown": "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - deep",
+      "expect": {
+        "links": [],
+        "images": [],
+        "text": ["deep"]
+      }
+    },
+    {
+      "id": "deeply-nested-lists-10000",
+      "since": "commonmark",
+      "markdown": "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - deep",
+      "expect": {
+        "links": [],
+        "images": [],
+        "text": ["deep"]
+      },
+      "note": "Without a cap the web parser needs about 15 seconds for this one line."
+    },
+    {
+      "id": "nul-and-lone-surrogates",
+      "since": "commonmark",
+      "markdown": "before\u0000after \ud800 mid \udc00 end",
+      "expect": {
+        "blocks": ["paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["before","after","mid","end"],
+        "textAbsent": ["\u0000"]
+      },
+      "note": "U+0000 must not reach the output (CommonMark replaces it with U+FFFD). Lone surrogates must not crash."
+    }
+  ]
+}
