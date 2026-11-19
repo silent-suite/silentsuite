@@ -123,6 +123,23 @@ describe('NoteMarkdownPreview', () => {
     expect(view.container.textContent).toContain('no closing fence')
   })
 
+  it('parses a line that opens 100 containers and shows 101 as plain text', () => {
+    const ok = renderWithIntl(<NoteMarkdownPreview content={`${'- '.repeat(100)}deep`} />)
+    expect(ok.container.querySelector('ul ul')).not.toBeNull()
+    expect(ok.container.querySelector('[data-note-preview="plain-text"]')).toBeNull()
+    ok.unmount()
+
+    const over = renderWithIntl(<NoteMarkdownPreview content={`${'> '.repeat(101)}deep`} />)
+    expect(over.container.querySelector('blockquote')).toBeNull()
+    expect(over.container.querySelector('[data-note-preview="plain-text"]')).toHaveTextContent(`${'> '.repeat(101)}deep`)
+  })
+
+  it('counts list markers only when a space follows, so a long rule is still a rule', () => {
+    const view = renderWithIntl(<NoteMarkdownPreview content={`${'-'.repeat(300)}\n\n${'+'.repeat(300)} not a list`} />)
+    expect(view.container.querySelector('[data-note-preview="plain-text"]')).toBeNull()
+    expect(view.container.querySelector('hr')).not.toBeNull()
+  })
+
   it('shows a localized empty-preview message', () => {
     renderWithIntl(<NoteMarkdownPreview content="   " />)
     expect(screen.getByText('Nothing to preview yet.')).toBeInTheDocument()
