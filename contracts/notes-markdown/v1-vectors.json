@@ -379,6 +379,31 @@
       "note": "Percent escapes are not decoded for the scheme check: a target that does not start with the scheme itself is relative, so not live."
     },
     {
+      "id": "link-scheme-without-slashes-is-text",
+      "since": "commonmark",
+      "markdown": "[a](https:settings)\n\n[b](https:/settings)\n\n[c](HTTP:?q=1)\n\n[d](https:#top)\n\n[e](https:)",
+      "expect": {
+        "blocks": ["paragraph","paragraph","paragraph","paragraph","paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["a","b","c","d","e"],
+        "absent": ["settings","q=1","#top"]
+      },
+      "note": "A browser resolves https:x and https:/x against the page address, so they are links back into the app. An http or https target needs the two slashes."
+    },
+    {
+      "id": "link-scheme-without-slashes-autolink-and-reference",
+      "since": "commonmark",
+      "markdown": "<https:/settings>\n\n[a][r]\n\n[r]: https:/settings",
+      "expect": {
+        "blocks": ["paragraph","paragraph"],
+        "links": [],
+        "images": [],
+        "text": ["https:/settings","a"],
+        "absent": ["settings"]
+      }
+    },
+    {
       "id": "html-script-block",
       "since": "commonmark",
       "markdown": "<script>alert(1)</script>",
@@ -468,7 +493,8 @@
         "blocks": ["paragraph"],
         "links": [],
         "images": ["x"],
-        "absent": ["tracker.example"]
+        "absent": ["tracker.example"],
+        "textAbsent": ["tracker.example"]
       }
     },
     {
@@ -479,7 +505,8 @@
         "blocks": ["paragraph"],
         "links": [],
         "images": ["pic"],
-        "absent": ["tracker.example"]
+        "absent": ["tracker.example"],
+        "textAbsent": ["tracker.example"]
       }
     },
     {
@@ -490,7 +517,8 @@
         "blocks": ["paragraph"],
         "links": [],
         "images": [""],
-        "absent": ["tracker.example"]
+        "absent": ["tracker.example"],
+        "textAbsent": ["tracker.example"]
       }
     },
     {
@@ -501,7 +529,8 @@
         "blocks": ["paragraph"],
         "links": [{"text":"","href":"https://example.com/"}],
         "images": ["x"],
-        "absent": ["tracker.example"]
+        "absent": ["tracker.example"],
+        "textAbsent": ["tracker.example"]
       },
       "note": "A link text does not count image placeholders."
     },

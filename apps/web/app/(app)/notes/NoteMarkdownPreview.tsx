@@ -5,10 +5,13 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import { useTranslations } from 'next-intl'
 
 // The Notes Markdown profile (docs/contributing/notes-markdown.md) allows
-// links to http, https and mailto only. The check is on the target as the
-// parser hands it over (entities already decoded), without decoding percent
-// escapes: `https%3A//x` is a relative URL to the browser, so it stays dead.
-const ALLOWED_LINK_TARGET = /^(?:https?|mailto):/i
+// links to http://, https:// and mailto: only. The check is on the target as
+// the parser hands it over (entities already decoded, and percent-encoded where
+// a character cannot appear in a URL), without decoding percent escapes:
+// `https%3A//x` is a relative URL to the browser, so it stays dead. An http or
+// https target needs the `//`: a browser resolves `https:/x` and `https:x`
+// against the page's own address, a link back into the app.
+const ALLOWED_LINK_TARGET = /^(?:https?:\/\/|mailto:)/i
 
 function allowedLinkTarget(url: string): string {
   return ALLOWED_LINK_TARGET.test(url) ? url : ''
@@ -75,7 +78,7 @@ function nestsTooDeep(content: string): boolean {
 /**
  * Note bodies are untrusted input. Raw HTML is never turned into DOM nodes
  * (react-markdown shows it as text), and `urlTransform` below drops every link
- * target except http, https and mailto, where react-markdown's own default would
+ * target except http://, https:// and mailto:, where react-markdown's own default would
  * also keep irc, ircs, xmpp and every relative URL. A link left with no target
  * renders as its text, so no `href=""` link back into the app remains. No plugins.
  *
@@ -129,7 +132,8 @@ export function NoteMarkdownPreview({ content }: { content: string }) {
  * boundary that error would replace the whole Notes page with the app error
  * screen, for every member of a shared notebook who opens the note. The body is
  * shown as plain text instead (a React text child, so nothing in it is parsed),
- * and nothing is reported, since an error report must never carry note text.
+ * and this code reports nothing, since an error report must never carry note
+ * text. React itself may log or report the RangeError, which names no note text.
  * A later body gets a fresh try.
  */
 class PlainTextOnFailure extends Component<
