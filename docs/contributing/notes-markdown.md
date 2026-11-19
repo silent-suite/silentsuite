@@ -48,7 +48,7 @@ Not interpreted in 1.0. A leading `---` block is ordinary Markdown: a thematic b
 
 ## Limits
 
-- **Size:** the profile sets none. Each client must render a 1 MB body without blocking input, and its pull request records the number.
+- **Size:** the profile sets no limit. Each client should keep a 1 MB body from blocking input, and its pull request records the time it takes. The web does not meet that yet: 1 MB of dense Markdown holds the browser's main thread for 2.4 to 6 seconds, which is the parser's cost and not specific to the profile.
 - **Nesting:** a line that opens up to 100 list or quote containers (`- - - ...`) must render as Markdown. Past that, a client may show the body as plain text, or degrade in another way, but it must not crash or stall and the text must stay visible. The web does both: it shows the whole body as plain text for a line with more than 100, because the parser's time grows with the square of that count (15 seconds for 10,000, which is 20 KB), and it shows the body as plain text when the parser still overflows its stack on a body nested deeply over many lines.
 - **Characters:** U+0000 never reaches the output (CommonMark replaces it with U+FFFD). Lone surrogates must not crash a client.
 
