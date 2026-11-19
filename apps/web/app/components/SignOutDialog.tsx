@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslations } from 'next-intl'
 import { ModalDialog } from '@/app/components/modal-dialog'
@@ -33,13 +33,20 @@ export function SignOutDialog({ account, count: initialCount, onLogout, onClose 
   // What the user agreed to delete in the second step.
   const [agreed, setAgreed] = useState<number | null>(null)
   const busy = stage === 'syncing' || stage === 'deleting'
+  // Cancel works at any time, also while Sync now runs; once closed, nothing here logs out.
+  const open = useRef(true)
+  const close = () => {
+    open.current = false
+    onClose()
+  }
 
   const logOutIfCurrent = async () => {
+    if (!open.current) return
     if (!isSignOutAccountCurrent(account)) {
-      onClose()
+      close()
       return
     }
-    onClose()
+    close()
     await onLogout()
   }
 
@@ -51,11 +58,13 @@ export function SignOutDialog({ account, count: initialCount, onLogout, onClose 
     } catch {
       // The count below says what is still only on this device.
     }
+    if (!open.current) return
     if (!isSignOutAccountCurrent(account)) {
-      onClose()
+      close()
       return
     }
     const left = await countLocalOnlyChanges(account)
+    if (!open.current) return
     if (left === 0) {
       await logOutIfCurrent()
       return
@@ -67,8 +76,9 @@ export function SignOutDialog({ account, count: initialCount, onLogout, onClose 
   const deleteAndLogOut = async () => {
     setStage('deleting')
     const now = await countLocalOnlyChanges(account)
+    if (!open.current) return
     if (!isSignOutAccountCurrent(account)) {
-      onClose()
+      close()
       return
     }
     // More than was agreed, or no longer countable after a count: ask again with what is known now.
@@ -90,14 +100,14 @@ export function SignOutDialog({ account, count: initialCount, onLogout, onClose 
     <ModalDialog
       title={stage === 'confirm' ? t('confirmTitle') : t('unsyncedTitle')}
       description={message}
-      onClose={busy ? undefined : onClose}
-      closeOnEscape={!busy}
+      onClose={stage === 'deleting' ? undefined : close}
+      closeOnEscape={stage !== 'deleting'}
     >
       <p className="mt-2 text-sm text-[rgb(var(--muted))]" aria-live="polite">
         {stage === 'syncing' ? t('syncing') : message}
       </p>
       <div className="mt-5 flex flex-wrap justify-end gap-2">
-        <button type="button" onClick={onClose} disabled={busy} className={`${BUTTON_CLASS} text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]`}>
+        <button type="button" onClick={close} disabled={stage === 'deleting'} className={`${BUTTON_CLASS} text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]`}>
           {t('cancel')}
         </button>
         {stage === 'confirm' || stage === 'deleting' ? (

@@ -3,6 +3,8 @@ import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { countNoteTextOnlyInPage } from '@/app/stores/use-note-store'
 
+const COUNT_TIMEOUT_MS = 5000
+
 /** The account a sign-out check was made for: this tab's account epoch and Etebase fingerprint. */
 export interface SignOutAccount {
   accountEpoch: number
@@ -26,11 +28,20 @@ export function isSignOutAccountCurrent(account: SignOutAccount): boolean {
  */
 export async function countLocalOnlyChanges(account: SignOutAccount): Promise<number | null> {
   if (!account.accountFingerprint || !isSignOutAccountCurrent(account)) return null
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const records = await getQueuedMutations({ accountEpoch: account.accountEpoch, accountFingerprint: account.accountFingerprint })
+    // A queue that does not answer (a blocked database) counts as having changes, so Log out still has a way out.
+    const timedOut = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), COUNT_TIMEOUT_MS) })
+    const records = await Promise.race([
+      getQueuedMutations({ accountEpoch: account.accountEpoch, accountFingerprint: account.accountFingerprint }),
+      timedOut,
+    ])
+    if (records === null) return null
     if (!isSignOutAccountCurrent(account)) return null
     return records.length + countNoteTextOnlyInPage()
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }

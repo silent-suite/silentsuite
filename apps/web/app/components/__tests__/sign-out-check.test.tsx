@@ -241,6 +241,29 @@ describe('#1113 D1 Log out counts changes only on this device first', () => {
     expect(logout).toHaveBeenCalledTimes(1)
   })
 
+  it('Cancel works while Sync now runs, and the sync never logs out afterwards', async () => {
+    expect(await heldRecord('note-a')).toBe(true)
+    let finish = () => {}
+    const replayOfflineQueue = vi.fn(() => new Promise<number>((resolve) => { finish = () => resolve(0) }))
+    useSyncStore.setState({ replayOfflineQueue } as any)
+    renderHeader()
+    await clickLogOut()
+    fireEvent.click(ui().getByRole('button', { name: 'Sync now' }))
+    await settle()
+    expect(replayOfflineQueue).toHaveBeenCalledTimes(1)
+
+    const cancel = ui().getByRole('button', { name: 'Cancel' }) as HTMLButtonElement
+    expect(cancel.disabled).toBe(false)
+    fireEvent.click(cancel)
+    await settle()
+    expect(dialog()).toBeNull()
+    for (const record of await getAll(queueGuard())) await remove(record.id, queueGuard())
+    finish()
+    await settle()
+
+    expect(logout).not.toHaveBeenCalled()
+  })
+
   it('Sync now keeps the dialog with the new count while held changes remain', async () => {
     expect(await heldRecord('note-a')).toBe(true)
     useSyncStore.setState({ replayOfflineQueue: vi.fn(async () => 0) } as any)
