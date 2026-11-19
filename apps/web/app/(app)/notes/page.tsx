@@ -215,6 +215,8 @@ function NoteRow({ note, notebook, selected, dateLabel, onSelect }: {
       type="button"
       onClick={onSelect}
       aria-current={selected ? 'true' : undefined}
+      // translate="no": a browser's page translation would send the note text to its service.
+      translate="no"
       className={`w-full rounded-lg border px-3 py-2.5 text-left transition-colors ${
         selected
           ? 'border-emerald-500/40 bg-emerald-500/10'
@@ -775,7 +777,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
         </section>
       )}
       {preview && (
-        <div className={PREVIEW_CLASS} data-testid="note-preview">
+        // translate="no": a browser's page translation would send the note text to its service.
+        <div className={PREVIEW_CLASS} data-testid="note-preview" translate="no">
           <NoteMarkdownPreview content={content} />
         </div>
       )}

@@ -193,5 +193,6 @@ export function MarkdownEditor({
     })
   }, [ariaLabel, compartments])
 
-  return <div ref={hostRef} className={className} />
+  // translate="no": a browser's page translation would send the note text to its service.
+  return <div ref={hostRef} className={className} translate="no" />
 }
