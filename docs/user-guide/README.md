@@ -7,6 +7,7 @@ How to use SilentSuite: your end-to-end encrypted sync for calendar, contacts, t
 | Guide | Description |
 |---|---|
 | [Getting Started](./getting-started.md) | Sign up, pick a plan, install on a second device, confirm sync |
+| [Collections](./collections.md) | What happens when you remove a member from a shared collection |
 | [Calendar](./calendar.md) | Events, recurrence, timezones, ICS import/export |
 | [Contacts](./contacts.md) | Contact CRUD, vCard import/export |
 | [Tasks](./tasks.md) | Tasks, priorities, due dates, ICS task export |
