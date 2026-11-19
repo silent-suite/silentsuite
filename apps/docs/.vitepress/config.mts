@@ -45,6 +45,7 @@ export default defineConfig({
           text: 'User Guide',
           items: [
             { text: 'Getting Started', link: '/user-guide/getting-started' },
+            { text: 'Collections', link: '/user-guide/collections' },
             { text: 'Calendar', link: '/user-guide/calendar' },
             { text: 'Contacts', link: '/user-guide/contacts' },
             { text: 'Tasks', link: '/user-guide/tasks' },

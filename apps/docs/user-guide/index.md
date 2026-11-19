@@ -7,6 +7,7 @@ How-to guides for using SilentSuite -- your private, end-to-end encrypted sync f
 | Guide | Description |
 |---|---|
 | [Getting Started](./getting-started.md) | Create an account and set up your first device |
+| [Collections](./collections.md) | What happens when you remove a member from a shared collection |
 | [Calendar](./calendar.md) | How to manage your encrypted calendar |
 | [Contacts](./contacts.md) | How to manage your encrypted contacts |
 | [Tasks](./tasks.md) | How to manage your encrypted tasks |
