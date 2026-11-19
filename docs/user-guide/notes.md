@@ -38,7 +38,7 @@ The search box above the list matches note titles and text, within the notebook 
 
 ## Preview Markdown
 
-Click **Preview** to render the body, and click it again to return to editing. Standard Markdown is supported: headings, lists, links, code blocks, quotes. Raw HTML inside a note is shown as text, never executed. Images are never loaded in Markdown previews, so opening a note cannot leak your reading to the servers the images come from.
+Click **Preview** to render the body, and click it again to return to editing. Standard Markdown is supported: headings, lists, links, code blocks, quotes. Only links to web addresses (`http://` and `https://`) and to email addresses (`mailto:`) are live; any other link is shown as its text. A note nested more than about 100 levels deep is shown as plain text instead of rendered. Raw HTML inside a note is shown as text, never executed. Images are never loaded in Markdown previews, so opening a note cannot leak your reading to the servers the images come from.
 
 ## Edit a Note
 
