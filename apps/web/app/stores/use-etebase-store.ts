@@ -782,8 +782,9 @@ function base64ToBytes(text: string): Uint8Array {
  * while the note has no outstanding custody. The record keeps the draft, the base
  * revision and digest, and the prepared copy, all inside the AES-GCM payload bound
  * to `<fingerprint>|notes|<itemUid>`. Replay never sends it until the user retries
- * it, and no display record is written. Resolves the record now holding this text,
- * or null when it could not be written (nothing written, or `known` moved on).
+ * it, and no display record is written. Resolves the record now holding this text;
+ * null when nothing was written and `known`, if given, is gone; 'blocked' when
+ * `known` still exists but could not be updated, so it may hold older text or copy.
  */
 export async function writeHeldNoteRecord(
   itemUid: string,
@@ -792,7 +793,7 @@ export async function writeHeldNoteRecord(
   base: SealedEditingBase,
   copy: SealedNoteCopy | undefined,
   known: HeldNoteRecordRef | undefined,
-): Promise<HeldNoteRecordRef | null> {
+): Promise<HeldNoteRecordRef | null | 'blocked'> {
   const accountEpoch = getAccountEpoch()
   const { account, accountFingerprint } = useEtebaseStore.getState()
   const guard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
@@ -826,6 +827,19 @@ export async function writeHeldNoteRecord(
     const updated = await casStub(known.id, known.rev, { sealed }, guard)
     assertGuard()
     if (updated) return { id: known.id, rev: known.rev + 1 }
+    // The record moved on (the banner's Retry, replay holding it again): while it is still this
+    // note's held v2 record, it is updated at its current revision. A record that is gone gets a
+    // new one below; one that still exists in any other state blocks the write.
+    const current = (await readOutstanding({ collectionType: 'notes', itemUid }, guard)).find((entry) => entry.id === known.id)
+    assertGuard()
+    if (current) {
+      const ours = current.held === 'base-changed' && typeof current.rev === 'number'
+        && await isHeldRefusedTextRecord([current], itemUid, guard, accountEpoch)
+      assertGuard()
+      if (!ours || !await casStub(current.id, current.rev, { sealed }, guard)) return 'blocked'
+      assertGuard()
+      return { id: current.id, rev: (current.rev as number) + 1 }
+    }
   }
   const inserted = await insertIfNoOutstanding(
     { type: 'sealed-update', collectionType: 'notes', collectionUid, itemUid, sealed, rev: 1, held: 'base-changed' },

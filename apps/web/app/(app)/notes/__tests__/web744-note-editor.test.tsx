@@ -891,6 +891,15 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(beforeUnloadPrevented()).toBe(false)
     })
 
+    it('asks again before the tab closes once text is typed after the stored refusal', async () => {
+      await refusedDraft()
+      expect(beforeUnloadPrevented()).toBe(false)
+
+      fireEvent.change(bodyBox(), { target: { value: `${BASE_BODY} typed after` } })
+
+      expect(beforeUnloadPrevented()).toBe(true)
+    })
+
     it('opens kept text as an editable note when Strict Mode replays the editor effects', async () => {
       const { item } = await refusedDraft()
       fireEvent.click(otherRow())

@@ -17,7 +17,7 @@ import {
   type QueueEntry,
 } from '@/app/lib/offline-queue'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
-import { useNoteStore } from '@/app/stores/use-note-store'
+import { heldNoteRecordDiscarded, useNoteStore } from '@/app/stores/use-note-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { AccountBoundaryChangedError, assertCurrentAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 
@@ -156,7 +156,9 @@ export function PendingSyncBanner() {
   })
 
   const handleDiscardHeld = (guard: OfflineQueueAccountGuard, notice: QueueNotice) => runNoticeAction(guard, async () => {
-    await casStub(notice.id, notice.rev, 'delete', guard)
+    const discarded = await casStub(notice.id, notice.rev, 'delete', guard)
+    // Refused note text still open here is then only in this page (#1113 D1).
+    if (discarded && notice.collectionType === 'notes' && notice.itemUid) heldNoteRecordDiscarded(notice.itemUid, notice.id)
   })
 
   const handleDismissLegacy = (guard: OfflineQueueAccountGuard, notice: QueueNotice) => runNoticeAction(guard, async () => {

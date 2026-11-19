@@ -606,6 +606,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
     isClean: () => !isDirty(),
     chainIdle: () => inFlightRef.current === 0,
     base: () => lineageRef.current.base,
+    draft: () => draftRef.current,
     flushAndWait: async () => {
       flush()
       await saveChainRef.current

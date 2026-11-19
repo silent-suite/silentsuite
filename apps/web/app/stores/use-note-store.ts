@@ -62,6 +62,8 @@ export interface MountedNoteEditor {
   chainIdle: () => boolean
   base: () => SealedEditingBase
   flushAndWait: () => Promise<void>
+  /** The editor's current text; used to tell whether its held record already holds it. */
+  draft?: () => { title: string; content: string }
 }
 
 /**
@@ -140,18 +142,26 @@ const closingNoteSaves = new Map<string, number>()
 const noteCopyAttempts = new Map<string, { attempt: NoteCopyAttempt; accountEpoch: number }>()
 const noteCopiesInFlight = new Map<string, { running: Promise<NoteCopyResult>; accountEpoch: number }>()
 // The held note record (#1113 D1) this page wrote or reopened for a note's held text, at its revision.
-const heldNoteRecords = new Map<string, { ref: HeldNoteRecordRef; collectionUid: string; accountEpoch: number }>()
+// `stored` is the text the record holds, or null when the record could not be updated and may hold older text.
+const heldNoteRecords = new Map<string, { ref: HeldNoteRecordRef; collectionUid: string; stored: NoteText | null; accountEpoch: number }>()
 // Per note, the chain of writes that make its held record match its held text, in order.
 const heldRecordWrites = new Map<string, Promise<HeldTextDurability>>()
 // List rows for reopened held text, used when the note list loads without the note.
 const reopenedHeldRows = new Map<string, { row: StoredNote; accountEpoch: number }>()
 
-/** Whether a note's held text is in its sealed record, or only in this page. */
-type HeldTextDurability = 'stored' | 'page-only'
+/**
+ * Where a note's held text is: in its sealed record; only in this page; or 'blocked',
+ * when a record of it exists that this page could not update.
+ */
+type HeldTextDurability = 'stored' | 'page-only' | 'blocked'
+
+type NoteText = { title: string; content: string }
+
+const sameText = (a: NoteText, b: NoteText) => a.title === b.title && a.content === b.content
 
 let unloadGuard: ((event: BeforeUnloadEvent) => void) | null = null
 
-function getHeldNoteRecord(id: string): { ref: HeldNoteRecordRef; collectionUid: string } | undefined {
+function getHeldNoteRecord(id: string): { ref: HeldNoteRecordRef; collectionUid: string; stored: NoteText | null } | undefined {
   const entry = heldNoteRecords.get(id)
   if (!entry) return undefined
   if (!isCurrentAccountEpoch(entry.accountEpoch)) {
@@ -189,11 +199,17 @@ async function writeHeldRecordNow(id: string, accountEpoch: number): Promise<Hel
     if (!collectionUid) return 'page-only'
     const ref = await writeHeldNoteRecord(id, collectionUid, held.draft, held.base, getNoteCopyAttempt(id)?.stored, known?.ref)
     if (!isCurrentAccountEpoch(accountEpoch)) return 'page-only'
+    if (ref === 'blocked') {
+      // The record still exists and may hold older text or another copy: it stays known, so no copy
+      // goes out without it, and the text counts as only in this page.
+      if (known && heldNoteRecords.get(id)?.ref === known.ref) heldNoteRecords.set(id, { ...known, stored: null, accountEpoch })
+      return 'blocked'
+    }
     if (!ref) {
       if (known && heldNoteRecords.get(id)?.ref === known.ref) heldNoteRecords.delete(id)
       return 'page-only'
     }
-    heldNoteRecords.set(id, { ref, collectionUid, accountEpoch })
+    heldNoteRecords.set(id, { ref, collectionUid, stored: held.draft, accountEpoch })
     return 'stored'
   } catch (err) {
     if (isCurrentAccountEpoch(accountEpoch) && !(err instanceof AccountBoundaryChangedError)) {
@@ -217,29 +233,47 @@ function storeHeldText(id: string): Promise<HeldTextDurability> {
   return next
 }
 
-/** Notes whose held text, open editor typing or closing save exists only in this page. */
-function noteTextOnlyInPage(): Set<string> {
+/** Whether the note's record holds exactly this text. */
+function recordHolds(id: string, text: NoteText): boolean {
+  const stored = getHeldNoteRecord(id)?.stored
+  return stored != null && sameText(stored, text)
+}
+
+/**
+ * Notes with text that exists only in this page: held text its record does not hold,
+ * an open editor's typing its record does not hold, a closing save. With `heldOnly`,
+ * an open editor counts only while its note has held text or a record, as the leave
+ * prompt has always asked only for held text.
+ */
+function noteTextOnlyInPage(heldOnly = false): Set<string> {
   const ids = new Set<string>()
   for (const id of [...heldNoteDrafts.keys()]) {
-    if (getHeldNoteDraft(id) && !getHeldNoteRecord(id)) ids.add(id)
+    const held = getHeldNoteDraft(id)
+    if (held && !recordHolds(id, held.draft)) ids.add(id)
   }
   for (const id of [...mountedEditors.keys()]) {
-    if (getMountedNoteEditor(id)?.isClean() === false && !getHeldNoteRecord(id)) ids.add(id)
+    const editor = getMountedNoteEditor(id)
+    if (!editor || editor.isClean()) continue
+    const record = getHeldNoteRecord(id)
+    if (heldOnly && !record && !getHeldNoteDraft(id)) continue
+    const typed = editor.draft?.()
+    if (!record || !typed || !recordHolds(id, typed)) ids.add(id)
   }
   for (const id of closingNoteSaves.keys()) ids.add(id)
   return ids
 }
 
 /**
- * While text exists only in this page (held text not yet in its record, a closing
- * save, a running copy), the browser asks before the tab closes.
+ * While held text, a held record, a closing save or a running copy exists, a leave
+ * listener is installed; it asks only when, at that moment, some text exists only in
+ * this page (held text or typing its record does not hold, a closing save, a copy).
  */
 function syncUnloadGuard(): void {
   if (typeof window === 'undefined') return
-  const pageOnlyHeld = [...heldNoteDrafts.keys()].some((id) => !heldNoteRecords.has(id))
-  const needed = pageOnlyHeld || closingNoteSaves.size > 0 || noteCopiesInFlight.size > 0
+  const needed = heldNoteDrafts.size > 0 || heldNoteRecords.size > 0 || closingNoteSaves.size > 0 || noteCopiesInFlight.size > 0
   if (needed && !unloadGuard) {
     unloadGuard = (event) => {
+      if (noteCopiesInFlight.size === 0 && noteTextOnlyInPage(true).size === 0) return
       event.preventDefault()
       // Older browsers show the prompt only when returnValue is set.
       event.returnValue = ''
@@ -283,6 +317,17 @@ export function releaseHeldNoteDraft(id: string, only?: HeldNoteDraft): void {
   const released = heldNoteDrafts.delete(id)
   if (released) syncUnloadGuard()
   if (released || heldNoteRecords.has(id)) void storeHeldText(id)
+}
+
+/**
+ * The banner's Discard deleted a held note record (#1113 D1): the page no longer
+ * counts it as holding the note's text, so text still held here counts as only in
+ * this page again (leave prompt, Log out count).
+ */
+export function heldNoteRecordDiscarded(id: string, recordId: string): void {
+  if (heldNoteRecords.get(id)?.ref.id !== recordId) return
+  heldNoteRecords.delete(id)
+  syncUnloadGuard()
 }
 
 /** Replaces the held record only while it is still `current`. */
@@ -547,7 +592,10 @@ export function resetNoteLifecycle(): void {
   syncUnloadGuard()
 }
 
-let heldTextReopen: { accountEpoch: number; running: Promise<void> | null; done: boolean } | null = null
+let heldTextReopen: { accountEpoch: number; running: Promise<void> | null; done: boolean; tries: number } | null = null
+// A reopen that found the key not ready tries again a few times; the records stay as they are meanwhile.
+const REOPEN_TRIES = 5
+const REOPEN_RETRY_MS = 2000
 
 /** Takes reopened held texts into this page, unless the page already holds newer text for the note. */
 function adoptReopenedHeldNotes(records: ReopenedHeldNote[], accountEpoch: number): void {
@@ -567,7 +615,7 @@ function adoptReopenedHeldNotes(records: ReopenedHeldNote[], accountEpoch: numbe
       },
       accountEpoch,
     })
-    heldNoteRecords.set(id, { ref: record.ref, collectionUid: record.collectionUid, accountEpoch })
+    heldNoteRecords.set(id, { ref: record.ref, collectionUid: record.collectionUid, stored: record.draft, accountEpoch })
     if (record.copy) {
       noteCopyAttempts.set(id, {
         attempt: {
@@ -608,7 +656,8 @@ function heldNoteRow(id: string, notebookId: string, draft: { title: string; con
  * editor then starts from its text, with the reason and Save as a copy, and a copy
  * attempt stored with it is re-sent rather than made again. While this runs, the
  * notes page opens no editor. When the key is not available yet, nothing is
- * reopened and a later call tries again; the records stay as they are.
+ * reopened, and it tries again up to REOPEN_TRIES times in all, REOPEN_RETRY_MS
+ * apart; the records stay as they are.
  */
 export function reopenHeldNoteText(): Promise<void> {
   const accountEpoch = getAccountEpoch()
@@ -616,7 +665,8 @@ export function reopenHeldNoteText(): Promise<void> {
     if (heldTextReopen.done) return Promise.resolve()
     if (heldTextReopen.running) return heldTextReopen.running
   }
-  const reopen: { accountEpoch: number; running: Promise<void> | null; done: boolean } = { accountEpoch, running: null, done: false }
+  const tries = heldTextReopen?.accountEpoch === accountEpoch ? heldTextReopen.tries + 1 : 1
+  const reopen = { accountEpoch, running: null as Promise<void> | null, done: false, tries }
   heldTextReopen = reopen
   useNoteStore.setState({ heldTextReopen: 'running' })
   reopen.running = (async () => {
@@ -635,6 +685,11 @@ export function reopenHeldNoteText(): Promise<void> {
         reopen.running = null
         reopen.done = done
         useNoteStore.setState({ heldTextReopen: done ? 'done' : 'idle' })
+        if (!done && tries < REOPEN_TRIES) {
+          setTimeout(() => {
+            if (heldTextReopen === reopen && isCurrentAccountEpoch(accountEpoch)) void reopenHeldNoteText()
+          }, REOPEN_RETRY_MS)
+        }
       }
     }
   })()

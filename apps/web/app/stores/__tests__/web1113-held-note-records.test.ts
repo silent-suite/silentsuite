@@ -25,7 +25,9 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({
 
 import { useEtebaseStore } from '../use-etebase-store'
 import {
+  countNoteTextOnlyInPage,
   getHeldNoteDraft,
+  heldNoteRecordDiscarded,
   holdNoteDraft,
   releaseHeldNoteDraft,
   reopenHeldNoteText,
@@ -255,16 +257,17 @@ describe('#1113 D1 refused note text kept in a sealed record', () => {
     expect(await getAll(queueGuard())).toHaveLength(1)
   })
 
-  it('sends no copy when the text\'s record moved on and the copy cannot be stored with it', async () => {
+  it('sends no copy while the text\'s record exists in a state the page cannot store the copy in', async () => {
     const { account, collection, item } = await refusedText()
     const [record] = await getAll(queueGuard())
-    // Another writer (another tab, the banner) changed the record since this page wrote it.
-    expect(await casStub(record!.id, record!.rev, { retryCount: 1 }, queueGuard())).toBe(true)
+    // The banner's Retry made the record eligible again, and its replay has not ended.
+    expect(await casStub(record!.id, record!.rev, { held: undefined, retryCount: 0 }, queueGuard())).toBe(true)
     const before = server.transactions.length
 
     const result = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+    const again = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
 
-    expect(result).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    expect([result, again]).toEqual([{ kind: 'failed', reason: 'unconfirmed' }, { kind: 'failed', reason: 'unconfirmed' }])
     expect(server.transactions.length).toBe(before)
     expect(await liveCopies(account, collection)).toEqual([])
     expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(DRAFT_BODY)
@@ -403,6 +406,138 @@ describe('#1113 D1 refused note text kept in a sealed record', () => {
 
     expect((await getAll(queueGuard())).map((record) => record.held)).toEqual(['unreadable'])
     expect(await serverText(account, collection, item.uid)).toBe(BASE_BODY)
+  })
+
+  it('stores the copy in a record the banner retried and replay held again, so a lost response and a reload still make one copy', async () => {
+    const { account, collection, item, peerItem } = await refusedText()
+    // Banner Retry, then replay finds the base changed again: the same record, two revisions on.
+    const [record] = await getAll(queueGuard())
+    expect(await casStub(record!.id, record!.rev, { held: undefined, retryCount: 0 }, queueGuard())).toBe(true)
+    expect(await casStub(record!.id, record!.rev! + 1, { held: 'base-changed' }, queueGuard())).toBe(true)
+    loseNextCopyResponse(item.uid)
+    let first = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+    // A user clicks again after a refusal that sent nothing.
+    if (server.transactions.length === 0) first = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+    expect(first).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    expect(await liveCopies(account, collection)).toHaveLength(1)
+    EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
+
+    await reload(collection, peerItem)
+    const again = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+
+    expect(again.kind).toBe('copied')
+    expect(await liveCopies(account, collection)).toHaveLength(1)
+    expect(await getAll(queueGuard())).toEqual([])
+  })
+
+  it('counts held text as only in this page once the banner discarded its record', async () => {
+    const { item } = await refusedText()
+    expect(countNoteTextOnlyInPage()).toBe(0)
+    const [record] = await getAll(queueGuard())
+
+    expect(await casStub(record!.id, record!.rev, 'delete', queueGuard())).toBe(true)
+    heldNoteRecordDiscarded(item.uid, record!.id)
+
+    expect(countNoteTextOnlyInPage()).toBe(1)
+  })
+
+  it('counts text typed after the record was written as only in this page', async () => {
+    const { item } = await refusedText()
+    let typed = { title: DRAFT_TITLE, content: DRAFT_BODY }
+    const { registerNoteEditor } = await import('../use-note-store')
+    const unregister = registerNoteEditor(item.uid, {
+      periodGen: () => 0,
+      isClean: () => false,
+      chainIdle: () => true,
+      base: () => getHeldNoteDraft(item.uid)!.base,
+      flushAndWait: async () => {},
+      draft: () => typed,
+    })
+    expect(countNoteTextOnlyInPage()).toBe(0)
+
+    typed = { title: DRAFT_TITLE, content: `${DRAFT_BODY} and more` }
+
+    expect(countNoteTextOnlyInPage()).toBe(1)
+    unregister()
+  })
+
+  it('tries the reopen again when the account was not ready the first time', async () => {
+    const { collection, item, peerItem } = await refusedText()
+    await settleNoteTextForCount()
+    resetNoteLifecycle()
+    const ready = useEtebaseStore.getState()
+    useEtebaseStore.setState({ account: null, accountFingerprint: null } as any)
+    await reopenHeldNoteText()
+    expect([useNoteStore.getState().heldTextReopen, getHeldNoteDraft(item.uid)]).toEqual(['idle', undefined])
+
+    useEtebaseStore.setState({ account: ready.account, accountFingerprint: ready.accountFingerprint } as any)
+    showServerRow(collection, peerItem, PEER_BODY)
+
+    await vi.waitFor(() => expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(DRAFT_BODY), { timeout: 6000, interval: 100 })
+  })
+
+  it('never reopens a record whose copy field is malformed, and replay holds it as unreadable', async () => {
+    const { account, collection, item } = await makeSavedNote(BASE_TITLE, BASE_BODY)
+    server.seed(collection, [item])
+    installNoteAccount(account, collection, item)
+    showServerRow(collection, item, BASE_BODY)
+    await ensureFingerprint(FINGERPRINT, getAccountEpoch())
+    expect(await ensureEncryptedEnvelope(getAccountEpoch())).toBe(true)
+    const valid = {
+      kind: 'note',
+      body: { content: DRAFT_BODY, meta: { name: DRAFT_TITLE, mtime: 1 } },
+      base: { revision: item.etag, digest: await sealedPayloadDigest(['note', BASE_TITLE, BASE_BODY]) },
+      prior: [],
+    }
+    const variants: Record<string, unknown> = {
+      'v1-with-copy': { v: 1, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r' } },
+      'extra-key': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r', other: 1 } },
+      'bad-base64': { v: 2, ...valid, copy: { uid: 'u', item: 'not base64!', revision: 'r' } },
+      'empty-uid': { v: 2, ...valid, copy: { uid: '', item: 'AAAA', revision: 'r' } },
+      'number-revision': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 7 } },
+      'extra-top-key': { v: 2, ...valid, other: true },
+    }
+    for (const [name, payload] of Object.entries(variants)) {
+      const uid = `${item.uid}-${name}`
+      const sealed = await sealQueuePayload(JSON.stringify(payload), `${FINGERPRINT}|notes|${uid}`)
+      expect(await insertIfNoOutstanding(
+        { type: 'sealed-update', collectionType: 'notes', collectionUid: collection.uid, itemUid: uid, sealed: sealed!, rev: 1, held: 'base-changed' },
+        queueGuard(),
+      )).toBe(true)
+    }
+
+    await reopenHeldNoteText()
+    for (const name of Object.keys(variants)) expect(getHeldNoteDraft(`${item.uid}-${name}`)).toBeUndefined()
+    for (const record of await getAll(queueGuard())) {
+      expect(await casStub(record.id, record.rev, { held: undefined, retryCount: 0 }, queueGuard())).toBe(true)
+    }
+    // Replay stops at the first record it cannot confirm, so it runs once per record.
+    for (const _ of Object.keys(variants)) {
+      await replay((entry, checkpoint) => useEtebaseStore.getState().replayQueuedMutation(entry, queueGuard(), checkpoint), queueGuard())
+    }
+
+    expect((await getAll(queueGuard())).map((record) => record.held)).toEqual(Object.keys(variants).map(() => 'unreadable'))
+  })
+
+  it('sends nothing for a well-formed stored copy that does not load as its own item', async () => {
+    const { account, collection, item, peerItem, base } = await refusedText()
+    const [record] = await getAll(queueGuard())
+    const opened = await openRecord(record)
+    // A real, loadable item whose UID is not the one the record names.
+    const other = await account.getCollectionManager().getItemManager(collection).create({ name: 'OTHER 1113', mtime: 1 }, 'OTHER BODY')
+    const bytes = account.getCollectionManager().getItemManager(collection).cacheSave(other)
+    const forged = { ...opened, copy: { uid: 'not-the-item', item: Buffer.from(bytes).toString('base64'), revision: other.etag } }
+    const sealed = await sealQueuePayload(JSON.stringify(forged), `${FINGERPRINT}|notes|${item.uid}`)
+    expect(await casStub(record!.id, record!.rev, { sealed: sealed! }, queueGuard())).toBe(true)
+    await reload(collection, peerItem)
+    const before = server.transactions.length
+
+    const result = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+
+    expect(result).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    expect(server.transactions.length).toBe(before)
+    expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(DRAFT_BODY)
+    void base
   })
 
   it('keeps a reopened held text when the page already holds newer text for the note', async () => {
