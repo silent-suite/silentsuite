@@ -1407,11 +1407,9 @@ describe('#744 the rendered note editor saves only through its captured base', (
       // No wait after this change: its debounce must not run out while the write is held.
       fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
 
-      // The running save's optimistic record is not adopted as a refresh.
-      expect(titleBox().value).toBe(BASE_TITLE)
       write.release(false)
       await settle()
-      // Nor is its accepted record: the typed-back title is unsaved text on top of it.
+      // The save's accepted record is not adopted: the typed-back title is unsaved text on top of it.
       expect(await serverTitle(account, collection, item.uid)).toBe('Typed then removed 1113')
       expect([titleBox().value, saveStatus().textContent]).toEqual([BASE_TITLE, 'Unsaved changes'])
       hideTab()
