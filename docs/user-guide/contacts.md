@@ -47,7 +47,7 @@ The Bridge preserves `X-SILENTSUITE-FAVORITE` when a client sends it, but favori
 
 ## Sharing
 
-Favorites in a shared address book are shared contact state, not a private per-member preference. Writable members can change them; read-only members cannot.
+Favorites in a shared address book are shared contact state, not a private per-member preference. Writable members can change them; read-only members cannot. See [what happens when you remove a member](./collections.md#removing-a-member).
 
 On Android, starring an aggregate contact may also affect constituent raw contacts owned by other accounts because the native Contacts provider controls aggregation. SilentSuite reads and writes only its own account row.
 
