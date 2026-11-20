@@ -554,14 +554,20 @@ export type SealIntent = 'note' | 'favorite'
 
 /**
  * The Save as a copy prepared for refused note text (#1113 D1): the copy's UID,
- * its revision, and the SDK's cacheSave of the item, base64. The cacheSave bytes
- * are Etebase ciphertext under the notebook's keys, never plaintext.
+ * its revision, the SDK's cacheSave of the item, base64, and every revision of
+ * the copy sent so far, oldest first (`revision` last). The cacheSave bytes are
+ * Etebase ciphertext under the notebook's keys, never plaintext; revisions are
+ * random IDs the server already holds for a copy that landed.
  */
 export interface SealedNoteCopy {
   uid: string
   item: string
   revision: string
+  sent: string[]
 }
+
+/** The most revisions one copy is sent with; newer text after that goes onto the copy once it is confirmed. */
+export const MAX_NOTE_COPY_REVISIONS = 32
 
 /**
  * v1: queued note custody (#744). v2: the same, written for note text whose save
@@ -603,10 +609,14 @@ function parseSealedNotePayload(plaintext: string): SealedNotePayload | null {
   } else if (value.v === 2) {
     if ('copy' in value) {
       const copy = value.copy
-      if (!hasExactKeys(copy, ['uid', 'item', 'revision'])) return null
+      if (!hasExactKeys(copy, ['uid', 'item', 'revision', 'sent'])) return null
       if (typeof copy.uid !== 'string' || copy.uid.length === 0) return null
       if (typeof copy.revision !== 'string' || copy.revision.length === 0) return null
       if (typeof copy.item !== 'string' || !SEALED_COPY_ITEM.test(copy.item)) return null
+      const { sent } = copy
+      if (!Array.isArray(sent) || sent.length === 0 || sent.length > MAX_NOTE_COPY_REVISIONS) return null
+      if (!sent.every((revision: unknown) => typeof revision === 'string' && revision.length > 0)) return null
+      if (sent[sent.length - 1] !== copy.revision) return null
     }
   } else {
     return null
@@ -930,14 +940,18 @@ export async function openHeldNoteRecords(): Promise<ReopenedHeldNote[] | 'not-r
   return reopened
 }
 
-/** The prepared copy as stored with its held text: the SDK's cacheSave, base64 (#1113 D1). */
-export function storeNoteCopyItem(collectionUid: string, item: any): SealedNoteCopy | null {
+/**
+ * The prepared copy as stored with its held text: the SDK's cacheSave, base64, with
+ * the revisions sent so far, ending with this item's (#1113 D1).
+ */
+export function storeNoteCopyItem(collectionUid: string, item: any, sent: string[]): SealedNoteCopy | null {
   const { account, collections } = useEtebaseStore.getState()
   if (!account || !item?.uid || !item.etag) return null
+  if (sent.length === 0 || sent.length > MAX_NOTE_COPY_REVISIONS || sent[sent.length - 1] !== item.etag) return null
   const collection = resolveCollection(collections, 'notes', collectionUid)
   if (!collection) return null
   const saved = account.getCollectionManager().getItemManager(collection).cacheSave(item)
-  return { uid: item.uid, item: bytesToBase64(saved), revision: item.etag }
+  return { uid: item.uid, item: bytesToBase64(saved), revision: item.etag, sent: [...sent] }
 }
 
 /**

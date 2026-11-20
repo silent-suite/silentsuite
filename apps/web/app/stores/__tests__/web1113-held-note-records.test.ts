@@ -23,7 +23,7 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({
   useLabelSuggestionsStore: { getState: () => ({ recordUsage: vi.fn() }) },
 }))
 
-import { useEtebaseStore } from '../use-etebase-store'
+import { MAX_NOTE_COPY_REVISIONS, useEtebaseStore } from '../use-etebase-store'
 import {
   countNoteTextOnlyInPage,
   getHeldNoteDraft,
@@ -491,11 +491,16 @@ describe('#1113 D1 refused note text kept in a sealed record', () => {
       prior: [],
     }
     const variants: Record<string, unknown> = {
-      'v1-with-copy': { v: 1, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r' } },
-      'extra-key': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r', other: 1 } },
-      'bad-base64': { v: 2, ...valid, copy: { uid: 'u', item: 'not base64!', revision: 'r' } },
-      'empty-uid': { v: 2, ...valid, copy: { uid: '', item: 'AAAA', revision: 'r' } },
-      'number-revision': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 7 } },
+      'v1-with-copy': { v: 1, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r', sent: ['r'] } },
+      'extra-key': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r', sent: ['r'], other: 1 } },
+      'bad-base64': { v: 2, ...valid, copy: { uid: 'u', item: 'not base64!', revision: 'r', sent: ['r'] } },
+      'empty-uid': { v: 2, ...valid, copy: { uid: '', item: 'AAAA', revision: 'r', sent: ['r'] } },
+      'number-revision': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 7, sent: [7] } },
+      'no-sent': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r' } },
+      'empty-sent': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r', sent: [] } },
+      'sent-not-ending-with-revision': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r', sent: ['r', 'q'] } },
+      'sent-with-number': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r', sent: [1, 'r'] } },
+      'sent-too-long': { v: 2, ...valid, copy: { uid: 'u', item: 'AAAA', revision: 'r', sent: [...Array.from({ length: 32 }, (_, i) => `q${i}`), 'r'] } },
       'extra-top-key': { v: 2, ...valid, other: true },
     }
     for (const [name, payload] of Object.entries(variants)) {
@@ -527,7 +532,7 @@ describe('#1113 D1 refused note text kept in a sealed record', () => {
     // A real, loadable item whose UID is not the one the record names.
     const other = await account.getCollectionManager().getItemManager(collection).create({ name: 'OTHER 1113', mtime: 1 }, 'OTHER BODY')
     const bytes = account.getCollectionManager().getItemManager(collection).cacheSave(other)
-    const forged = { ...opened, copy: { uid: 'not-the-item', item: Buffer.from(bytes).toString('base64'), revision: other.etag } }
+    const forged = { ...opened, copy: { uid: 'not-the-item', item: Buffer.from(bytes).toString('base64'), revision: other.etag, sent: [other.etag] } }
     const sealed = await sealQueuePayload(JSON.stringify(forged), `${FINGERPRINT}|notes|${item.uid}`)
     expect(await casStub(record!.id, record!.rev, { sealed: sealed! }, queueGuard())).toBe(true)
     await reload(collection, peerItem)
@@ -600,6 +605,213 @@ describe('#1113 D1 refused note text kept in a sealed record', () => {
     const records = await getAll(queueGuard())
     expect(records.map((record) => record.held)).toEqual(['base-changed'])
     expect((await openRecord(records[0]))?.body.content).toBe(`${DRAFT_BODY} 3`)
+  })
+
+  it('keeps text typed after a lost copy response until the copy holds it', async () => {
+    const { account, collection, item, peerItem, base } = await refusedText()
+    // Save as a copy: the copy lands with the first text, and its response is lost.
+    loseNextCopyResponse(item.uid)
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
+    await settleNoteTextForCount()
+    // The user keeps typing; that save is refused too, so the editor holds the newer text.
+    const NEWER = `${DRAFT_BODY} typed after the lost response`
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: NEWER }, base, failed: 'changed', copy: 'unconfirmed' })
+    await reload(collection, peerItem)
+    expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(NEWER)
+
+    // The retry finds the copy the server already holds, with the first text.
+    const retried = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+    expect(retried.kind).toBe('copied')
+    const copyId = (retried as { id: string }).id
+    const copies = await liveCopies(account, collection)
+    expect(copies.map((copy: any) => copy.uid)).toEqual([copyId])
+    expect(new TextDecoder().decode(await copies[0].getContent())).toBe(DRAFT_BODY)
+    await settleNoteTextForCount()
+    expect((await getAll(queueGuard())).map((record) => [record.itemUid, record.held])).toEqual([[copyId, 'retry-exhausted']])
+    expect(JSON.stringify(await readAllRecords('silentsuite-offline-queue', 'mutations'))).not.toContain('typed after the lost response')
+
+    // A second reload before the newer text reached the server: it is still there, on the copy.
+    await reload(collection, peerItem)
+
+    expect(getHeldNoteDraft(copyId)?.draft.content).toBe(NEWER)
+    expect(useNoteStore.getState().notes.some((note) => note.id === copyId)).toBe(true)
+    // It reopens as text the server has not confirmed, which saves again when its note opens,
+    // onto the copy at the revision this tab sent; nothing is held after that.
+    const reopened = getHeldNoteDraft(copyId)!
+    expect(reopened.failed).toBe('error')
+    expect(await useNoteStore.getState().updateNote(copyId, reopened.draft, { base: reopened.base })).toBe(true)
+    releaseHeldNoteDraft(copyId)
+    await settleNoteTextForCount()
+    expect(await serverText(account, collection, copyId)).toBe(NEWER)
+    expect(await getAll(queueGuard())).toEqual([])
+  })
+
+  it('keeps text typed after two lost copy responses until the copy holds it', async () => {
+    const { account, collection, item, peerItem, base } = await refusedText()
+    loseNextCopyResponse(item.uid)
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    const NEWER = `${DRAFT_BODY} typed after the lost response`
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: NEWER }, base, failed: 'changed', copy: 'unconfirmed' })
+    // The retry sends the newer text under the same UID; the server answers with a 409 for
+    // the copy it already holds, and that answer is lost too.
+    loseNextCopyResponse(item.uid)
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
+    await reload(collection, peerItem)
+    expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(NEWER)
+
+    // After the reload the page knows the copy's first revision as one it sent.
+    const retried = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+    expect(retried.kind).toBe('copied')
+    const copyId = (retried as { id: string }).id
+    const copies = await liveCopies(account, collection)
+    expect(copies.map((copy: any) => copy.uid)).toEqual([copyId])
+    expect(new TextDecoder().decode(await copies[0].getContent())).toBe(DRAFT_BODY)
+
+    await reload(collection, peerItem)
+
+    expect(getHeldNoteDraft(item.uid)).toBeUndefined()
+    const reopened = getHeldNoteDraft(copyId)!
+    expect(reopened.draft.content).toBe(NEWER)
+    expect(await useNoteStore.getState().updateNote(copyId, reopened.draft, { base: reopened.base })).toBe(true)
+    releaseHeldNoteDraft(copyId)
+    await settleNoteTextForCount()
+    expect(await serverText(account, collection, copyId)).toBe(NEWER)
+    expect(await getAll(queueGuard())).toEqual([])
+  })
+
+  it('keeps text on its note while the copy\'s record cannot be written', async () => {
+    const { account, collection, item, peerItem, base } = await refusedText()
+    loseNextCopyResponse(item.uid)
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
+    const NEWER = `${DRAFT_BODY} typed after the lost response`
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: NEWER }, base, failed: 'changed', copy: 'unconfirmed' })
+    await settleNoteTextForCount()
+    // Another tab queued an edit of the copy, so no record for the copy can be written now.
+    const [landed] = await liveCopies(account, collection)
+    const blocking = await sealQueuePayload('{}', `${FINGERPRINT}|notes|${landed.uid}`)
+    expect(await insertIfNoOutstanding(
+      { type: 'sealed-update', collectionType: 'notes', collectionUid: collection.uid, itemUid: landed.uid, sealed: blocking!, rev: 1 },
+      queueGuard(),
+    )).toBe(true)
+
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    expect(getHeldNoteDraft(landed.uid)).toBeUndefined()
+    await reload(collection, peerItem)
+    expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(NEWER)
+
+    const [queued] = (await getAll(queueGuard())).filter((record) => record.itemUid === landed.uid)
+    expect(await casStub(queued!.id, queued!.rev, 'delete', queueGuard())).toBe(true)
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'copied', id: landed.uid })
+    await reload(collection, peerItem)
+    expect(getHeldNoteDraft(item.uid)).toBeUndefined()
+    expect(getHeldNoteDraft(landed.uid)?.draft.content).toBe(NEWER)
+  })
+
+  it('makes a new copy when the copy changed elsewhere and a reload hides which text reached it', async () => {
+    const { account, collection, item, peerItem, base } = await refusedText()
+    loseNextCopyResponse(item.uid)
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    const NEWER = `${DRAFT_BODY} typed after the lost response`
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: NEWER }, base, failed: 'changed', copy: 'unconfirmed' })
+    loseNextCopyResponse(item.uid)
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
+    await reload(collection, peerItem)
+    // Another device opened the copy, which holds the first text, and edited it.
+    const OTHER = 'OTHER DEVICE BODY 1113'
+    const [landed] = await liveCopies(account, collection)
+    expect(new TextDecoder().decode(await landed.getContent())).toBe(DRAFT_BODY)
+    await landed.setContent(OTHER)
+    await account.getCollectionManager().getItemManager(collection).transaction([landed])
+
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'changed' })
+    expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(NEWER)
+    expect(getHeldNoteDraft(landed.uid)).toBeUndefined()
+    await reload(collection, peerItem)
+    expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(NEWER)
+
+    // The record no longer names the changed copy, so Save as a copy makes a new one.
+    const again = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+    expect(again.kind).toBe('copied')
+    const copyId = (again as { id: string }).id
+    expect(copyId).not.toBe(landed.uid)
+    expect(await serverText(account, collection, copyId)).toBe(NEWER)
+    expect(await serverText(account, collection, landed.uid)).toBe(OTHER)
+    await reload(collection, peerItem)
+    expect(getHeldNoteDraft(item.uid)).toBeUndefined()
+    expect(getHeldNoteDraft(copyId)).toBeUndefined()
+    expect(await getAll(queueGuard())).toEqual([])
+  })
+
+  it('makes a new copy when the copy changed elsewhere before newer text reached it', async () => {
+    const { account, collection, item, base } = await refusedText()
+    loseNextCopyResponse(item.uid)
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
+    const NEWER = `${DRAFT_BODY} typed after the lost response`
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: NEWER }, base, failed: 'changed', copy: 'unconfirmed' })
+    const OTHER = 'OTHER DEVICE BODY 1113'
+    const [landed] = await liveCopies(account, collection)
+    await landed.setContent(OTHER)
+    await account.getCollectionManager().getItemManager(collection).transaction([landed])
+
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'changed' })
+    expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(NEWER)
+    expect(getHeldNoteDraft(landed.uid)).toBeUndefined()
+
+    const again = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+    expect(again.kind).toBe('copied')
+    const copyId = (again as { id: string }).id
+    expect(copyId).not.toBe(landed.uid)
+    expect(await serverText(account, collection, copyId)).toBe(NEWER)
+    expect(await serverText(account, collection, landed.uid)).toBe(OTHER)
+  })
+
+  it('never replaces text the copy already holds', async () => {
+    const { account, collection, item, base } = await refusedText()
+    loseNextCopyResponse(item.uid)
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
+    const NEWER = `${DRAFT_BODY} typed after the lost response`
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: NEWER }, base, failed: 'changed', copy: 'unconfirmed' })
+    // A sync listed the copy, and the user's own edit of it failed to save.
+    const [landed] = await liveCopies(account, collection)
+    const COPY_EDIT = 'TYPED IN THE COPY 1113'
+    holdNoteDraft(landed.uid, { draft: { title: COPY_TITLE, content: COPY_EDIT }, base: { title: COPY_TITLE, content: DRAFT_BODY, revision: landed.etag }, failed: 'error' })
+
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+
+    expect(getHeldNoteDraft(landed.uid)?.draft.content).toBe(COPY_EDIT)
+    expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(NEWER)
+    expect(await serverText(account, collection, landed.uid)).toBe(DRAFT_BODY)
+  })
+
+  it('puts newer text on the copy once it reaches the revision cap', async () => {
+    const { account, collection, item, peerItem, base } = await refusedText()
+    // Every answer is lost, with an edit before each retry, until the cap is reached.
+    for (let i = 0; i < MAX_NOTE_COPY_REVISIONS; i++) {
+      holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: `${DRAFT_BODY} ${i}` }, base, failed: 'changed', ...(i > 0 ? { copy: 'unconfirmed' as const } : {}) })
+      loseNextCopyResponse(item.uid)
+      expect(await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    }
+    EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
+    const NEWEST = `${DRAFT_BODY} newest`
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: NEWEST }, base, failed: 'changed', copy: 'unconfirmed' })
+    await reload(collection, peerItem)
+    const [record] = await getAll(queueGuard())
+    expect((await openRecord(record)).copy.sent).toHaveLength(MAX_NOTE_COPY_REVISIONS)
+
+    const result = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+
+    expect(result.kind).toBe('copied')
+    const copyId = (result as { id: string }).id
+    expect(await serverText(account, collection, copyId)).toBe(`${DRAFT_BODY} 0`)
+    await reload(collection, peerItem)
+    expect(getHeldNoteDraft(item.uid)).toBeUndefined()
+    expect(getHeldNoteDraft(copyId)?.draft.content).toBe(NEWEST)
   })
 
   it('keeps a reopened held text when the page already holds newer text for the note', async () => {

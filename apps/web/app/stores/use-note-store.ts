@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import type { ItemMeta, Note, SyncStatus } from '@silentsuite/core'
 import {
+  MAX_NOTE_COPY_REVISIONS,
   deleteHeldNoteRecord,
   hasOutstandingNoteCustody,
   loadNoteCopyItem,
@@ -73,7 +74,7 @@ export interface MountedNoteEditor {
 export type NoteRefusal = 'changed' | 'unproved'
 
 /** Why a Save as a copy did not make a copy. */
-export type NoteCopyFailure = 'offline' | 'unconfirmed' | 'deleted' | 'read-only' | 'no-notebook'
+export type NoteCopyFailure = 'offline' | 'unconfirmed' | 'deleted' | 'changed' | 'read-only' | 'no-notebook'
 
 /**
  * Text of a note whose last save failed, with the base it was typed on (#1113 D1).
@@ -127,8 +128,11 @@ interface NoteCopyAttempt {
   title: string
   content: string
   createdAt: Date
-  /** Every revision of the copy sent so far, with the text it holds. */
-  sent: { revision: string; title: string; content: string }[]
+  /**
+   * Every revision of the copy sent so far, oldest first, with the text it holds;
+   * null for one sent before a reload (the record keeps only its revision).
+   */
+  sent: { revision: string; text: NoteText | null }[]
 }
 
 // In memory only. Each entry keeps the account epoch it was made under, so a
@@ -171,11 +175,6 @@ function getHeldNoteRecord(id: string): { ref: HeldNoteRecordRef; collectionUid:
   return entry
 }
 
-/** Held text that a failed or refused save or a copy left, or that already has a record, is stored. */
-function storesHeldText(held: HeldNoteDraft, id: string): boolean {
-  return held.failed !== undefined || held.copy !== undefined || getHeldNoteRecord(id) !== undefined
-}
-
 /**
  * Makes the note's held record match its held text as it is now (#1113 D1): writes
  * it (with the copy attempt's stored item) while text is held, and deletes the record
@@ -194,11 +193,11 @@ async function writeHeldRecordNow(id: string, accountEpoch: number): Promise<Hel
       }
       return 'page-only'
     }
-    if (!storesHeldText(held, id)) return 'page-only'
     const collectionUid = known?.collectionUid ?? useNoteStore.getState().notes.find((n) => n.id === id)?.notebookId
     if (!collectionUid) return 'page-only'
-    // A save that failed without a refusal is held as the server not confirming it.
-    const reason = held.failed === 'error' ? 'retry-exhausted' : 'base-changed'
+    // Text the server has not confirmed without refusing it (a save that failed, or text
+    // carried to a copy) is held as not confirmed, so it is saved again once it reopens.
+    const reason = held.failed === 'changed' || held.failed === 'unproved' ? 'base-changed' : 'retry-exhausted'
     const ref = await writeHeldNoteRecord(id, collectionUid, held.draft, held.base, getNoteCopyAttempt(id)?.stored, known?.ref, reason)
     if (!isCurrentAccountEpoch(accountEpoch)) return 'page-only'
     if (ref === 'blocked') {
@@ -301,10 +300,15 @@ export function getHeldNoteDraft(id: string): HeldNoteDraft | undefined {
 
 /** Holds the note's text after a failed save, replacing any earlier text of it. */
 export function holdNoteDraft(id: string, held: HeldNoteDraft): void {
+  void holdNoteText(id, held)
+}
+
+/** Holds the note's text; resolves where its record write left it. */
+function holdNoteText(id: string, held: HeldNoteDraft): Promise<HeldTextDurability> {
   heldNoteDrafts.set(id, { held, accountEpoch: getAccountEpoch() })
   syncUnloadGuard()
-  // Refused text also goes to its sealed record, so it outlives a reload (#1113 D1).
-  void storeHeldText(id)
+  // Held text also goes to its sealed record, so it outlives a reload (#1113 D1).
+  return storeHeldText(id)
 }
 
 /**
@@ -412,21 +416,24 @@ async function runNoteCopy(
       const loaded = attempt.stored ? await loadNoteCopyItem(attempt.collectionUid, attempt.stored) : null
       if (!isCurrentAccountEpoch(accountEpoch)) return { kind: 'stale' }
       // Never replaced by a new UID: the stored copy may already be on the server.
-      if (!loaded) return failed('unconfirmed')
-      const sent = { revision: loaded.item.etag, title: loaded.title, content: loaded.content }
+      if (!loaded || !attempt.stored) return failed('unconfirmed')
+      // The revisions sent before the reload, any of which may be the one that landed.
+      const earlier = attempt.stored.sent.slice(0, -1).map((revision) => ({ revision, text: null }))
       attempt = {
         ...attempt,
         item: loaded.item,
         title: loaded.title,
         content: loaded.content,
         createdAt: loaded.mtime !== null ? new Date(loaded.mtime) : attempt.createdAt,
-        sent: [sent],
+        sent: [...earlier, { revision: loaded.item.etag, text: { title: loaded.title, content: loaded.content } }],
       }
       noteCopyAttempts.set(id, { attempt, accountEpoch })
     }
     const title = conflictCopyTitle(held.draft.title)
     const content = held.draft.content
-    if (!attempt || attempt.title !== title || attempt.content !== content) {
+    // Once a copy was sent with the most revisions, newer text goes onto it after it is confirmed.
+    const revisable = !attempt || attempt.sent.length < MAX_NOTE_COPY_REVISIONS
+    if (!attempt || (revisable && (attempt.title !== title || attempt.content !== content))) {
       const createdAt = new Date()
       const meta = noteToItemMeta({ title, updated_at: createdAt })
       // Newer text under the same UID, never the older text again; else a new copy.
@@ -439,9 +446,11 @@ async function runNoteCopy(
     }
     // Recorded before anything is sent: a lost response or a retry re-sends this same item.
     if (!attempt.sent.some((sent) => sent.revision === attempt!.item.etag)) {
-      attempt.sent = [...attempt.sent, { revision: attempt.item.etag, title, content }]
+      attempt.sent = [...attempt.sent, { revision: attempt.item.etag, text: { title: attempt.title, content: attempt.content } }]
     }
-    if (attempt.stored?.revision !== attempt.item.etag) attempt.stored = storeNoteCopyItem(attempt.collectionUid, attempt.item) ?? undefined
+    if (attempt.stored?.revision !== attempt.item.etag) {
+      attempt.stored = storeNoteCopyItem(attempt.collectionUid, attempt.item, attempt.sent.map((sent) => sent.revision)) ?? undefined
+    }
     const hadRecord = getHeldNoteRecord(id) !== undefined
     noteCopyAttempts.set(id, { attempt, accountEpoch })
     // The copy goes into the held text's record before it is sent (#1113 D1), so a lost
@@ -458,7 +467,6 @@ async function runNoteCopy(
     }
     if (upload.kind === 'refused') return failed('read-only')
     if (upload.kind !== 'copied') return failed(upload.kind)
-    if (getNoteCopyAttempt(id) === attempt) noteCopyAttempts.delete(id)
     const copyId: string = upload.item.uid
     const copy: StoredNote = {
       id: copyId,
@@ -471,14 +479,40 @@ async function runNoteCopy(
       revision: upload.revision,
     }
     set((state) => (state.notes.some((n) => n.id === copyId) ? {} : { notes: [...state.notes, copy] }))
-    // The server held an earlier revision of the copy (a 409): the current text goes onto it
-    // as an edit of the revision it grew from. On a revision this tab sent, that saves; on
-    // one another device wrote, the save is refused and the text stays.
+    // The server held another revision of the copy (a 409).
     if (upload.title !== title || upload.content !== content) {
       const ours = attempt.sent.find((sent) => sent.revision === upload.revision)
-      const typedOn = ours ?? [...attempt.sent].reverse().find((sent) => sent.title !== title || sent.content !== content)
-      if (typedOn) holdNoteDraft(copyId, { draft: { title, content }, base: { title: typedOn.title, content: typedOn.content, revision: typedOn.revision } })
+      if (!ours) {
+        // Another device changed the copy since it landed. When every revision this tab sent
+        // holds this text, the one that landed did too, and the copy is confirmed. Otherwise
+        // nothing shows this text reached the server: it stays held here, and its record drops
+        // the copy, so the next Save as a copy makes a new one.
+        if (!attempt.sent.every((sent) => sent.text !== null && sameText(sent.text, { title, content }))) {
+          if (getNoteCopyAttempt(id) === attempt) noteCopyAttempts.delete(id)
+          await storeHeldText(id)
+          if (!isCurrentAccountEpoch(accountEpoch)) return { kind: 'stale' }
+          return failed('changed')
+        }
+      } else {
+        // An earlier revision this tab sent: the current text goes onto it as an edit of that
+        // revision. Text the copy already holds here (typing in it, or its own failed save)
+        // is never replaced.
+        if (hasUnsavedNoteText(copyId)) return failed('unconfirmed')
+        // The revision holds the text it was sent with, which the server just returned.
+        const sentText = ours.text ?? { title: upload.title, content: upload.content }
+        const carried: HeldNoteDraft = { draft: { title, content }, base: { ...sentText, revision: ours.revision } }
+        // The newer text stays recoverable until the server confirms it: it goes into the
+        // copy's own record before this note's record is released. Stored text whose copy
+        // record cannot be written stays held here, and a retry carries it again.
+        const kept = await holdNoteText(copyId, carried)
+        if (!isCurrentAccountEpoch(accountEpoch)) return { kind: 'stale' }
+        if (kept !== 'stored' && where === 'stored') {
+          releaseHeldNoteDraft(copyId, carried)
+          return failed('unconfirmed')
+        }
+      }
     }
+    if (getNoteCopyAttempt(id) === attempt) noteCopyAttempts.delete(id)
     return { kind: 'copied', id: copyId }
   } catch (err) {
     if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return { kind: 'stale' }

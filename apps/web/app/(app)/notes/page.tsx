@@ -108,6 +108,7 @@ const COPY_FAILURE_KEY = {
   offline: 'copyFailedOffline',
   unconfirmed: 'copyFailedUnconfirmed',
   deleted: 'copyFailedDeleted',
+  changed: 'copyFailedChanged',
   'read-only': 'copyFailedReadOnly',
   'no-notebook': 'copyFailedNoNotebook',
 } as const satisfies Record<NoteCopyFailure, string>

@@ -117,6 +117,7 @@
     "copyFailedOffline": "Not copied: you are offline, and a copy needs a connection.",
     "copyFailedUnconfirmed": "Not copied: the server did not confirm the copy. Saving as a copy again will not make a second one.",
     "copyFailedDeleted": "Not copied: the copy was deleted somewhere else before this browser could confirm it. Saving as a copy again makes a new one.",
+    "copyFailedChanged": "Not copied: the copy was changed somewhere else before this browser could confirm it. Saving as a copy again makes a new one.",
     "copyFailedReadOnly": "Not copied: you cannot add notes to this notebook.",
     "copyFailedNoNotebook": "Not copied: this note's notebook is not available in this browser.",
     "allNotebooks": "All",
