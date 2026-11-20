@@ -43,7 +43,9 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('@/app/lib/local-only-changes', () => ({
   captureSignOutAccount: () => ({ accountEpoch: 0, accountFingerprint: 'fp-test-123' }),
-  countLocalOnlyChanges: async () => mocks.localOnly.count,
+  readLocalOnlyChanges: async () => mocks.localOnly.count === null
+    ? null
+    : { count: mocks.localOnly.count, keys: new Set(Array.from({ length: mocks.localOnly.count }, (_, i) => `record:${i}`)) },
   isSignOutAccountCurrent: () => true,
 }))
 

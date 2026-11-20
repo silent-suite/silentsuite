@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // A queue whose database never answers, as a blocked IndexedDB open does.
 vi.mock('@/app/lib/offline-queue', () => ({ getAll: () => new Promise(() => {}) }))
-vi.mock('@/app/stores/use-note-store', () => ({ countNoteTextOnlyInPage: () => 0 }))
+vi.mock('@/app/stores/use-note-store', () => ({ noteIdsWithTextOnlyInPage: () => new Set<string>() }))
 vi.mock('@/app/stores/use-etebase-store', () => ({
   useEtebaseStore: { getState: () => ({ accountFingerprint: 'account-1113' }) },
 }))

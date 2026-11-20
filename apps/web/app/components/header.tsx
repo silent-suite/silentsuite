@@ -10,8 +10,9 @@ import { SyncIndicator } from '@/app/components/SyncIndicator'
 import { SignOutDialog } from '@/app/components/SignOutDialog'
 import {
   captureSignOutAccount,
-  countLocalOnlyChanges,
   isSignOutAccountCurrent,
+  readLocalOnlyChanges,
+  type LocalOnlyChanges,
   type SignOutAccount,
 } from '@/app/lib/local-only-changes'
 
@@ -28,7 +29,7 @@ export function Header() {
   const { user, logout } = useAuthStore()
   const [menuOpen, setMenuOpen] = useState(false)
   // Changes only on this device that a sign-out would delete, counted for this account.
-  const [signOutCheck, setSignOutCheck] = useState<{ account: SignOutAccount; count: number | null } | null>(null)
+  const [signOutCheck, setSignOutCheck] = useState<{ account: SignOutAccount; changes: LocalOnlyChanges | null } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuItemsRef = useRef<(HTMLAnchorElement | HTMLButtonElement | null)[]>([])
 
@@ -70,13 +71,13 @@ export function Header() {
     logoutCheckRunning.current = true
     try {
       const account = captureSignOutAccount()
-      const count = await countLocalOnlyChanges(account)
+      const changes = await readLocalOnlyChanges(account)
       if (!isSignOutAccountCurrent(account)) return
-      if (count === 0) {
+      if (changes?.count === 0) {
         await logout()
         return
       }
-      setSignOutCheck({ account, count })
+      setSignOutCheck({ account, changes })
     } finally {
       logoutCheckRunning.current = false
     }
@@ -181,7 +182,7 @@ export function Header() {
       {signOutCheck && (
         <SignOutDialog
           account={signOutCheck.account}
-          count={signOutCheck.count}
+          changes={signOutCheck.changes}
           onLogout={logout}
           onClose={() => setSignOutCheck(null)}
         />

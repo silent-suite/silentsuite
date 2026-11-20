@@ -944,6 +944,23 @@ describe('#744 the rendered note editor saves only through its captured base', (
       await settle()
     }
 
+    it('opens no editor while held text is being reopened, then opens the note', async () => {
+      await seedSavedNote()
+      renderNotesPage()
+      await settle()
+      expect(useNoteStore.getState().heldTextReopen).not.toBe('running')
+      act(() => useNoteStore.setState({ heldTextReopen: 'running' }))
+      fireEvent.click(ui().getByRole('button', { name: new RegExp(BASE_TITLE) }))
+      await settle()
+
+      expect(ui().queryByRole('textbox', { name: 'Note title' })).toBeNull()
+      expect(ui().getAllByText('Checking this browser for text that was not saved…').length).toBeGreaterThan(0)
+      act(() => useNoteStore.setState({ heldTextReopen: 'done' }))
+      await settle()
+
+      expect([titleBox().value, titleBox().readOnly]).toEqual([BASE_TITLE, false])
+    })
+
     it('reopens refused text after a reload, with the reason and Save as a copy', async () => {
       const { account, collection, item } = await refusedDraft()
 

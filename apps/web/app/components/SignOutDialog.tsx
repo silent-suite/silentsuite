@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslations } from 'next-intl'
 import { ModalDialog } from '@/app/components/modal-dialog'
-import { countLocalOnlyChanges, isSignOutAccountCurrent, type SignOutAccount } from '@/app/lib/local-only-changes'
+import { isSignOutAccountCurrent, readLocalOnlyChanges, type LocalOnlyChanges, type SignOutAccount } from '@/app/lib/local-only-changes'
 import { settleNoteTextForCount } from '@/app/stores/use-note-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 
@@ -14,24 +14,25 @@ const BUTTON_CLASS = 'rounded-lg px-4 py-2 max-md:min-h-[44px] text-sm font-medi
 
 /**
  * Asked before a sign-out that would delete changes only on this device (#1113 D1):
- * held, pending and failed offline changes and note text only in this page. `count`
- * is null when they could not be counted, which counts as having changes. The
- * dialog is bound to the account it was opened for: once that account is no longer
- * this tab's, every action closes it without signing out. Log out and delete asks
- * once more, then counts again right before signing out, and asks again when it
- * finds more than the user agreed to delete.
+ * held, pending and failed offline changes and note text only in this page.
+ * `changes` is null when they could not be counted, which counts as having changes.
+ * The dialog is bound to the account it was opened for: once that account is no
+ * longer this tab's, every action closes it without signing out. Log out and delete
+ * asks once more, then reads the changes again right before signing out, and asks
+ * again when it finds any change the user was not shown.
  */
-export function SignOutDialog({ account, count: initialCount, onLogout, onClose }: {
+export function SignOutDialog({ account, changes: initialChanges, onLogout, onClose }: {
   account: SignOutAccount
-  count: number | null
+  changes: LocalOnlyChanges | null
   onLogout: () => Promise<void>
   onClose: () => void
 }) {
   const t = useTranslations('SignOut')
-  const [count, setCount] = useState(initialCount)
+  const [changes, setChanges] = useState(initialChanges)
+  const count = changes?.count ?? null
   const [stage, setStage] = useState<Stage>('unsynced')
-  // What the user agreed to delete in the second step.
-  const [agreed, setAgreed] = useState<number | null>(null)
+  // The changes the user agreed to delete in the second step; null when they could not be counted.
+  const [agreed, setAgreed] = useState<LocalOnlyChanges | null>(null)
   const busy = stage === 'syncing' || stage === 'deleting'
   // Cancel works at any time, also while Sync now runs; once closed, nothing here logs out.
   const open = useRef(true)
@@ -63,27 +64,27 @@ export function SignOutDialog({ account, count: initialCount, onLogout, onClose 
       close()
       return
     }
-    const left = await countLocalOnlyChanges(account)
+    const left = await readLocalOnlyChanges(account)
     if (!open.current) return
-    if (left === 0) {
+    if (left?.count === 0) {
       await logOutIfCurrent()
       return
     }
-    setCount(left)
+    setChanges(left)
     setStage('unsynced')
   }
 
   const deleteAndLogOut = async () => {
     setStage('deleting')
-    const now = await countLocalOnlyChanges(account)
+    const now = await readLocalOnlyChanges(account)
     if (!open.current) return
     if (!isSignOutAccountCurrent(account)) {
       close()
       return
     }
-    // More than was agreed, or no longer countable after a count: ask again with what is known now.
-    if (agreed !== null && (now === null || now > agreed)) {
-      setCount(now)
+    // A change the user was not shown, or no longer countable after a count: ask again with what is known now.
+    if (agreed !== null && (now === null || [...now.keys].some((key) => !agreed.keys.has(key)))) {
+      setChanges(now)
       setAgreed(now)
       setStage('confirm')
       return
@@ -119,7 +120,7 @@ export function SignOutDialog({ account, count: initialCount, onLogout, onClose 
             <button
               type="button"
               onClick={() => {
-                setAgreed(count)
+                setAgreed(changes)
                 setStage('confirm')
               }}
               disabled={busy}

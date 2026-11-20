@@ -1098,6 +1098,14 @@ async function updateNoteAtCapturedBase(
     assertGuard()
     // A missing copy is not proof of anything; a live or deleted one that differs is.
     if (!fresh) return refuse()
+    // The server already holds exactly this text (the banner's Retry replayed this note's own
+    // record, or the same edit was saved elsewhere): nothing is written, and the save is done
+    // at that revision.
+    const typedTitle = meta?.name
+    if (typeof typedTitle === 'string' && await noteMatchesBase(core, fresh, itemUid, { title: typedTitle, content, revision: null }, assertGuard)) {
+      const heldRevision = core.savedRevisionOf(fresh)
+      if (heldRevision) return await publish({ item: fresh, etag: heldRevision })
+    }
     // A digest-only base cannot be compared, so a mismatch proves nothing about it.
     if (!await noteMatchesBase(core, fresh, itemUid, base, assertGuard)) return base.digestOnly !== undefined ? refuse() : refuse('changed')
     const freshRevision = core.savedRevisionOf(fresh)

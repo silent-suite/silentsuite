@@ -25,7 +25,9 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({
 
 import { MAX_NOTE_COPY_REVISIONS, useEtebaseStore } from '../use-etebase-store'
 import {
+  beginClosingNoteSave,
   countNoteTextOnlyInPage,
+  endClosingNoteSave,
   getHeldNoteDraft,
   heldNoteRecordDiscarded,
   holdNoteDraft,
@@ -416,9 +418,10 @@ describe('#1113 D1 refused note text kept in a sealed record', () => {
     expect(await casStub(record!.id, record!.rev, { held: undefined, retryCount: 0 }, queueGuard())).toBe(true)
     expect(await casStub(record!.id, record!.rev! + 1, { held: 'base-changed' }, queueGuard())).toBe(true)
     loseNextCopyResponse(item.uid)
-    let first = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
-    // A user clicks again after a refusal that sent nothing.
-    if (server.transactions.length === 0) first = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+    const sentBefore = server.transactions.length
+    const first = await useNoteStore.getState().saveNoteCopy(item.uid, getHeldNoteDraft(item.uid)!)
+    // The record two revisions on still takes the copy, so this first Save as a copy sends it.
+    expect(server.transactions.length).toBe(sentBefore + 1)
     expect(first).toEqual({ kind: 'failed', reason: 'unconfirmed' })
     expect(await liveCopies(account, collection)).toHaveLength(1)
     EtebaseRequest.default = (url: string, options: unknown) => server.handle(url, options)
@@ -590,6 +593,43 @@ describe('#1113 D1 refused note text kept in a sealed record', () => {
 
     expect(again).toBe(true)
     expect(await serverText(account, collection, item.uid)).toBe(DRAFT_BODY)
+    expect(await getAll(queueGuard())).toEqual([])
+  })
+
+  it('counts a save as done when the banner\'s Retry already put the same text on the server', async () => {
+    const { account, collection, item } = await makeSavedNote(BASE_TITLE, BASE_BODY)
+    server.seed(collection, [item])
+    installNoteAccount(account, collection, item)
+    showServerRow(collection, item, BASE_BODY)
+    const base = { title: BASE_TITLE, content: BASE_BODY, revision: item.etag as string }
+    const onLine = Object.getOwnPropertyDescriptor(globalThis.navigator, 'onLine')
+    Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, get: () => true })
+    onTestFinished(() => {
+      if (onLine) Object.defineProperty(globalThis.navigator, 'onLine', onLine)
+      else delete (globalThis.navigator as any).onLine
+    })
+    failNextWrite()
+    expect(await useNoteStore.getState().updateNote(item.uid, { title: DRAFT_TITLE, content: DRAFT_BODY }, { base })).toBe(false)
+    holdNoteDraft(item.uid, { draft: { title: DRAFT_TITLE, content: DRAFT_BODY }, base, failed: 'error' })
+    await settleNoteTextForCount()
+    const [record] = await getAll(queueGuard())
+    expect(record?.held).toBe('retry-exhausted')
+    // The banner's Retry replays the record: the text reaches the server while the page still holds it.
+    expect(await casStub(record!.id, record!.rev, { held: undefined, retryCount: 0 }, queueGuard())).toBe(true)
+    await replay((entry, checkpoint) => useEtebaseStore.getState().replayQueuedMutation(entry, queueGuard(), checkpoint), queueGuard())
+    expect(await getAll(queueGuard())).toEqual([])
+    expect(await serverText(account, collection, item.uid)).toBe(DRAFT_BODY)
+    const serverRevision = async () => (await account.getCollectionManager().getItemManager(collection).fetch(item.uid)).etag
+    const before = await serverRevision()
+
+    const reasons: unknown[] = []
+    const again = await useNoteStore.getState().updateNote(item.uid, { title: DRAFT_TITLE, content: DRAFT_BODY }, { base, onRefused: (reason) => reasons.push(reason) })
+    releaseHeldNoteDraft(item.uid)
+    await settleNoteTextForCount()
+
+    expect([again, reasons]).toEqual([true, []])
+    // Nothing was written: the server is still at the revision the replay made.
+    expect(await serverRevision()).toBe(before)
     expect(await getAll(queueGuard())).toEqual([])
   })
 
@@ -812,6 +852,26 @@ describe('#1113 D1 refused note text kept in a sealed record', () => {
     await reload(collection, peerItem)
     expect(getHeldNoteDraft(item.uid)).toBeUndefined()
     expect(getHeldNoteDraft(copyId)?.draft.content).toBe(NEWEST)
+  })
+
+  it('leaves a record alone while an editor closing on its note still has a save running', async () => {
+    const { collection, item, peerItem } = await refusedText()
+    await settleNoteTextForCount()
+    resetNoteLifecycle()
+    showServerRow(collection, peerItem, PEER_BODY)
+    // After the reload the note was opened and typed in before the reopen ran; its editor closed with a save running.
+    beginClosingNoteSave(item.uid)
+
+    await reopenHeldNoteText()
+
+    expect(getHeldNoteDraft(item.uid)).toBeUndefined()
+    // That save is accepted: it releases the note, and the record it never showed stays.
+    releaseHeldNoteDraft(item.uid)
+    endClosingNoteSave(item.uid)
+    await settleNoteTextForCount()
+    expect(await getAll(queueGuard())).toHaveLength(1)
+    await reload(collection, peerItem)
+    expect(getHeldNoteDraft(item.uid)?.draft.content).toBe(DRAFT_BODY)
   })
 
   it('keeps a reopened held text when the page already holds newer text for the note', async () => {

@@ -205,6 +205,40 @@ describe('#1113 D1 Log out counts changes only on this device first', () => {
     expect(logout).toHaveBeenCalledTimes(1)
   })
 
+  it('asks again when a change it was not shown replaced one it was shown', async () => {
+    expect(await heldRecord('note-a')).toBe(true)
+    renderHeader()
+    await clickLogOut()
+    fireEvent.click(ui().getByRole('button', { name: 'Log out and delete' }))
+    await settle()
+    expect(ui().getAllByText(/^1 change that is only on this device will be deleted/).length).toBeGreaterThan(0)
+
+    // The change shown synced, and another one appeared: the count is the same.
+    for (const record of await getAll(queueGuard())) await remove(record.id, queueGuard())
+    expect(await heldRecord('note-c')).toBe(true)
+    fireEvent.click(ui().getByRole('button', { name: 'Delete and log out' }))
+    await settle()
+
+    expect(logout).not.toHaveBeenCalled()
+    expect(ui().getAllByText(/^1 change that is only on this device will be deleted/).length).toBeGreaterThan(0)
+    fireEvent.click(ui().getByRole('button', { name: 'Delete and log out' }))
+    await settle()
+    expect(logout).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts a note once when it has a record and newer text only in this page', async () => {
+    expect(await heldRecord('note-a')).toBe(true)
+    // Newer text for the same note, which its record does not hold.
+    holdNoteDraft('note-a', { draft: { title: 'PRIVATE A', content: 'PRIVATE A NEWER' }, base: { title: '', content: '', revision: null }, failed: 'error' })
+    await settleNoteTextForCount()
+    renderHeader()
+
+    await clickLogOut()
+
+    expect(ui().getAllByText('1 change is only on this device. Logging out deletes it.').length).toBeGreaterThan(0)
+    expect(logout).not.toHaveBeenCalled()
+  })
+
   it('does nothing once the account it counted for is no longer this tab\'s', async () => {
     expect(await heldRecord('note-a')).toBe(true)
     renderHeader()

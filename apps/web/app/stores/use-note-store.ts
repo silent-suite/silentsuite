@@ -632,6 +632,8 @@ let heldTextReopen: { accountEpoch: number; running: Promise<void> | null; done:
 // A reopen that found the key not ready tries again a few times; the records stay as they are meanwhile.
 const REOPEN_TRIES = 5
 const REOPEN_RETRY_MS = 2000
+// A queue that does not answer (a blocked database) keeps notes closed no longer than this.
+const REOPEN_TIMEOUT_MS = 5000
 
 /** Takes reopened held texts into this page, unless the page already holds newer text for the note. */
 function adoptReopenedHeldNotes(records: ReopenedHeldNote[], accountEpoch: number): void {
@@ -639,8 +641,9 @@ function adoptReopenedHeldNotes(records: ReopenedHeldNote[], accountEpoch: numbe
   for (const record of records) {
     const id = record.itemUid
     if (getHeldNoteDraft(id)) continue
-    // Typing in an open editor is newer than the record; the record stays as custody.
-    if (getMountedNoteEditor(id)?.isClean() === false) continue
+    // Typing in an open editor, or a closing editor's save, is newer than the record; the
+    // record stays as custody, for the banner and the next load.
+    if (getMountedNoteEditor(id)?.isClean() === false || closingNoteSaves.has(id)) continue
     heldNoteDrafts.set(id, {
       held: {
         draft: record.draft,
@@ -708,8 +711,19 @@ export function reopenHeldNoteText(): Promise<void> {
   useNoteStore.setState({ heldTextReopen: 'running' })
   reopen.running = (async () => {
     let done = false
+    // Past the time limit the reopen stops for this page: notes open, the records stay
+    // in the queue (the banner lists them) and the next load reopens them.
+    let gaveUp = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const records = await openHeldNoteRecords()
+      const opening = openHeldNoteRecords()
+      opening.catch(() => {})
+      const timedOut = new Promise<'timed-out'>((resolve) => { timer = setTimeout(() => resolve('timed-out'), REOPEN_TIMEOUT_MS) })
+      const records = await Promise.race([opening, timedOut])
+      if (records === 'timed-out') {
+        gaveUp = true
+        return
+      }
       if (!isCurrentAccountEpoch(accountEpoch) || records === 'not-ready') return
       adoptReopenedHeldNotes(records, accountEpoch)
       done = true
@@ -718,11 +732,12 @@ export function reopenHeldNoteText(): Promise<void> {
         console.error('[note-store] Failed to reopen held note text', getSafeErrorDetails(err))
       }
     } finally {
+      clearTimeout(timer)
       if (heldTextReopen === reopen) {
         reopen.running = null
-        reopen.done = done
+        reopen.done = done || gaveUp
         useNoteStore.setState({ heldTextReopen: done ? 'done' : 'idle' })
-        if (!done && tries < REOPEN_TRIES) {
+        if (!done && !gaveUp && tries < REOPEN_TRIES) {
           setTimeout(() => {
             if (heldTextReopen === reopen && isCurrentAccountEpoch(accountEpoch)) void reopenHeldNoteText()
           }, REOPEN_RETRY_MS)
@@ -735,9 +750,13 @@ export function reopenHeldNoteText(): Promise<void> {
 
 /**
  * Notes whose unsaved text exists only in this page: held text not in its record,
- * an open editor's unsaved typing, a closing save. Held records are counted with
- * the offline queue, so a note counts here only without one.
+ * an open editor's unsaved typing, a closing save.
  */
+export function noteIdsWithTextOnlyInPage(): ReadonlySet<string> {
+  return noteTextOnlyInPage()
+}
+
+/** How many notes have text only in this page (noteIdsWithTextOnlyInPage). */
 export function countNoteTextOnlyInPage(): number {
   return noteTextOnlyInPage().size
 }

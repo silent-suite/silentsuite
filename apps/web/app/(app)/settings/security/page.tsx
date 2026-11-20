@@ -16,8 +16,9 @@ import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { SignOutDialog } from '@/app/components/SignOutDialog'
 import {
   captureSignOutAccount,
-  countLocalOnlyChanges,
   isSignOutAccountCurrent,
+  readLocalOnlyChanges,
+  type LocalOnlyChanges,
   type SignOutAccount,
 } from '@/app/lib/local-only-changes'
 import {
@@ -402,7 +403,7 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
   const ownerRef = useRef<AccountOwner | null>(null)
   // A device sign-out deletes this device's offline changes and held note text, so it counts
   // them first, as the header's Log out does (#1113 D1).
-  const [signOutCheck, setSignOutCheck] = useState<{ account: SignOutAccount; count: number | null } | null>(null)
+  const [signOutCheck, setSignOutCheck] = useState<{ account: SignOutAccount; changes: LocalOnlyChanges | null } | null>(null)
   // Self-hosted accounts cannot be erased from here; the action only signs out.
   const isLocal = mode === 'local'
   const confirmToken = isLocal ? 'SIGNOUT' : 'DELETE'
@@ -429,17 +430,17 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
     try {
       if (isLocal) {
         const account = captureSignOutAccount()
-        const count = await countLocalOnlyChanges(account)
+        const changes = await readLocalOnlyChanges(account)
         if (!isSignOutAccountCurrent(account) || !isAccountOwner(owner)) {
           setDeleting(false)
           return
         }
         // Changes only on this device, or a count that failed: the same dialog as Log out decides.
-        if (count !== 0) {
+        if (changes?.count !== 0) {
           setDialogOpen(false)
           setConfirmText('')
           setDeleting(false)
-          setSignOutCheck({ account, count })
+          setSignOutCheck({ account, changes })
           return
         }
         await signOutAndLeave()
@@ -543,7 +544,7 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
       {signOutCheck && (
         <SignOutDialog
           account={signOutCheck.account}
-          count={signOutCheck.count}
+          changes={signOutCheck.changes}
           onLogout={signOutAndLeave}
           onClose={() => setSignOutCheck(null)}
         />
