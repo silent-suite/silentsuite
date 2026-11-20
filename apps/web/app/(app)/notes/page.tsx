@@ -1149,6 +1149,8 @@ function NotesPageBody() {
           message={t('deleteConfirmMessage', { title: selectedNote.title.trim() || t('untitled') })}
           confirmLabel={t('deleteNote')}
           cancelLabel={t('cancel')}
+          // The message names the note: keep it out of a browser's page translation.
+          messageTranslate="no"
           onConfirm={() => {
             setConfirmDelete(false)
             void deleteNote(selectedNote.id)

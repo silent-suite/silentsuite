@@ -14,6 +14,14 @@ describe('ConfirmDialog', () => {
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
   })
 
+  it('opts its message out of page translation only when asked', () => {
+    const { rerender } = render(<ConfirmDialog title="Delete note?" message="Gone for good." onConfirm={() => {}} onCancel={() => {}} />)
+    expect(screen.getByText('Gone for good.')).not.toHaveAttribute('translate')
+
+    rerender(<ConfirmDialog title="Delete note?" message="Gone for good." messageTranslate="no" onConfirm={() => {}} onCancel={() => {}} />)
+    expect(screen.getByText('Gone for good.')).toHaveAttribute('translate', 'no')
+  })
+
   it('confirms, cancels, and closes on backdrop click and Escape', () => {
     const onConfirm = vi.fn()
     const onCancel = vi.fn()

@@ -1153,6 +1153,8 @@ describe('NotesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete note' }))
     const dialog = screen.getByRole('dialog', { name: 'Delete note?' })
     expect(within(dialog).getByRole('button', { name: 'Delete note' })).toBeInTheDocument()
+    // The message names the note, so a translating browser would send its title away.
+    expect(within(dialog).getByText(/Doomed/)).toHaveAttribute('translate', 'no')
 
     expect(container.contains(dialog), 'confirmation is rendered inside the page container').toBe(false)
     let outer: HTMLElement | null = null

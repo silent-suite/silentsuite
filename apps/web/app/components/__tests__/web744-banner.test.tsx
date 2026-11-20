@@ -208,6 +208,14 @@ describe('#744 the pending sync banner lists kept and legacy offline changes', (
     expect(held.sealed).toBeDefined()
   })
 
+  it('keeps the held note title out of browser page translation', async () => {
+    await noteWithHeldEdit()
+    renderBanner()
+    await settle()
+
+    expect(ui().getByText(BASE_TITLE)).toHaveAttribute('translate', 'no')
+  })
+
   it('#744 holds an offline edit of a note deleted elsewhere as unavailable, under a non-blank label, with its body unread', async () => {
     const { account, collection, item } = await savedNote()
     server.offline = true
