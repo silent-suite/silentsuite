@@ -130,6 +130,9 @@ jobs:
       - name: Keep deploy credentials inside their environments
         run: node --test scripts/deploy-secret-scope.test.mjs scripts/preview-notification-policy.test.mjs
 
+      - name: Test the /retry-ci command and its workflow boundary
+        run: node --test scripts/retry-ci/retry-ci.test.mjs
+
       - name: Install the isolated Zapstore lane package
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix scripts/zapstore
 
