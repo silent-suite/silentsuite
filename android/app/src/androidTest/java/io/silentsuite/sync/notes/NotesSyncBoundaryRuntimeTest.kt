@@ -73,6 +73,7 @@ import io.silentsuite.sync.ui.notes.HeldTextRow
 import io.silentsuite.sync.ui.notes.NoteContent
 import io.silentsuite.sync.ui.notes.NoteDeleteConfirmation
 import io.silentsuite.sync.ui.notes.NoteEditorViewModel
+import io.silentsuite.sync.ui.notes.NoteMoveConfirmation
 import io.silentsuite.sync.ui.notes.PendingUnavailable
 import io.silentsuite.sync.ui.notes.SaveResult
 import io.silentsuite.sync.ui.notes.NoteListFragment
@@ -1861,6 +1862,140 @@ class NotesSyncBoundaryRuntimeTest {
             assertTrue(notices.read(identity).isEmpty())
         }
         assertSucceeded(status(account, "gen-delete-lost"))
+    }
+
+    /**
+     * A move from the editor: the picker offers the other notebook, an answer from a picker restored in a new app process
+     * moves nothing and asks again, and the move is recorded at once, offline, with the screen opening the moved note in
+     * its new notebook. The copy carries the text and every metadata field another client wrote, byte for byte. A run then
+     * creates the copy first and deletes the original on the revision the user saw.
+     */
+    @Test fun aNoteMovedInTheEditorOpensInItsNewNotebookAndARunCreatesItThereBeforeDeletingTheOriginal() {
+        val account = newAccount("gen-move")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-move")
+        val work = uploadNotebook("Work")
+        val home = uploadNotebook("Home")
+        // Metadata another client wrote, with a field this app does not know.
+        val written = TestMsgPack.encode(linkedMapOf("name" to "Plan", "mtime" to 1_000L, "x-other-client" to "kept"))
+        val note = uploadRawNote(work, written, "First draft")
+        syncNow(account, "gen-move")
+        val store = pending(account, "gen-move")
+        // Only the case's own manual runs send: the run the move asks for is automatic and waits for Wi-Fi.
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-move")).use { scenario ->
+            awaitSettled(identity)
+            openEditor(scenario, "Work", note.uid)
+            chooseMove(scenario)
+            assertEquals("only the other notebook", listOf("Home"), moveChoices(scenario))
+            // Restored in a new app process, its answer moves nothing, and the screen asks again in this process.
+            scenario.onActivity { activity ->
+                noteScreen(activity).childFragmentManager.executePendingTransactions()
+                val args = requireNotNull(noteScreen(activity).moveConfirmation) { "the picker" }.requireArguments()
+                assertEquals("made in this process", ProcessIncarnation.current(), args.getString(NoteMoveConfirmation.ARG_PROCESS))
+                args.putString(NoteMoveConfirmation.ARG_PROCESS, "another-app-process")
+            }
+            scenario.recreate()
+            waitUntil("the restored picker to come back") { moveDialog(scenario)?.isShowing == true }
+            answerMove(scenario)
+            waitUntil("the picker to be asked again in this process") {
+                onEditor(scenario) { screen ->
+                    screen.moveConfirmation?.let { c ->
+                        !c.ended && c.dialog?.isShowing == true &&
+                            c.requireArguments().getString(NoteMoveConfirmation.ARG_PROCESS) == ProcessIncarnation.current()
+                    }
+                } == true
+            }
+            assertEquals("nothing moved by an answer from another process", PendingNotesStore.Read.Missing, store.read(note.uid))
+
+            var original: NoteViewFragment? = null
+            scenario.onActivity { original = noteScreen(it) }
+            answerMove(scenario)
+            waitUntil("the moved note to open in its new notebook") {
+                onEditor(scenario) { it !== original && it.editing && it.editorModel.noteUid != note.uid } == true
+            }
+            assertEquals(context.getString(R.string.notes_move_recorded), original?.renderedMoveMessage)
+            val delete = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+            assertEquals(PendingEntry.State.DELETE, delete.state)
+            val move = checkNotNull(delete.move)
+            assertEquals(home, move.notebookUid)
+            assertEquals(move.noteUid, onEditor(scenario) { it.editorModel.noteUid })
+            val copy = (store.read(move.noteUid) as PendingNotesStore.Read.Present).entry
+            assertEquals(PendingEntry.State.UPSERT to home, copy.state to copy.notebookUid)
+            assertTrue("the copy is sent first", copy.version < delete.version)
+            // Neither the text nor the title, nor the name of either notebook, whose copies the move writes to the store.
+            assertNothingPlainOnDisk(store, listOf("First draft", "Plan", "Work", "Home"))
+            val made = decryptThroughStoredCopy(store, copy)
+            assertEquals("First draft", made.contentString)
+            assertArrayEquals("every field another client wrote, byte for byte", written, made.metaRaw)
+            assertEquals("the original carries no text", "", decryptThroughStoredCopy(store, delete).contentString)
+            assertTrue("nothing sent yet", itemManager(work).fetch(note.uid).let { !it.isDeleted && it.etag == note.etag })
+            assertFalse(move.noteUid in fake.itemUids(home))
+
+            // Back from the moved note: the note has left its old notebook's list at once.
+            scenario.onActivity { it.onSupportNavigateUp() }
+            waitUntil("the old notebook's list, without the note") { noteList(scenario)?.renderedNotes?.isEmpty() == true }
+        }
+        val since = fake.requests.size
+        syncNow(account, "gen-move")
+        assertEquals("the copy, then the original's delete", listOf(transactionOf(home), transactionOf(work)),
+            uploads(since).map { it.substringBefore('?') })
+        val copyUid = fake.itemUids(home).single()
+        val onServer = itemManager(home).fetch(copyUid)
+        assertEquals("First draft", onServer.contentString)
+        assertArrayEquals(written, onServer.metaRaw)
+        assertTrue("the original is deleted", itemManager(work).fetch(note.uid).isDeleted)
+        assertEquals(setOf("Plan"), cachedNotes(account, home))
+        assertTrue(cachedNotes(account, work).isEmpty())
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-move").isEmpty())
+        assertSucceeded(status(account, "gen-move"))
+    }
+
+    /**
+     * A move whose original another device changed before the move reached the server keeps both: the copy lands in the
+     * new notebook, the original stays with that change, and the notebook list says why until it is dismissed.
+     */
+    @Test fun aMoveOfANoteChangedElsewhereKeepsBothAndTheNotebookListSaysWhy() {
+        val account = newAccount("gen-move-lost")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-move-lost")
+        val work = uploadNotebook("Work")
+        val home = uploadNotebook("Home")
+        val note = uploadNote(work, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-move-lost")
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        val notices = NoteDeleteNotices.of(context)
+        ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-move-lost")).use { scenario ->
+            awaitSettled(identity)
+            openEditor(scenario, "Work", note.uid)
+            chooseMove(scenario)
+            answerMove(scenario)
+            waitUntil("the moved note to open") { onEditor(scenario) { it.editing && it.editorModel.noteUid != note.uid } == true }
+
+            // Another device edits the original before the move reaches the server.
+            note.setContent("Edited on the laptop")
+            itemManager(work).transaction(arrayOf(note))
+            val changed = note.etag
+            syncNow(account, "gen-move-lost")
+            val original = itemManager(work).fetch(note.uid)
+            assertFalse("not deleted", original.isDeleted)
+            assertEquals("the other device's change stays", changed to "Edited on the laptop", original.etag to original.contentString)
+            val copy = itemManager(home).fetch(fake.itemUids(home).single())
+            assertEquals("the moved copy is in the new notebook", "First draft", copy.contentString)
+            assertTrue("nothing is left waiting", pendingHeaders(account, "gen-move-lost").isEmpty())
+
+            scenario.onActivity { it.onSupportNavigateUp() }
+            waitUntil("the old notebook's list, with the note again") { noteList(scenario)?.renderedNotes?.map { it.uid } == listOf(note.uid) }
+            scenario.onActivity { it.onSupportNavigateUp() }
+            val reason = mapOf(NotePushPolicy.DeleteNotDone.MOVED_CHANGED_ELSEWHERE to 1)
+            waitUntil("the notebook list to say why") { notebookList(scenario)?.renderedDeleteNotice == reason }
+            scenario.onActivity { activity ->
+                assertEquals(activity.resources.getQuantityString(R.plurals.notes_moves_not_done_changed, 1, 1),
+                    activity.findViewById<TextView>(R.id.notebooks_delete_notice_text).text.toString())
+                activity.findViewById<View>(R.id.notebooks_delete_notice_dismiss).performClick()
+            }
+            waitUntil("the notice to go once dismissed") { notebookList(scenario)?.renderedDeleteNotice?.isEmpty() == true }
+            assertTrue(notices.read(identity).isEmpty())
+        }
+        assertSucceeded(status(account, "gen-move-lost"))
     }
 
     @Test fun aChangeInANotebookNowReadOnlyIsHeldWithoutAnUpload() {
@@ -5556,6 +5691,38 @@ class NotesSyncBoundaryRuntimeTest {
         scenario.onActivity { activity ->
             val dialog = checkNotNull(noteScreen(activity).deleteConfirmation?.dialog as? androidx.appcompat.app.AlertDialog)
             dialog.getButton(if (positive) DialogInterface.BUTTON_POSITIVE else DialogInterface.BUTTON_NEGATIVE).performClick()
+        }
+    }
+
+    /** Chooses Move to notebook in the editor's toolbar, once it is offered, and waits for the picker to show. */
+    private fun chooseMove(scenario: ActivityScenario<NotesActivity>) {
+        waitUntil("Move to notebook to be offered and chosen") {
+            var chosen = false
+            scenario.onActivity { chosen = actionBar(it).menu.performIdentifierAction(R.id.note_move, 0) }
+            chosen
+        }
+        waitUntil("the move picker to show") { moveDialog(scenario)?.isShowing == true }
+    }
+
+    /** The Move picker while it is open; null otherwise. On the main thread. */
+    private fun moveDialog(scenario: ActivityScenario<NotesActivity>): androidx.appcompat.app.AlertDialog? =
+        onEditor(scenario) { it.moveConfirmation?.takeIf { c -> !c.ended }?.dialog as? androidx.appcompat.app.AlertDialog }
+
+    /** The notebook names the open Move picker offers, in order. */
+    private fun moveChoices(scenario: ActivityScenario<NotesActivity>): List<String> {
+        var names = emptyList<String>()
+        scenario.onActivity { activity ->
+            val list = (noteScreen(activity).moveConfirmation?.dialog as? androidx.appcompat.app.AlertDialog)?.listView ?: return@onActivity
+            names = (0 until list.adapter.count).map { list.adapter.getItem(it).toString() }
+        }
+        return names
+    }
+
+    /** Chooses the notebook at [position] in the open Move picker. */
+    private fun answerMove(scenario: ActivityScenario<NotesActivity>, position: Int = 0) {
+        scenario.onActivity { activity ->
+            val list = checkNotNull((noteScreen(activity).moveConfirmation?.dialog as? androidx.appcompat.app.AlertDialog)?.listView)
+            list.performItemClick(list.adapter.getView(position, null, list), position, list.adapter.getItemId(position))
         }
     }
 
