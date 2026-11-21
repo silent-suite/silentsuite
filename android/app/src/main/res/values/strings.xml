@@ -823,6 +823,8 @@
     <string name="notes_editor_leave_why_held_changed">This note\'s unsynced text changed.</string>
     <string name="notes_editor_leave_why_cleared">The unsynced Notes changes on this device were discarded.</string>
     <string name="notes_editor_leave_why_removal">A sign-out or removal of this account is being checked.</string>
+    <string name="notes_editor_leave_why_deleted">This note was deleted on this device.</string>
+    <string name="notes_editor_leave_why_moved">This note was moved to another notebook on this device.</string>
     <string name="notes_editor_leave_anyway">Leave anyway</string>
     <string name="notes_new_note_unavailable">A new note can\'t be made in this notebook right now.</string>
     <string name="notes_edited">Edited %1$s</string>
@@ -901,7 +903,28 @@
     <string name="notes_delete_failed">The delete could not be saved on this device, so nothing was deleted.</string>
     <string name="notes_delete_unsure">Deleted from this device, but the delete may not last if the device loses power. If the note shows again, delete it again.</string>
     <string name="notes_editor_deleted">This note was deleted, so this text was not saved. Copy it to keep it.</string>
+    <string name="notes_editor_moved">This note was moved to another notebook, so this text was not saved. Copy it to keep it.</string>
     <string name="notes_deletes_not_done_dismiss">Dismiss</string>
+    <!-- Moving a note to another notebook: the menu item, the picker, and what the note screen says once the move answered. The answers name no notebook: a toast can show outside the app. notes_move_shared: %1$s is the name of a notebook another account owns; the mark goes before it, so a name cannot reorder the mark or push it out of view. -->
+    <string name="notes_move_note">Move to notebook</string>
+    <string name="notes_move_title">Move to notebook</string>
+    <string name="notes_move_shared">Shared: %1$s</string>
+    <string name="notes_move_ask_again">Choose the notebook again to move this note.</string>
+    <string name="notes_move_recorded">Moved on this device. The move is sent at the next Notes sync.</string>
+    <string name="notes_move_unsure">Moved on this device, but the move may not last if the device loses power. If the note shows in both notebooks, delete the one you don\'t want.</string>
+    <string name="notes_move_failed">The move could not be saved on this device, so the note was not moved.</string>
+    <string name="notes_move_maybe_both">The move could not be finished on this device. The note stays here, and a copy may also show in the other notebook.</string>
+    <string name="notes_move_changed">This note changed since you were asked, so it was not moved. Review it, then move it again if you want to.</string>
+    <string name="notes_move_not_saved">This note has text that was not saved, so it was not moved. Copy the text if you want to keep it.</string>
+    <string name="notes_move_held">This note\'s unsynced text is kept in Unsynced text, so it was not moved.</string>
+    <string name="notes_move_unreadable">This note\'s change on this device can\'t be read, so it was not moved.</string>
+    <string name="notes_move_discard_unfinished">A discard of unsynced text did not finish, so the note was not moved. Finish it in Settings, Unsynced Notes.</string>
+    <string name="notes_move_removal_pending">An account removal is being checked, so the note was not moved.</string>
+    <string name="notes_move_no_target">No other notebook can take notes, so this note can\'t be moved.</string>
+    <string name="notes_move_deleted">This note was deleted on this device, so it was not moved.</string>
+    <string name="notes_move_moved_away">This note was already moved to another notebook on this device.</string>
+    <string name="notes_delete_moved_away">This note was moved to another notebook on this device, so nothing was deleted here.</string>
+    <string name="notes_move_target_gone">That notebook can\'t take notes now, so the note was not moved.</string>
     <!-- Sign-out while Notes changes have not synced: the count, the separate discard confirmation, what Sync now says, and the message when the account stays after its Notes changes were cleared, a clear of them stopped, or nothing was deleted because the store could not be listed. -->
     <string name="notes_sign_out_unsynced_title">Unsynced Notes changes</string>
     <string name="notes_sign_out_unsynced_unreadable">This device may hold Notes changes that have not synced, and they could not be counted. Sync now tries to send them first. It may not run on this network, and it can fail. If you sign out without syncing, they are removed from this device and cannot be recovered.</string>

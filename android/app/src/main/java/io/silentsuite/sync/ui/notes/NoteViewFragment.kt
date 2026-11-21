@@ -61,6 +61,17 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
     internal val deleteConfirmation: NoteDeleteConfirmation?
         get() = childFragmentManager.findFragmentByTag(NoteDeleteConfirmation.TAG) as? NoteDeleteConfirmation
 
+    /** What the screen last said about a move; observation point for runtime tests. */
+    internal var renderedMoveMessage: String? = null
+        private set
+
+    /** The Move picker the screen holds, an ended one included; observation point for runtime tests. */
+    internal val moveConfirmation: NoteMoveConfirmation?
+        get() = childFragmentManager.findFragmentByTag(NoteMoveConfirmation.TAG) as? NoteMoveConfirmation
+
+    /** Set once this screen gave way to the moved note, so it does so once. */
+    private var leftForMove = false
+
     /** Whether the editor shows, for runtime tests. */
     internal val editing: Boolean get() = model.opened is Opened.Editor
 
@@ -177,6 +188,11 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
                 if (!parentFragmentManager.isStateSaved) parentFragmentManager.popBackStack()
                 return
             }
+            is Opened.Moved -> {
+                (model.takeMoveStep() as? NoteEditorViewModel.MoveStep.Answered)?.let { moveAnswered(it) }
+                openMoved(opened)
+                return
+            }
             is Opened.Viewer -> if (host.exactAccountStillCurrent()) renderViewer(view, opened.note) else host.finish()
             is Opened.Editor -> if (host.exactAccountStillCurrent()) renderEditor(view, opened.note) else host.finish()
         }
@@ -186,6 +202,11 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             when (val step = model.takeDeleteStep()) {
                 is NoteEditorViewModel.DeleteStep.Ask -> confirmDelete(step.shown, discard = false)
                 is NoteEditorViewModel.DeleteStep.Answered -> deleteAnswered(step.answer)
+                null -> Unit
+            }
+            when (val step = model.takeMoveStep()) {
+                is NoteEditorViewModel.MoveStep.Ask -> confirmMove(step)
+                is NoteEditorViewModel.MoveStep.Answered -> moveAnswered(step)
                 null -> Unit
             }
         }
@@ -224,8 +245,8 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             val edit = editText(view, field)
             val text = core.text(field)
             if (edit.text.toString() != text) set(edit, text, text.length)
-            // No typing while a confirmed delete runs: text typed then would not be covered by the confirmation.
-            edit.isEnabled = core.mode == NoteEditorCore.Mode.EDITING && !model.deleting
+            // No typing while a confirmed delete or move runs: text typed then would not be covered by the confirmation.
+            edit.isEnabled = core.mode == NoteEditorCore.Mode.EDITING && !model.deleting && !model.moving
         }
         val result = core.lastResult
         val status = statusText(result, model.syncLine, savedBefore = note?.sync == NoteSync.WAITING)
@@ -251,6 +272,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             SaveResult.HeldChanged -> return getString(R.string.notes_editor_held_changed)
             SaveResult.Cleared -> return getString(R.string.notes_editor_cleared)
             SaveResult.Deleted -> return getString(R.string.notes_editor_deleted)
+            SaveResult.MovedAway -> return getString(R.string.notes_editor_moved)
             SaveResult.Stale -> return null
             is SaveResult.SavedToHolding -> return getString(R.string.notes_local_text_held)
             is SaveResult.Saved -> if (result.metadataKept) getString(R.string.notes_editor_saved_details_kept) else getString(R.string.notes_editor_saved)
@@ -330,11 +352,11 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
 
     private fun editingNow() = model.opened is Opened.Editor && model.core.mode == NoteEditorCore.Mode.EDITING
 
-    /** The toolbar is prepared again when Undo, Redo or Delete changes: a new note gets Delete once its first save made it. */
+    /** The toolbar is prepared again when Undo, Redo, Delete or Move changes: a new note gets both once its first save made it. */
     private fun refreshMenu() {
         val history = model.core.history(lastField)
         val state = listOf(editingNow() && history.canUndo, editingNow() && history.canRedo,
-            model.noteUid != null && editingNow() && !model.deleting)
+            model.noteUid != null && editingNow() && !model.deleting && !model.moving)
         if (state == menuState) return
         menuState = state
         activity?.invalidateOptionsMenu()
@@ -359,7 +381,11 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             // Only where the note can be edited, and once it exists: a new note's first save makes it.
             menu.findItem(R.id.note_delete)?.apply {
                 isVisible = editor && model.noteUid != null
-                isEnabled = editingNow() && !model.deleting
+                isEnabled = editingNow() && !model.deleting && !model.moving
+            }
+            menu.findItem(R.id.note_move)?.apply {
+                isVisible = editor && model.noteUid != null
+                isEnabled = editingNow() && !model.deleting && !model.moving
             }
         }
 
@@ -367,6 +393,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             R.id.note_undo -> { undo(lastField); true }
             R.id.note_redo -> { redo(lastField); true }
             R.id.note_delete -> { askDelete(); true }
+            R.id.note_move -> { askMove(); true }
             else -> false
         }
     }
@@ -421,6 +448,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
                 return
             }
             NoteEditorViewModel.DeleteAnswer.RECORDED -> R.string.notes_delete_recorded
+            NoteEditorViewModel.DeleteAnswer.MOVED_AWAY -> R.string.notes_delete_moved_away
             NoteEditorViewModel.DeleteAnswer.DROPPED -> R.string.notes_delete_dropped
             NoteEditorViewModel.DeleteAnswer.UNSURE -> R.string.notes_delete_unsure
             NoteEditorViewModel.DeleteAnswer.CHANGED -> R.string.notes_delete_changed
@@ -435,6 +463,86 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
         Toast.makeText(host, message, Toast.LENGTH_LONG).show()
         // The note as it is now, for a clean editor: what changed since the confirmation was prepared.
         if (answer == NoteEditorViewModel.DeleteAnswer.CHANGED) model.reload()
+    }
+
+    // ---- moving ----
+
+    private fun askMove() {
+        val host = host() ?: return
+        if (!host.exactAccountStillCurrent()) { host.finish(); return }
+        model.askMove()
+    }
+
+    /**
+     * Shows the Move picker, in a dialog the platform brings back after a rotation or a recreation. It carries what it
+     * showed, the exact account it is for and the token of the app process that made it, as Delete's confirmation does.
+     */
+    private fun confirmMove(step: NoteEditorViewModel.MoveStep.Ask) {
+        if (childFragmentManager.isStateSaved) return
+        val open = moveConfirmation
+        if (open != null && !open.ended) return
+        NoteMoveConfirmation.newInstance(step.shown, step.targets, ExactAccountIdentity(account.type, account.name, creationId))
+            .show(childFragmentManager, NoteMoveConfirmation.TAG)
+    }
+
+    /**
+     * A notebook chosen in the Move picker. One chosen in another app process, or for another account, goes to no store:
+     * the note is read again and the user asked again, where the editor still offers Move.
+     */
+    internal fun moveConfirmed(shown: NoteEditorViewModel.DeleteShown, target: NoteEditorViewModel.MoveTarget,
+                               identity: ExactAccountIdentity, shownIn: String?) {
+        val host = host() ?: return
+        if (!host.exactAccountStillCurrent()) { host.finish(); return }
+        if (!ProcessIncarnation.isCurrent(shownIn) || identity != ExactAccountIdentity(account.type, account.name, creationId)) {
+            model.askMove()
+            return
+        }
+        model.move(shown, target)
+    }
+
+    /** A picker restored without its notebooks asked to choose again. */
+    internal fun moveAskedAgain() = askMove()
+
+    /** The notebooks the open picker offers, by uid, from memory; empty in a new process ([NoteEditorViewModel.moveTargets]). */
+    internal fun moveTargets(): List<NoteEditorViewModel.MoveTarget> = model.moveTargets
+
+    /** What the screen says once a move, or the read for it, has answered. */
+    private fun moveAnswered(step: NoteEditorViewModel.MoveStep.Answered) {
+        val host = host() ?: return
+        // No notebook name: a toast can be drawn outside the app. The screen opens the moved note in its notebook instead.
+        val message = when (step.answer) {
+            NoteEditorViewModel.MoveAnswer.STALE -> { host.finish(); return }
+            NoteEditorViewModel.MoveAnswer.MOVED -> getString(R.string.notes_move_recorded)
+            NoteEditorViewModel.MoveAnswer.UNSURE -> getString(R.string.notes_move_unsure)
+            NoteEditorViewModel.MoveAnswer.NOT_MOVED -> getString(R.string.notes_move_failed)
+            NoteEditorViewModel.MoveAnswer.MAYBE_BOTH -> getString(R.string.notes_move_maybe_both)
+            NoteEditorViewModel.MoveAnswer.CHANGED -> getString(R.string.notes_move_changed)
+            NoteEditorViewModel.MoveAnswer.NOT_SAVED -> getString(R.string.notes_move_not_saved)
+            NoteEditorViewModel.MoveAnswer.HELD -> getString(R.string.notes_move_held)
+            NoteEditorViewModel.MoveAnswer.UNREADABLE -> getString(R.string.notes_move_unreadable)
+            NoteEditorViewModel.MoveAnswer.DISCARD_UNFINISHED -> getString(R.string.notes_move_discard_unfinished)
+            NoteEditorViewModel.MoveAnswer.REMOVAL_PENDING -> getString(R.string.notes_move_removal_pending)
+            NoteEditorViewModel.MoveAnswer.NO_TARGET -> getString(R.string.notes_move_no_target)
+            NoteEditorViewModel.MoveAnswer.TARGET_GONE -> getString(R.string.notes_move_target_gone)
+            NoteEditorViewModel.MoveAnswer.DELETED -> getString(R.string.notes_move_deleted)
+            NoteEditorViewModel.MoveAnswer.MOVED_AWAY -> getString(R.string.notes_move_moved_away)
+            NoteEditorViewModel.MoveAnswer.FAILED -> getString(R.string.notes_move_failed)
+        }
+        renderedMoveMessage = message
+        Toast.makeText(host, message, Toast.LENGTH_LONG).show()
+        // The note as it is now, for a clean editor: what changed since the picker was prepared.
+        if (step.answer == NoteEditorViewModel.MoveAnswer.CHANGED) model.reload()
+    }
+
+    /** Gives way to the moved note in its new notebook, as the web's selection follows a moved note. Never after the state was saved. */
+    private fun openMoved(moved: Opened.Moved) {
+        if (leftForMove || parentFragmentManager.isStateSaved) return
+        leftForMove = true
+        parentFragmentManager.popBackStack()
+        parentFragmentManager.commit {
+            replace(R.id.fragment_container, newInstance(account, creationId, moved.notebookUid, moved.noteUid))
+            addToBackStack(NoteViewFragment::class.java.name)
+        }
     }
 
     private fun copy() {
@@ -515,6 +623,8 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             SaveResult.HeldChanged -> R.string.notes_editor_leave_why_held_changed
             SaveResult.Cleared -> R.string.notes_editor_leave_why_cleared
             SaveResult.RemovalPending -> R.string.notes_editor_leave_why_removal
+            SaveResult.Deleted -> R.string.notes_editor_leave_why_deleted
+            SaveResult.MovedAway -> R.string.notes_editor_leave_why_moved
             else -> R.string.notes_editor_leave_why_failed
         })
         return getString(if (prompt.newNote) R.string.notes_editor_leave_new_note else R.string.notes_editor_leave_changes, why)

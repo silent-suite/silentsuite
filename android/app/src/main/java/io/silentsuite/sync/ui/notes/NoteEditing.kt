@@ -179,6 +179,8 @@ internal sealed class SaveResult {
     object Cleared : SaveResult()
     /** The note was deleted and the delete waits to be sent; nothing was written, and nothing will be. */
     object Deleted : SaveResult()
+    /** The note was moved to another notebook on this device ([SaveOutcome.MovedAway]); nothing was written, and nothing will be. */
+    object MovedAway : SaveResult()
     /** The exact account generation is gone: the screen closes. */
     object Stale : SaveResult()
 }
@@ -210,6 +212,7 @@ internal object SaveRun {
                 SaveOutcome.TooLarge -> return SaveResult.TooLarge
                 SaveOutcome.RemovalPending -> return SaveResult.RemovalPending
                 SaveOutcome.Deleted -> return SaveResult.Deleted
+                SaveOutcome.MovedAway -> return SaveResult.MovedAway
             }
         }
         // Moved every time: the text is not saved yet, and the next save tries again.
@@ -334,7 +337,7 @@ internal class NoteEditorCore(private val clock: () -> Long = System::currentTim
                 written(draft, result.version)
                 mode = Mode.HELD
             }
-            SaveResult.HeldChanged, SaveResult.Cleared, SaveResult.Deleted -> mode = Mode.STOPPED
+            SaveResult.HeldChanged, SaveResult.Cleared, SaveResult.Deleted, SaveResult.MovedAway -> mode = Mode.STOPPED
             SaveResult.Unreadable, SaveResult.TooLarge, SaveResult.NotSaved, SaveResult.RemovalPending, SaveResult.Stale -> Unit
         }
     }

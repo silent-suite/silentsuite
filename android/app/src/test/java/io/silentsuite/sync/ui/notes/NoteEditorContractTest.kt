@@ -139,6 +139,9 @@ class NoteEditorContractTest {
         val onIo = function("deleteOnIo")
         assertTrue(onIo.indexOf("item.etag != shown.revision") in 0 until onIo.indexOf("EtebasePushRemote.markDeleted("))
         assertTrue(function("readDelete").contains("revision = shown"))
+        // A copy of moves that have not finished is not only on this device: its delete sends the originals' deletes.
+        assertTrue(function("readDelete").contains(
+            "neverSynced = entry.isCreate && entry.sent.isEmpty() && !store.hasWaitingMoves(uid)"))
         // A failed write that left the delete in place is never reported as nothing deleted.
         assertTrue(onIo.contains("e is IOException && deleteIsThere(store, shown.noteUid) -> DeleteAnswer.UNSURE"))
         // A removal that left the note's own entry in place (a replaced original went first) deleted nothing.
@@ -161,6 +164,46 @@ class NoteEditorContractTest {
         assertTrue(confirmed.contains("identity != ExactAccountIdentity(account.type, account.name, creationId)"))
         assertTrue("the discard of unsynced text is its own confirmation",
             confirmed.contains("if (shown.unsynced && !discard) confirmDelete(shown, discard = true)"))
+    }
+
+    @Test fun `a move saves first, calls the store on IO, its picker carries the process token and the account, and the copy keeps every field`() {
+        assertEquals(1, modelCode.split("withContext(Dispatchers.IO) { readMove() }").size - 1)
+        assertEquals(1, modelCode.split("withContext(Dispatchers.IO) { moveOnIo(shown, target) }").size - 1)
+        assertEquals("moveNote only there", 1, Regex("store\\.moveNote\\(").findAll(modelCode).count())
+        assertTrue("the picker shows what a delete's confirmation would", function("readMove").contains("readDelete()"))
+        // Another editor of a note moved or deleted here says which, never that it changed or that Delete just deleted it.
+        assertTrue(function("readDelete").contains("if (entry.move != null) DeleteAnswer.MOVED_AWAY else DeleteAnswer.RECORDED"))
+        assertTrue(function("readMove").contains("DeleteAnswer.RECORDED -> MoveAnswer.DELETED"))
+        assertTrue(function("readMove").contains("DeleteAnswer.MOVED_AWAY -> MoveAnswer.MOVED_AWAY"))
+        val onIo = function("moveOnIo")
+        assertTrue(onIo.contains("store.moveNote("))
+        // With no entry, the item must be the revision the picker showed, checked before anything is built from it.
+        assertTrue(onIo.indexOf("item.etag != shown.revision") in 0 until onIo.indexOf("into.itemMgr.create("))
+        assertTrue(onIo.contains("if (!into.writable) return MoveAnswer.TARGET_GONE to null"))
+        // The copy takes the item's text and raw metadata as they are, before the original is marked deleted: a move is
+        // not an edit, and other clients' fields go across byte for byte.
+        assertTrue(onIo.contains("val made = into.itemMgr.create(ItemMetadata(), content)"))
+        assertTrue(onIo.indexOf("made.setMetaRaw(meta)") in 0 until onIo.indexOf("EtebasePushRemote.markDeleted(item, System.currentTimeMillis())"))
+        val ask = model.substringAfter("    fun askMove() {").substringBefore("\n    }\n")
+        assertTrue("everything typed is saved first", ask.indexOf("saveStep()") in 0 until ask.indexOf("readMove()"))
+        val move = model.substringAfter("    fun move(shown: DeleteShown, target: MoveTarget) {").substringBefore("\n    }\n")
+        assertTrue("text typed after the picker was prepared stops the move",
+            move.indexOf("core.dirty") in 0 until move.indexOf("moveOnIo(shown, target)"))
+        assertTrue("a move on disk asks for a run, also one that may not last a power loss", move.contains("if (copy != null) requestSync(0)"))
+        val dialog = read("src/main/java/io/silentsuite/sync/ui/notes/NoteMoveConfirmation.kt")
+        assertTrue(dialog.contains("putString(ARG_PROCESS, ProcessIncarnation.current())"))
+        assertTrue(dialog.contains("putString(ARG_CREATION_ID, identity.creationId)"))
+        // Notebooks by uid only: no decrypted name goes into saved state, and the answers name no notebook in a toast.
+        val putsArgs = Regex("put\\w+\\((ARG_\\w+)").findAll(dialog).map { it.groupValues[1] }.toSet()
+        assertEquals(setOf("ARG_NOTE", "ARG_VERSION", "ARG_DIGEST", "ARG_NEVER_SYNCED", "ARG_REVISION", "ARG_TARGET_UIDS",
+            "ARG_ACCOUNT_TYPE", "ARG_ACCOUNT_NAME", "ARG_CREATION_ID", "ARG_PROCESS"), putsArgs)
+        val strings = read("src/main/res/values/strings.xml")
+        for (name in listOf("notes_move_recorded", "notes_move_unsure", "notes_move_maybe_both")) {
+            assertFalse(name, strings.substringAfter("<string name=\"$name\">").substringBefore("</string>").contains("%"))
+        }
+        val confirmed = screen.substringAfter("    internal fun moveConfirmed(").substringBefore("\n    }\n")
+        assertTrue(confirmed.indexOf("ProcessIncarnation.isCurrent(shownIn)") in 0 until confirmed.indexOf("model.move("))
+        assertTrue(confirmed.contains("identity != ExactAccountIdentity(account.type, account.name, creationId)"))
     }
 
     @Test fun `Back and Up ask the editor first, a leave saves first, and an answer is checked before anything is done`() {
@@ -186,6 +229,12 @@ class NoteEditorContractTest {
             val text = strings.substringAfter("<string name=\"$name\">").substringBefore("</string>")
             for (banned in listOf("lost", "Discard", "deleted")) assertFalse("$name says $banned: $text", text.contains(banned))
         }
+        // Another editor of a deleted note says so before leaving, never "the last save did not work".
+        val why = screen.substringAfter("    private fun leaveMessage(").substringBefore("\n    }\n")
+        assertTrue(why.contains("SaveResult.Deleted -> R.string.notes_editor_leave_why_deleted"))
+        // And one of a note moved to another notebook says that, there and in its status line.
+        assertTrue(why.contains("SaveResult.MovedAway -> R.string.notes_editor_leave_why_moved"))
+        assertTrue(screen.contains("SaveResult.MovedAway -> return getString(R.string.notes_editor_moved)"))
     }
 
     @Test fun `the editor makes no release, discard, hold or send`() {
