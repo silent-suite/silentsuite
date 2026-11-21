@@ -150,9 +150,11 @@ export function selectRuns(pr, listing, commentCreatedAt) {
   return { ok: true, runs: failed, since: Math.min(...runs.map(run => Date.parse(run.created_at))) }
 }
 
-// The pull request's own history: a base change means a run may come from an
-// earlier target, and a force push after the runs started means the commit may
-// have left and come back. Either refuses, as does history that cannot be read.
+// The pull request's own history (timeline plus issue events: GitHub documents
+// base_ref_changed under issue events): a base change means a run may come from
+// an earlier target, and a force push after the runs started means the commit
+// may have left and come back. Either refuses, as does history that cannot be
+// read.
 export function checkTimeline(events, since) {
   if (!Array.isArray(events) || !events.every(event => event && typeof event.event === 'string')) {
     return refuse('the pull request history could not be read')
@@ -187,18 +189,50 @@ const samePull = (a, b) =>
   a.number === b.number && a.head.sha === b.head.sha && a.head.ref === b.head.ref && a.head.repo.id === b.head.repo.id
 
 // The admission markers for one commit: refuse unless the listing is complete
-// and every entry carries the exact name.
+// and every entry carries the exact name and its run's repositories. Only
+// markers uploaded by a run of this repository on itself count; fork CI can
+// upload an artifact of the same name, and that one is ignored.
 export function readMarkers(listing, sha) {
+  const wellFormed = artifact =>
+    artifact?.name === markerName(sha) &&
+    Number.isSafeInteger(artifact.workflow_run?.id) &&
+    Number.isSafeInteger(artifact.workflow_run.repository_id) &&
+    Number.isSafeInteger(artifact.workflow_run.head_repository_id)
   if (
     !listing ||
     !Array.isArray(listing.artifacts) ||
     !Number.isSafeInteger(listing.total_count) ||
     listing.artifacts.length !== listing.total_count ||
-    !listing.artifacts.every(artifact => artifact?.name === markerName(sha))
+    !listing.artifacts.every(wellFormed)
   ) {
     return refuse('the admission record could not be read')
   }
-  return { ok: true, artifacts: listing.artifacts }
+  const trusted = listing.artifacts.filter(
+    artifact =>
+      artifact.workflow_run.repository_id === REPOSITORY_ID && artifact.workflow_run.head_repository_id === REPOSITORY_ID,
+  )
+  return { ok: true, artifacts: trusted }
+}
+
+// The target run as it is right before its rerun request: still the selected
+// run, still attempt 1, still a finished failure. A maintainer's rerun in
+// between makes it refuse instead of asking for a third attempt.
+export function checkTarget(now, selected) {
+  if (
+    !wellFormedRun(now) ||
+    now.id !== selected.id ||
+    now.path !== selected.path ||
+    now.event !== 'pull_request' ||
+    now.head_sha !== selected.head_sha ||
+    now.head_branch !== selected.head_branch ||
+    now.head_repository.id !== selected.head_repository.id
+  ) {
+    return refuse(`run ${selected.id} could not be re-read`)
+  }
+  if (now.run_attempt !== 1 || now.status !== 'completed' || !RETRYABLE_CONCLUSIONS.has(now.conclusion)) {
+    return refuse(`run ${selected.id} changed since the check (rerun by someone else?)`)
+  }
+  return { ok: true }
 }
 
 // Returns { ok, reason?, sha?, runs?, retried: [run ids] }. Throws only on
@@ -222,12 +256,14 @@ export async function retryCi({ env, phase, fetchImpl = fetch }) {
   }
   const readHistory = async since => {
     const events = []
-    for (let page = 1; ; page++) {
-      if (page > TIMELINE_PAGES) return refuse('the pull request history is too long to check; ask a maintainer')
-      const batch = await call('GET', `${repo}/issues/${env.PR_NUMBER}/timeline?per_page=100&page=${page}`)
-      if (!Array.isArray(batch)) return refuse('the pull request history could not be read')
-      events.push(...batch)
-      if (batch.length < 100) break
+    for (const source of ['timeline', 'events']) {
+      for (let page = 1; ; page++) {
+        if (page > TIMELINE_PAGES) return refuse('the pull request history is too long to check; ask a maintainer')
+        const batch = await call('GET', `${repo}/issues/${env.PR_NUMBER}/${source}?per_page=100&page=${page}`)
+        if (!Array.isArray(batch)) return refuse('the pull request history could not be read')
+        events.push(...batch)
+        if (batch.length < 100) break
+      }
     }
     return checkTimeline(events, since)
   }
@@ -281,8 +317,10 @@ export async function retryCi({ env, phase, fetchImpl = fetch }) {
       if (!samePull(live.pull, pull)) return stop('the pull request head changed; try again')
       const again = await readHistory(selection.since)
       if (!again.ok) return stop(again.reason)
+      const target = checkTarget(await call('GET', `${repo}/actions/runs/${run.id}`), run)
+      if (!target.ok) return stop(target.reason)
     } catch (error) {
-      return stop(`the pull request could not be re-read: ${error.message}`)
+      return stop(`the pull request or run could not be re-read: ${error.message}`)
     }
     try {
       await call('POST', `${repo}/actions/runs/${run.id}/rerun-failed-jobs`)

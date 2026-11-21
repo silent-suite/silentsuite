@@ -209,6 +209,8 @@ function fakeGitHub({
   runs = [],
   fromBranch = [{ number: 1115 }],
   timelineAt = () => [[]],
+  eventsAt = () => [[]],
+  runAt = null,
   artifacts = [],
   artifactListing = null,
   post = () => ({ accepted: true, status: 201 }),
@@ -231,6 +233,12 @@ function fakeGitHub({
       return answer(200, { total_count: list.length, workflow_runs: list })
     }
     if (init.method === 'GET' && path.includes('/timeline?')) return answer(200, timelineAt(posts)[Number(query.get('page')) - 1] ?? [])
+    if (init.method === 'GET' && path.includes('/issues/1115/events?')) return answer(200, eventsAt(posts)[Number(query.get('page')) - 1] ?? [])
+    const single = path.match(/\/actions\/runs\/(\d+)$/)
+    if (init.method === 'GET' && single) {
+      const id = Number(single[1])
+      return answer(200, runAt ? runAt(id, posts, state.get(id)) : state.get(id))
+    }
     if (init.method === 'GET' && path.includes('/actions/artifacts?')) {
       if (artifactListing) return answer(200, artifactListing)
       const found = markers.filter(a => a.name === query.get('name'))
@@ -248,7 +256,8 @@ function fakeGitHub({
     }
     return answer(404)
   }
-  const upload = (sha, runId) => markers.push({ name: `retry-ci-${sha}`, workflow_run: { id: runId } })
+  const upload = (sha, runId, headRepositoryId = REPOSITORY_ID) =>
+    markers.push({ name: `retry-ci-${sha}`, workflow_run: { id: runId, repository_id: REPOSITORY_ID, head_repository_id: headRepositoryId } })
   return { calls, fetchImpl, state, upload }
 }
 const posts = github => github.calls.filter(call => call.startsWith('POST'))
@@ -271,9 +280,15 @@ const DECIDE = [
   'GET /repos/silent-suite/silentsuite/pulls?state=all&head=intigenesis%3Afeat%2Fandroid-note-delete&per_page=100',
   `GET /repos/silent-suite/silentsuite/actions/runs?head_sha=${HEAD}&event=pull_request&per_page=100`,
   'GET /repos/silent-suite/silentsuite/issues/1115/timeline?per_page=100&page=1',
+  'GET /repos/silent-suite/silentsuite/issues/1115/events?per_page=100&page=1',
   `GET /repos/silent-suite/silentsuite/actions/artifacts?name=retry-ci-${HEAD}&per_page=100`,
 ]
-const LIVE = ['GET /repos/silent-suite/silentsuite/pulls/1115', 'GET /repos/silent-suite/silentsuite/issues/1115/timeline?per_page=100&page=1']
+const LIVE = id => [
+  'GET /repos/silent-suite/silentsuite/pulls/1115',
+  'GET /repos/silent-suite/silentsuite/issues/1115/timeline?per_page=100&page=1',
+  'GET /repos/silent-suite/silentsuite/issues/1115/events?per_page=100&page=1',
+  `GET /repos/silent-suite/silentsuite/actions/runs/${id}`,
+]
 
 test('admits, then reruns each failed run after re-reading the pull request and its history', async () => {
   const github = fakeGitHub({
@@ -286,9 +301,9 @@ test('admits, then reruns each failed run after re-reading the pull request and 
   assert.deepEqual(github.calls, [
     ...DECIDE,
     ...DECIDE,
-    ...LIVE,
+    ...LIVE(11),
     'POST /repos/silent-suite/silentsuite/actions/runs/11/rerun-failed-jobs',
-    ...LIVE,
+    ...LIVE(12),
     'POST /repos/silent-suite/silentsuite/actions/runs/12/rerun-failed-jobs',
   ])
 })
@@ -329,7 +344,10 @@ test('posts nothing when any check refuses', async () => {
     'two pull requests from the branch': { fromBranch: [{ number: 1115 }, { number: 1001 }], runs: failed() },
     'other pull request from the branch': { fromBranch: [{ number: 1001 }], runs: failed() },
     'unreadable branch listing': { fromBranch: { message: 'not a list' }, runs: failed() },
-    retargeted: { timelineAt: history([{ event: 'base_ref_changed', created_at: '2026-11-21T09:00:00Z' }]), runs: failed() },
+    'retargeted (timeline)': { timelineAt: history([{ event: 'base_ref_changed', created_at: '2026-11-21T09:00:00Z' }]), runs: failed() },
+    'retargeted (issue events)': { eventsAt: history([{ event: 'base_ref_changed', created_at: '2026-11-21T09:00:00Z' }]), runs: failed() },
+    'force-pushed (issue events)': { eventsAt: history([{ event: 'head_ref_force_pushed', created_at: '2026-11-21T11:00:00Z' }]), runs: failed() },
+    'unreadable issue events': { eventsAt: () => [{ message: 'not a list' }], runs: failed() },
     'force-pushed after CI started': { timelineAt: history([{ event: 'head_ref_force_pushed', created_at: '2026-11-21T11:00:00Z' }]), runs: failed() },
     'force-pushed in the same second': { timelineAt: history([{ event: 'head_ref_force_pushed', created_at: '2026-11-21T10:00:00Z' }]), runs: failed() },
     'unreadable timeline': { timelineAt: history([{ nope: true }]), runs: failed() },
@@ -339,7 +357,11 @@ test('posts nothing when any check refuses', async () => {
     },
     'entry without an id': { runs: [{ ...run('ci', { conclusion: 'failure' }), id: undefined }] },
     'completed entry without a conclusion beside a failed run': { runs: [...failed(), run('ci-server', { conclusion: undefined })] },
-    'marker already present': { artifacts: [{ name: `retry-ci-${HEAD}`, workflow_run: { id: 1 } }], runs: failed() },
+    'marker already present': {
+      artifacts: [{ name: `retry-ci-${HEAD}`, workflow_run: { id: 1, repository_id: REPOSITORY_ID, head_repository_id: REPOSITORY_ID } }],
+      runs: failed(),
+    },
+    'marker without its run': { artifacts: [{ name: `retry-ci-${HEAD}` }], runs: failed() },
     'unreadable marker listing': { artifactListing: { total_count: 1, artifacts: [] }, runs: failed() },
     'marker listing with a foreign name': { artifactListing: { total_count: 1, artifacts: [{ name: 'other' }] }, runs: failed() },
   }
@@ -349,6 +371,32 @@ test('posts nothing when any check refuses', async () => {
     assert.equal(result.ok, false, label)
     assert.deepEqual(result.retried, [], label)
     assert.deepEqual(posts(github), [], label)
+  }
+})
+
+test('a same-named artifact from fork CI does not spend the retry', async () => {
+  const github = fakeGitHub({ runs: [run('ci', { id: 34, conclusion: 'failure' })] })
+  github.upload(HEAD, 43827172180, FORK_ID)
+  const result = await comment(github)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.retried, [34])
+})
+
+test('re-reads each target run right before its rerun', async () => {
+  const twoRuns = () => [run('ci', { id: 81, conclusion: 'failure' }), run('build-android', { id: 82, conclusion: 'failure' })]
+  const changes = {
+    'rerun by a maintainer meanwhile': (id, sent, now) => (id === 82 ? { ...now, run_attempt: 2, status: 'queued', conclusion: null } : now),
+    'rerun finished and failed again': (id, sent, now) => (id === 82 ? { ...now, run_attempt: 2, conclusion: 'failure' } : now),
+    'now a success': (id, sent, now) => (id === 82 ? { ...now, conclusion: 'success' } : now),
+    'another run answers': (id, sent, now) => (id === 82 ? { ...now, id: 83 } : now),
+    unreadable: (id, sent, now) => (id === 82 ? { id: 82 } : now),
+  }
+  for (const [label, runAt] of Object.entries(changes)) {
+    const github = fakeGitHub({ runs: twoRuns(), runAt })
+    const result = await comment(github)
+    assert.equal(result.ok, false, label)
+    assert.deepEqual(result.retried, [81], label)
+    assert.deepEqual(posts(github), ['POST /repos/silent-suite/silentsuite/actions/runs/81/rerun-failed-jobs'], label)
   }
 })
 
@@ -403,7 +451,7 @@ test('re-checks the live pull request and its history before every rerun', async
       timelineAt: sent => (sent === 0 ? [[]] : [[{ event: 'head_ref_force_pushed', created_at: '2026-11-21T12:00:05Z' }]]),
     },
     'retargeted away and back': {
-      timelineAt: sent => (sent === 0 ? [[]] : [[{ event: 'base_ref_changed', created_at: '2026-11-21T12:00:05Z' }]]),
+      eventsAt: sent => (sent === 0 ? [[]] : [[{ event: 'base_ref_changed', created_at: '2026-11-21T12:00:05Z' }]]),
     },
   }
   for (const [label, change] of Object.entries(changes)) {

@@ -11,7 +11,10 @@
 # keep their original fork `pull_request` context: read-only token, no
 # secrets. One concurrency group for every /retry-ci, so two comments are
 # never evaluated at once; the `retry-ci-<sha>` artifact uploaded before any
-# rerun is the once-per-commit record. Rules and allowlist:
+# rerun is the once-per-commit record. Known limit: concurrency group names
+# are repository-wide, so a fork PR whose own workflow claims `retry-ci` can
+# cancel a queued or running /retry-ci; at worst that spends one commit's
+# retry, which a maintainer can redo by hand. Rules and allowlist:
 # scripts/retry-ci/retry-ci.mjs. The result is in this run's summary in the
 # Actions tab; a refusal fails the run.
 name: Retry CI
