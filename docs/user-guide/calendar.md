@@ -63,7 +63,17 @@ The export is built from your locally decrypted data, so it works offline once y
 
 ## Sharing
 
-Shared calendars between accounts are not supported in v0.1.0-beta. Your calendar is visible only to you, across your own devices.
+Share a calendar with another SilentSuite account from **Settings → Sharing** in the web app. The same page shares task lists, address books, and notebooks.
+
+1. Under **Collection members**, find the calendar and enter the other person's username or email address.
+2. Pick an access level: **Read-only**, **Read/write**, or **Admin**. Read-only members can see events but cannot change them. Only admins can invite accounts or manage members.
+3. Select **Invite**. A **Verify security fingerprint** dialog asks you to compare the fingerprint before you send the invitation.
+
+The other person opens **Settings → Sharing**, finds your invitation under **Incoming**, and selects **Accept** after comparing your fingerprint. The calendar is then added to their account. A member who is not an admin can use **Leave collection** to leave. Admins can use **Load members** to see who has access, change a member's access, or remove them; see [what happens when you remove a member](./collections.md#removing-a-member).
+
+Members see the same calendar, end-to-end encrypted to the public keys you confirm. Before you share or accept, compare security fingerprints with each person over a separate channel, such as in person or on a call; the server supplies usernames and keys, so an unverified fingerprint gives no assurance about who receives access. Your own fingerprint is under **Settings → Security**.
+
+The generated Birthdays calendar cannot be shared.
 
 ## Bridge / DAV clients
 
@@ -73,4 +83,4 @@ Multiple calendars are supported. Each calendar is a separate encrypted collecti
 
 ## Limits in this beta
 
-- No invitations / RSVP / scheduling — SilentSuite is single-user, by design.
+- No event invitations, RSVP, or scheduling. Sharing gives another account access to a whole calendar; you cannot invite someone to a single event yet.
