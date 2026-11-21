@@ -19,6 +19,7 @@ import {
   installNoteAccount,
   makeSavedNote,
   queueGuard,
+  respond,
   serverText,
 } from './web744-sdk-fixture'
 
@@ -113,8 +114,55 @@ describe('#744 sealed-intent note saves dispatch only at the captured editing ba
 
     const published = useEtebaseStore.getState().itemCache.get(item.uid)
     expect(published).not.toBe(peerItem)
-    expect(onSaved).toHaveBeenCalledWith(published.encryptedItem.lastEtag)
+    // With the revision the write replaced.
+    expect(onSaved).toHaveBeenCalledWith(published.encryptedItem.lastEtag, peerRevision)
     expect(onRefused).not.toHaveBeenCalled()
+    expect(await getAll(queueGuard())).toEqual([])
+  })
+
+  it('reports the revision a save rebound through a fresh read replaced, and none when the server already held the text', async () => {
+    const { account, collection, item } = await makeSavedNote(BASE_TITLE, BASE_BODY)
+    server.seed(collection, [item])
+    // Another device saves the same text, so the server holds it at R1 while this context caches R0.
+    const peerItem = item._clone()
+    await peerItem.setContent(BASE_BODY)
+    await account.getCollectionManager().getItemManager(collection).transaction([peerItem])
+    installNoteAccount(account, collection, item)
+    const rebound = vi.fn()
+
+    expect(await saveRetainedDraft(item.uid, collection.uid, { title: BASE_TITLE, content: BASE_BODY, revision: item.etag }, { onSaved: rebound })).toBe('remote')
+    const published = useEtebaseStore.getState().itemCache.get(item.uid)
+    expect(rebound).toHaveBeenCalledWith(published.encryptedItem.lastEtag, peerItem.etag)
+
+    // The same text saved again on the old base: the cached item is not at that base, so nothing
+    // is dispatched on it, and the server already holds the text, so nothing is written.
+    const held = vi.fn()
+    const before = server.transactions.length
+    expect(await saveRetainedDraft(item.uid, collection.uid, { title: BASE_TITLE, content: BASE_BODY, revision: item.etag }, { onSaved: held })).toBe('remote')
+    expect([server.transactions.length - before, held.mock.calls]).toEqual([0, [[published.encryptedItem.lastEtag, null]]])
+  })
+
+  it('shows the save error when the server fails a save whose cached item is older than its base', async () => {
+    const { account, collection, item, peerItem, peerRevision } = await noteWithAcknowledgedPeerEdit()
+    // The edit was typed on A, but the cache still holds the older R0 item.
+    installNoteAccount(account, collection, item)
+    // The server answers the note's reads and writes with an error that is not a network failure.
+    const transport = EtebaseRequest.default
+    EtebaseRequest.default = async (url: string, options: any) => {
+      const method = String(options?.method ?? 'get').toLowerCase()
+      const path = new URL(url).pathname.replace(/\/$/, '')
+      if ((method === 'get' && path.endsWith(`item/${item.uid}`)) || (method === 'post' && path.endsWith('item/transaction'))) {
+        return respond(500, { detail: 'Server error 744' })
+      }
+      return transport(url, options)
+    }
+    const onRefused = vi.fn()
+
+    const outcome = await saveRetainedDraft(item.uid, collection.uid, { title: BASE_TITLE, content: PEER_BODY, revision: peerRevision }, { onRefused })
+
+    expect([outcome, onRefused.mock.calls, toastMock.showErrorToast.mock.calls]).toEqual([false, [], [['Failed to save note. Please try again.']]])
+    EtebaseRequest.default = transport
+    expect([await serverText(account, collection, item.uid), peerItem.etag]).toEqual([PEER_BODY, peerRevision])
     expect(await getAll(queueGuard())).toEqual([])
   })
 
