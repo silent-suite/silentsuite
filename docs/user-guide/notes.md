@@ -15,7 +15,7 @@ Notes is off by default. Turn on **Settings → Experimental → Enable Notes** 
 If your account has no notebooks yet, SilentSuite creates a **Personal Notes** notebook when you enable Notes, not on sign-in.
 
 - With more than one notebook, a row of notebook chips above the list narrows it. **All** shows every visible notebook, and each row then names its notebook.
-- The **Notebook** menu below a note's title moves the note to another notebook. The note keeps its text and its last-edited time.
+- The menu below a note's title shows its notebook's name; choose another notebook there to move the note. The note keeps its text and its last-edited time.
 - New notes go to the notebook the list is narrowed to. With **All** selected they go to the starred default notebook, or, if none is starred, to the notebook of the note you are reading, or else to the first notebook by name. The **New note** button's tooltip names the target.
 - Rename, recolour, star, show or hide, and delete notebooks from the sidebar. When the sidebar is collapsed, the folder button next to **New note** opens it; on a phone it opens the notebooks sheet.
 - Deleting a notebook removes it and every note in it from your apps. The server keeps them, encrypted; see [What the Server Sees in Notes](./notes-server-sees.md#deleting). The confirmation says how many notes that is. On the web, the notebook is not deleted while a note in it has changes that are not on the server yet (such as a note marked **Not saved**), or while this browser cannot confirm that it shows everything in it (for example after a change on another device, or for a note just moved there); a message says which, and nothing is deleted.
@@ -50,11 +50,19 @@ Select the note in the list (newest edits first; each row shows when it was last
 
 Open the note, click **Delete** in the row below the title, and confirm. The deletion syncs to your other devices.
 
-On Android, open the note, open the menu in the top bar and choose **Delete note**, then confirm. If the note has text on this device that has not synced, a second confirmation asks before that text is discarded. The note leaves the list at once and is deleted on the server at the next sync, which follows the same network settings as a save. A note that never synced is only removed from this device. If another device changed the note before the delete reached the server, or the notebook became read-only for you, the note is not deleted: it shows again, with the other device's change, and the notebook list says why until you dismiss the message.
+On Android, open the note, open the menu in the top bar and choose **Delete note**, then confirm. If the note has text on this device that has not synced, a second confirmation asks before that text is discarded. The note leaves the list at once and is deleted on the server at the next sync, which follows the same network settings as a save. A note that never synced is only removed from this device; if it is the copy of a synced note you moved there, and the move has not synced yet, the original in its old notebook is deleted on the server at the next sync. If another device changed the note before the delete reached the server, or the notebook became read-only for you, the note is not deleted: it shows again, with the other device's change, and the notebook list says why until you dismiss the message.
+
+## Move a Note
+
+In the web app, choose another notebook in the menu below the note's title, which shows the note's notebook. It needs a connection.
+
+On Android, open the note, open the menu in the top bar and choose **Move to notebook**, then tap a notebook. Only notebooks you can write to are listed, and notebooks other people share with you are marked as shared, unless they gave you **Admin** access. The note opens in its new notebook at once, also offline, and the move is sent at the next sync, which follows the same network settings as a save. The note's text, including text that has not synced yet, its title, its last-edited time and anything else another app stored with it go across unchanged.
+
+A note cannot change notebooks on the server, so a move creates the note again in the other notebook and then deletes the original. Other devices see the note appear in the new notebook and leave the old one, and its revision history starts over. The original is deleted only while the server has the new note, so a move that stops halfway does not by itself leave the note in neither notebook; at worst the note shows in both. If the new notebook does not take the note, for example because it became read-only for you before the move reached the server, the moved text is kept under **Unsynced text**, and a note that had synced before shows in its old notebook again. If another device changed the note before the move reached the server, or its old notebook became read-only for you, the note stays in both notebooks. If that notebook became read-only after this device had already sent the original's delete, the notebook list says instead that the note may already be deleted in its old notebook. If another device deleted the note in its new notebook first, it stays in its old notebook. If another device deleted the note or its new notebook, or you lost access to that notebook, after this device had already sent the original's delete, the note may be in neither notebook: the notebook list then says it is no longer in its new notebook and may already be deleted in its old one, so check it there. The notebook list says why until you dismiss the message.
 
 ## Offline
 
-Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect, unless the note changed somewhere else in the meantime; then your edit stays in this browser and is not sent. Creating a brand-new note, moving one to another notebook, or saving one as a copy requires a connection.
+Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect, unless the note changed somewhere else in the meantime; then your edit stays in this browser and is not sent. In the web app, creating a brand-new note, moving one to another notebook, or saving one as a copy requires a connection. On Android, a move works offline and is sent at the next sync.
 
 Reloading the page while offline and reading previously opened notes depends on how the deployment is configured: it needs the encrypted local cache to be enabled, and it only covers notes already loaded on that device. Where the cache is not enabled, an offline reload cannot show your notes.
 
@@ -74,7 +82,7 @@ The export lists your notebooks and notes from the server again, so it needs a c
 
 ## Not in this release
 
-Moving notes on Android, the DAV bridge, attachments, importing notes, and rich-text editing are not available yet. Use Markdown in the web app for now.
+The DAV bridge, attachments, importing notes, and rich-text editing are not available yet. Use Markdown in the web app for now.
 
 ## What the server can see
 
