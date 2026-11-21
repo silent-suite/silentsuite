@@ -123,6 +123,65 @@ describe('NoteMarkdownPreview', () => {
     expect(view.container.textContent).toContain('no closing fence')
   })
 
+  it('parses a line that opens 100 containers and shows 101 as plain text', () => {
+    const ok = renderWithIntl(<NoteMarkdownPreview content={`${'- '.repeat(100)}deep`} />)
+    expect(ok.container.querySelector('ul ul')).not.toBeNull()
+    expect(ok.container.querySelector('[data-note-preview="plain-text"]')).toBeNull()
+    ok.unmount()
+
+    const over = renderWithIntl(<NoteMarkdownPreview content={`${'> '.repeat(101)}deep`} />)
+    expect(over.container.querySelector('blockquote')).toBeNull()
+    expect(over.container.querySelector('[data-note-preview="plain-text"]')).toHaveTextContent(`${'> '.repeat(101)}deep`)
+  })
+
+  it('counts nesting by indentation over many lines too', () => {
+    const nested = (depth: number, eol = '\n') =>
+      Array.from({ length: depth }, (_, i) => `${' '.repeat(2 * i)}- item ${i}`).join(eol)
+
+    const ok = renderWithIntl(<NoteMarkdownPreview content={nested(100)} />)
+    expect(ok.container.querySelector('[data-note-preview="plain-text"]')).toBeNull()
+    expect(ok.container.querySelectorAll('li')).toHaveLength(100)
+    ok.unmount()
+
+    for (const eol of ['\n', '\r\n', '\r']) {
+      const started = performance.now()
+      const over = renderWithIntl(<NoteMarkdownPreview content={nested(300, eol)} />)
+      expect(over.container.querySelector('[data-note-preview="plain-text"]')).not.toBeNull()
+      expect(over.container.querySelector('li')).toBeNull()
+      expect(performance.now() - started).toBeLessThan(2000)
+      over.unmount()
+    }
+
+    const tabs = renderWithIntl(<NoteMarkdownPreview content={`${'\t'.repeat(60)}- tabbed`} />)
+    expect(tabs.container.querySelector('[data-note-preview="plain-text"]')).not.toBeNull()
+  })
+
+  it('is not got around by a leading byte order mark or by whitespace after a quote marker', () => {
+    // The guard, not the parser's own overflow, must catch these: parsing them takes seconds.
+    const plain = (content: string) => {
+      const started = performance.now()
+      const view = renderWithIntl(<NoteMarkdownPreview content={content} />)
+      const found = view.container.querySelector('[data-note-preview="plain-text"]') !== null
+      view.unmount()
+      expect(performance.now() - started).toBeLessThan(1500)
+      return found
+    }
+    const bom = String.fromCharCode(0xfeff)
+    expect(plain(`${bom}${'- '.repeat(5000)}x`)).toBe(true)
+    // A list inside a quote continues on the whitespace after the `>`.
+    expect(plain(`>${'\t'.repeat(60)}- a\n>${'\t'.repeat(120)}- b`)).toBe(true)
+    expect(plain(`> ${' '.repeat(250)}- deep`)).toBe(true)
+    // Ordinary spacing is not counted: a quote, a list and an ordered list stay Markdown.
+    expect(plain(`${bom}> - 1. a\n>   - b`)).toBe(false)
+    expect(plain(`${'> '.repeat(100)}x`)).toBe(false)
+  })
+
+  it('counts list markers only when a space follows, so a long rule is still a rule', () => {
+    const view = renderWithIntl(<NoteMarkdownPreview content={`${'-'.repeat(300)}\n\n${'+'.repeat(300)} not a list`} />)
+    expect(view.container.querySelector('[data-note-preview="plain-text"]')).toBeNull()
+    expect(view.container.querySelector('hr')).not.toBeNull()
+  })
+
   it('shows a localized empty-preview message', () => {
     renderWithIntl(<NoteMarkdownPreview content="   " />)
     expect(screen.getByText('Nothing to preview yet.')).toBeInTheDocument()

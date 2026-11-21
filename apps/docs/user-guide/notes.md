@@ -39,7 +39,7 @@ The search box above the list matches note titles and text, within the notebook 
 
 ## Preview Markdown
 
-Use **Preview** to render the body, and select it again to return to editing. Standard Markdown is supported: headings, lists, links, code blocks, quotes. Raw HTML inside a note is shown as text, never executed. Images are never loaded in Markdown previews, so opening a note cannot leak your reading to the servers the images come from.
+Use **Preview** to render the body, and select it again to return to editing. Standard Markdown is supported: headings, lists, links, code blocks, quotes. Only links to web addresses (`http://` and `https://`) and to email addresses (`mailto:`) are live; any other link is shown as its text. A note nested more than about 100 levels deep is shown as plain text instead of rendered. Raw HTML inside a note is shown as text, never executed. Images are never loaded in Markdown previews, so opening a note cannot leak your reading to the servers the images come from.
 
 ## Edit a Note
 
@@ -61,7 +61,7 @@ In the web app, **New note** and the notebook picker in the editor are turned of
 
 ## Sharing
 
-Share a notebook from **Settings → Sharing**. Members see the same notebook, end-to-end encrypted to the public keys you confirm. Before you share or accept, compare security fingerprints with each person over a separate channel, such as in person or on a call; the server supplies usernames and keys, so an unverified fingerprint gives no assurance about who receives access. Read-only members can read notes but cannot change them.
+Share a notebook from **Settings → Sharing**. Members see the same notebook, end-to-end encrypted to the public keys you confirm. Before you share or accept, compare security fingerprints with each person over a separate channel, such as in person or on a call; the server supplies usernames and keys, so an unverified fingerprint gives no assurance about who receives access. Read-only members can read notes but cannot change them. See [what happens when you remove a member](./collections.md#removing-a-member).
 
 ## Export
 
