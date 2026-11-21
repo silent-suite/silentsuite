@@ -77,6 +77,14 @@ internal class EtebasePushRemote(
         return serverItem(itemMgr, item)
     }
 
+    override fun fetchMoved(move: PendingEntry.Move): ServerItem {
+        val itemMgr = manager(move.notebookUid)
+        guard.check()
+        val item = itemMgr.fetch(move.noteUid)
+        requireMovedCopy(move, item.uid, item::verify)
+        return serverItem(itemMgr, item)
+    }
+
     override fun fetchNotebook(notebookUid: String): NotebookCheck.Found {
         guard.check()
         val col = colMgr.fetch(notebookUid)
@@ -186,6 +194,15 @@ internal class EtebasePushRemote(
     companion object {
         private const val UNTITLED = "Untitled"
         private const val CONFLICTED_COPY = "(conflicted copy)"
+
+        /**
+         * [fetchMoved]'s check of the server's answer for [move]'s copy. That answer lets the original be deleted, so it
+         * has to be the copy itself ([uid]), as the server signed it ([verifies]): another note of the same notebook
+         * verifies as well.
+         */
+        fun requireMovedCopy(move: PendingEntry.Move, uid: String, verifies: () -> Boolean) {
+            check(uid == move.noteUid && verifies()) { "the server answered with another note, or one that does not verify" }
+        }
 
         /**
          * Marks [item] deleted so that it carries no note text: its content is emptied and its name blanked first, so a

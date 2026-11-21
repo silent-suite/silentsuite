@@ -76,12 +76,69 @@ class PendingCodecTest {
     }
 
     @Test fun `a state this build does not know makes the entry unreadable, for the full read and for the header read`() {
-        // The state code follows the two uids, each written with its two-byte length. Codes 1, 3 and 4 are this
-        // build's states (4 is a pending delete); 5 is the next one a newer build could add.
+        // The state code follows the two uids, each written with its two-byte length. Codes 1, 3, 4 and 5 are this
+        // build's states (4 is a pending delete, 5 a move's pending delete); 6 is the next one a newer build could add.
         val at = 2 + full.noteUid.length + 2 + full.notebookUid.length
-        val file = withEntryHeader(PendingCodec.encodeEntry(full)) { header -> header.copyOf().also { it[at] = 5 } }
-        assertEquals("state 5", bad(file))
-        assertEquals("state 5", (header(file) as PendingCodec.Decoded.Bad).reason)
+        val file = withEntryHeader(PendingCodec.encodeEntry(full)) { header -> header.copyOf().also { it[at] = 6 } }
+        assertEquals("state 6", bad(file))
+        assertEquals("state 6", (header(file) as PendingCodec.Decoded.Bad).reason)
+    }
+
+    // ---- a move's pending delete ----
+
+    private val moveDelete = PendingEntry("note-5", "book-1", PendingEntry.State.DELETE, 21, "rev-x", false, listOf("rev-s"),
+        blob = byteArrayOf(7), move = PendingEntry.Move("note-6", "book-2"))
+
+    // A move's pending delete: state code 5, and after the conflict mark the copy's uid and its notebook's. Frozen so the
+    // layout cannot change without a test saying so.
+    private val v2MoveDelete = "53534e50020000004d00066e6f74652d350006626f6f6b2d3105000000000000001500057265762d78000000000100057265762d7300000000ffffffffffffffff000000000000066e6f74652d360006626f6f6b2d329c8d4a12000000010755cc5687"
+
+    @Test fun `a move's pending delete reads back with its copy, and its header says it is a move's`() {
+        val bytes = PendingCodec.encodeEntry(moveDelete)
+        assertEquals(moveDelete, ok(bytes))
+        val read = (header(bytes) as PendingCodec.Decoded.Ok).value
+        assertEquals(PendingEntry.State.DELETE, read.state)
+        assertTrue("the header-only read knows a move's delete", read.moved)
+        assertFalse("a plain delete is not a move's", (header(PendingCodec.encodeEntry(moveDelete.copy(move = null))) as PendingCodec.Decoded.Ok).value.moved)
+        assertTrue("the move is part of an entry's identity", moveDelete != moveDelete.copy(move = null))
+        assertTrue(moveDelete != moveDelete.copy(move = PendingEntry.Move("note-7", "book-2")))
+    }
+
+    @Test fun `a move's pending delete is written byte for byte as frozen, and a plain delete keeps its own code`() {
+        assertEquals(moveDelete, ok(unhex(v2MoveDelete)))
+        assertArrayEquals(unhex(v2MoveDelete), PendingCodec.encodeEntry(moveDelete))
+        // Without the move, the same entry is a plain pending delete, state code 4, with nothing after the mark.
+        val plain = PendingCodec.encodeEntry(moveDelete.copy(move = null))
+        val at = PendingCodec.ENTRY_PREFIX + 2 + moveDelete.noteUid.length + 2 + moveDelete.notebookUid.length
+        assertEquals(4, plain[at].toInt())
+        assertEquals(5, unhex(v2MoveDelete)[at].toInt())
+        assertEquals(PendingCodec.entryHeaderEnd(plain)!! + 2 + 6 + 2 + 6, PendingCodec.entryHeaderEnd(unhex(v2MoveDelete))!!)
+    }
+
+    @Test fun `a move's pending delete cut short in its move fields, or with a byte after them, is refused by both reads`() {
+        val bytes = PendingCodec.encodeEntry(moveDelete)
+        val cut = withEntryHeader(bytes) { it.copyOf(it.size - 1) }
+        assertEquals("truncated", bad(cut))
+        assertEquals("truncated", (header(cut) as PendingCodec.Decoded.Bad).reason)
+        val longer = withEntryHeader(bytes) { it + 0.toByte() }
+        assertEquals("trailing header bytes", bad(longer))
+        assertEquals("trailing header bytes", (header(longer) as PendingCodec.Decoded.Bad).reason)
+    }
+
+    @Test fun `a move's pending delete whose copy or notebook is not an Etebase uid is unreadable, never read`() {
+        for (bad in listOf(PendingEntry.Move("../note-6", "book-2"), PendingEntry.Move("note-6", "book/2"), PendingEntry.Move("", "book-2"))) {
+            val bytes = PendingCodec.encodeEntry(moveDelete.copy(move = bad))
+            assertTrue("$bad", bad(bytes).isNotEmpty())
+            assertTrue("$bad: the header read refuses it too", header(bytes) is PendingCodec.Decoded.Bad)
+        }
+    }
+
+    @Test fun `only a pending delete carries a move`() {
+        for (state in listOf(PendingEntry.State.UPSERT, PendingEntry.State.HELD)) {
+            assertThrows(IllegalArgumentException::class.java) {
+                moveDelete.copy(state = state, held = if (state == PendingEntry.State.HELD) PendingEntry.Held(HeldReason.REJECTED, 1) else null)
+            }
+        }
     }
 
     @Test fun `the state code of the prototype's pending delete is not read, by the full read or by the header read`() {

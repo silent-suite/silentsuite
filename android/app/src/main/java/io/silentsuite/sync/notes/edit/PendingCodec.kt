@@ -25,6 +25,12 @@ import java.util.zip.CRC32
  * ([PendingEntry.fromConflict]). It was added to format 2 in place, while that format existed only on
  * an unreleased branch, so a format 2 file without it does not read. Once a build has written format 2
  * files on a user's device, a new field needs a new format version.
+ *
+ * The one exception is a state of its own: a pending delete made by a move ([PendingEntry.move]) has state code
+ * [STATE_MOVE_DELETE], and only that code is followed, after the mark, by the copy's uid and its notebook's uid. A build
+ * that does not know the code reads such a file as one it cannot read and keeps it, as
+ * builds before the pending delete (code 4) did with that code; every other file is written and read as before, so a
+ * downgrade leaves nothing else unreadable.
  */
 internal object PendingCodec {
     const val ENTRY_FORMAT_VERSION = 2
@@ -36,6 +42,8 @@ internal object PendingCodec {
     private const val KIND_SEQUENCE = 3
     private const val KIND_PERMIT = 4
     private const val KIND_ACKNOWLEDGEMENT = 5
+    /** The state code of a pending delete made by a move; see the class comment. */
+    private const val STATE_MOVE_DELETE = 5
     /** The largest blob the store keeps; a larger save is refused before anything is written. */
     const val MAX_BLOB = 64 * 1024 * 1024
     /** Bytes before a format 2 entry header: magic, format version, header length. */
@@ -108,7 +116,7 @@ internal object PendingCodec {
     private fun writeEntryFields(out: DataOutputStream, e: PendingEntry) {
         out.writeUTF(e.noteUid)
         out.writeUTF(e.notebookUid)
-        out.writeByte(stateCode(e.state))
+        out.writeByte(if (e.move != null) STATE_MOVE_DELETE else stateCode(e.state))
         out.writeLong(e.version)
         out.writeUTF(e.revision)
         out.writeBoolean(e.isCreate)
@@ -130,13 +138,18 @@ internal object PendingCodec {
             out.writeLong(it.at)
         }
         out.writeBoolean(e.fromConflict)
+        e.move?.let {
+            out.writeUTF(it.noteUid)
+            out.writeUTF(it.notebookUid)
+        }
     }
 
     /** Reads every header field and joins them with [blob]. */
     private fun readEntryFields(input: DataInputStream, blob: ByteArray): PendingEntry {
         val noteUid = input.readUTF()
         val notebookUid = input.readUTF()
-        val state = stateOf(input.readUnsignedByte())
+        val code = input.readUnsignedByte()
+        val state = if (code == STATE_MOVE_DELETE) PendingEntry.State.DELETE else stateOf(code)
         val version = input.readLong()
         val revision = input.readUTF()
         val isCreate = input.readBoolean()
@@ -154,9 +167,15 @@ internal object PendingCodec {
             PendingEntry.Held(reason, input.readLong())
         } else null
         val fromConflict = input.readBoolean()
+        val move = if (code == STATE_MOVE_DELETE) PendingEntry.Move(input.readUTF(), input.readUTF()) else null
         return try {
+            // A run builds file names and requests from these: one that is not an Etebase uid makes the entry unreadable.
+            move?.let {
+                PendingNotesStore.checkedUid(it.noteUid)
+                PendingNotesStore.checkedUid(it.notebookUid)
+            }
             PendingEntry(noteUid, notebookUid, state, version, revision, isCreate, sent, failureCount,
-                lastFailureAt, lastFailureCategory, origin, held, fromConflict, blob)
+                lastFailureAt, lastFailureCategory, origin, held, fromConflict, blob, move)
         } catch (e: IllegalArgumentException) {
             throw IOException(e.message)
         }
