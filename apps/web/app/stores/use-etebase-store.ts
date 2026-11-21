@@ -552,15 +552,40 @@ export async function withoutPendingDeletes(
 
 export type SealIntent = 'note' | 'favorite'
 
+/**
+ * The Save as a copy prepared for refused note text (#1113 D1): the copy's UID,
+ * its revision, the SDK's cacheSave of the item, base64, and every revision of
+ * the copy sent so far, oldest first (`revision` last). The cacheSave bytes are
+ * Etebase ciphertext under the notebook's keys, never plaintext; revisions are
+ * random IDs the server already holds for a copy that landed.
+ */
+export interface SealedNoteCopy {
+  uid: string
+  item: string
+  revision: string
+  sent: string[]
+}
+
+/** The most revisions one copy is sent with; newer text after that goes onto the copy once it is confirmed. */
+export const MAX_NOTE_COPY_REVISIONS = 32
+
+/**
+ * v1: queued note custody (#744). v2: the same, written for note text whose save
+ * was refused (held 'base-changed') or failed (held 'retry-exhausted') (#1113 D1),
+ * with an optional prepared copy. Replay of
+ * v2 ignores `copy`; a build that knows only v1 holds a v2 record as 'unreadable'.
+ */
 interface SealedNotePayload {
-  v: 1
+  v: 1 | 2
   kind: 'note'
   body: { content: string; meta: { name: string; mtime: number } }
   base: { revision: string | null; digest: string }
   prior: string[]
+  copy?: SealedNoteCopy
 }
 
 const SEALED_DIGEST = /^[0-9a-f]{64}$/
+const SEALED_COPY_ITEM = /^[A-Za-z0-9+/]+={0,2}$/
 
 function hasExactKeys(value: unknown, keys: string[]): value is Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
@@ -576,8 +601,26 @@ function parseSealedNotePayload(plaintext: string): SealedNotePayload | null {
   } catch {
     return null
   }
-  if (!hasExactKeys(value, ['v', 'kind', 'body', 'base', 'prior'])) return null
-  if (value.v !== 1 || value.kind !== 'note') return null
+  const v1Keys = ['v', 'kind', 'body', 'base', 'prior']
+  if (!hasExactKeys(value, v1Keys) && !hasExactKeys(value, [...v1Keys, 'copy'])) return null
+  if (value.kind !== 'note') return null
+  if (value.v === 1) {
+    if ('copy' in value) return null
+  } else if (value.v === 2) {
+    if ('copy' in value) {
+      const copy = value.copy
+      if (!hasExactKeys(copy, ['uid', 'item', 'revision', 'sent'])) return null
+      if (typeof copy.uid !== 'string' || copy.uid.length === 0) return null
+      if (typeof copy.revision !== 'string' || copy.revision.length === 0) return null
+      if (typeof copy.item !== 'string' || !SEALED_COPY_ITEM.test(copy.item)) return null
+      const { sent } = copy
+      if (!Array.isArray(sent) || sent.length === 0 || sent.length > MAX_NOTE_COPY_REVISIONS) return null
+      if (!sent.every((revision: unknown) => typeof revision === 'string' && revision.length > 0)) return null
+      if (sent[sent.length - 1] !== copy.revision) return null
+    }
+  } else {
+    return null
+  }
   const { body, base, prior } = value
   if (!hasExactKeys(body, ['content', 'meta']) || typeof body.content !== 'string') return null
   if (!hasExactKeys(body.meta, ['name', 'mtime']) || typeof body.meta.name !== 'string') return null
@@ -595,6 +638,12 @@ export interface SealedEditingBase {
   title: string
   content: string
   revision: string | null
+  /**
+   * Set on a base reopened from a held note record (#1113 D1), which keeps only
+   * the base text's digest: `title` and `content` are then not the base text, no
+   * text comparison can prove this base, and only its revision can.
+   */
+  digestOnly?: string
 }
 
 function knownRevision(revision: unknown): revision is string {
@@ -610,6 +659,8 @@ async function noteMatchesBase(
   assertGuard: () => void,
 ): Promise<boolean> {
   if (!item || item.isDeleted) return false
+  // A digest-only base has no text to compare: never proved by text.
+  if (base.digestOnly !== undefined) return false
   const raw = await item.getContent()
   assertGuard()
   const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw)
@@ -639,6 +690,8 @@ async function replaceNoteStubWithDescendant(
   const stub = outstanding[0]
   if (outstanding.length !== 1 || !stub || stub.type !== 'sealed-update' || !stub.sealed || typeof stub.rev !== 'number') return false
   if (typeof meta?.name !== 'string' || typeof meta.mtime !== 'number' || !Number.isFinite(meta.mtime)) return false
+  // A digest-only base cannot show that this edit was typed on the stub's text.
+  if (base.digestOnly !== undefined) return false
   const associatedData = `${offlineQueueGuard.accountFingerprint}|notes|${itemUid}`
   const opened = await cacheOpenQueuePayload(stub.sealed, associatedData, accountEpoch)
   assertGuard()
@@ -652,12 +705,14 @@ async function replaceNoteStubWithDescendant(
   if (normTitle(payload.body.meta.name) !== normTitle(base.title) || payload.body.content !== base.content) return false
   const replacedDigest = await cacheSealedPayloadDigest(['note', normTitle(payload.body.meta.name), payload.body.content])
   assertGuard()
-  const successor = {
-    v: 1,
+  // A v2 stub keeps its version and prepared copy (#1113 D1), so the copy id outlives the replacement.
+  const successor: SealedNotePayload = {
+    v: payload.v,
     kind: 'note',
     body: { content, meta: { name: meta.name, mtime: meta.mtime } },
     base: payload.base,
     prior: [...payload.prior, replacedDigest].slice(-32),
+    ...(payload.copy ? { copy: payload.copy } : {}),
   }
   const sealed = await cacheSealQueuePayload(JSON.stringify(successor), associatedData, accountEpoch)
   assertGuard()
@@ -678,6 +733,251 @@ async function replaceNoteStubWithDescendant(
   }
   assertGuard()
   return true
+}
+
+/**
+ * How a note's held page text record is held (#1113 D1): 'base-changed' for text
+ * whose save was refused, 'retry-exhausted' for text whose save failed otherwise.
+ * Both are existing held reasons; replay never sends either until the user retries.
+ */
+export type HeldTextReason = 'base-changed' | 'retry-exhausted'
+
+function isHeldTextReason(held: QueueEntry['held']): held is HeldTextReason {
+  return held === 'base-changed' || held === 'retry-exhausted'
+}
+
+/**
+ * Whether a note's outstanding custody is exactly its own held text (#1113 D1):
+ * one sealed v2 note record held as 'base-changed' or 'retry-exhausted' that opens
+ * and validates in this account. Anything else, including an unreadable record, is not.
+ */
+async function isHeldRefusedTextRecord(
+  outstanding: QueueEntry[],
+  itemUid: string,
+  guard: OfflineQueueAccountGuard,
+  accountEpoch: number,
+): Promise<boolean> {
+  const record = outstanding[0]
+  if (outstanding.length !== 1 || !record || record.type !== 'sealed-update' || !record.sealed) return false
+  if (!isHeldTextReason(record.held) || typeof record.rev !== 'number' || record.itemUid !== itemUid) return false
+  const opened = await cacheOpenQueuePayload(record.sealed, `${guard.accountFingerprint}|notes|${itemUid}`, accountEpoch)
+  if (opened.kind !== 'opened') return false
+  return parseSealedNotePayload(opened.plaintext)?.v === 2
+}
+
+/** A held note record this page wrote or reopened: the queue record's id at its revision. */
+export interface HeldNoteRecordRef {
+  id: string
+  rev: number
+}
+
+/** A refused note text reopened from its held record (#1113 D1). */
+export interface ReopenedHeldNote {
+  ref: HeldNoteRecordRef
+  itemUid: string
+  collectionUid: string
+  draft: { title: string; content: string }
+  mtime: number
+  /** Only the base's revision and digest are stored; its text is not. */
+  base: { revision: string | null; digest: string }
+  /** Refused, or failed otherwise. */
+  reason: HeldTextReason
+  copy?: SealedNoteCopy
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  }
+  return btoa(binary)
+}
+
+function base64ToBytes(text: string): Uint8Array {
+  const binary = atob(text)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+/**
+ * Writes held note text as a sealed v2 record held for `reason` (#1113 D1):
+ * an update of `known` at its revision when given, else a new record, inserted only
+ * while the note has no outstanding custody. The record keeps the draft, the base
+ * revision and digest, and the prepared copy, all inside the AES-GCM payload bound
+ * to `<fingerprint>|notes|<itemUid>`. Replay never sends it until the user retries
+ * it, and no display record is written. Resolves the record now holding this text;
+ * null when nothing was written and `known`, if given, is gone; 'blocked' when
+ * `known` still exists but could not be updated, so it may hold older text or copy.
+ */
+export async function writeHeldNoteRecord(
+  itemUid: string,
+  collectionUid: string,
+  draft: { title: string; content: string },
+  base: SealedEditingBase,
+  copy: SealedNoteCopy | undefined,
+  known: HeldNoteRecordRef | undefined,
+  reason: HeldTextReason = 'base-changed',
+): Promise<HeldNoteRecordRef | null | 'blocked'> {
+  const accountEpoch = getAccountEpoch()
+  const { account, accountFingerprint } = useEtebaseStore.getState()
+  const guard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+  if (!guard) return null
+  const assertGuard = () => assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+  await cacheEnsureFingerprint(guard.accountFingerprint, accountEpoch)
+  assertGuard()
+  if (!await cacheEnsureEncryptedEnvelope(accountEpoch)) return null
+  assertGuard()
+  const core = await import('@silentsuite/core')
+  assertGuard()
+  const meta = core.noteToItemMeta({ title: draft.title, updated_at: new Date() })
+  const digest = base.digestOnly ?? await cacheSealedPayloadDigest([
+    'note',
+    core.noteFromEtebaseItem(itemUid, '', { name: base.title }).title,
+    base.content,
+  ])
+  assertGuard()
+  const payload: SealedNotePayload = {
+    v: 2,
+    kind: 'note',
+    body: { content: draft.content, meta: { name: String(meta.name), mtime: Number(meta.mtime) } },
+    base: { revision: knownRevision(base.revision) ? base.revision : null, digest },
+    prior: [],
+    ...(copy ? { copy } : {}),
+  }
+  const sealed = await cacheSealQueuePayload(JSON.stringify(payload), `${guard.accountFingerprint}|notes|${itemUid}`, accountEpoch)
+  assertGuard()
+  if (!sealed) return null
+  if (known) {
+    const updated = await casStub(known.id, known.rev, { sealed, held: reason }, guard)
+    assertGuard()
+    if (updated) return { id: known.id, rev: known.rev + 1 }
+    // The record moved on (the banner's Retry, replay holding it again): while it is still this
+    // note's held v2 record, it is updated at its current revision. A record that is gone gets a
+    // new one below; one that still exists in any other state blocks the write.
+    const current = (await readOutstanding({ collectionType: 'notes', itemUid }, guard)).find((entry) => entry.id === known.id)
+    assertGuard()
+    if (current) {
+      const ours = isHeldTextReason(current.held) && typeof current.rev === 'number'
+        && await isHeldRefusedTextRecord([current], itemUid, guard, accountEpoch)
+      assertGuard()
+      if (!ours || !await casStub(current.id, current.rev, { sealed, held: reason }, guard)) return 'blocked'
+      assertGuard()
+      return { id: current.id, rev: (current.rev as number) + 1 }
+    }
+  }
+  const inserted = await insertIfNoOutstanding(
+    { type: 'sealed-update', collectionType: 'notes', collectionUid, itemUid, sealed, rev: 1, held: reason },
+    guard,
+  )
+  assertGuard()
+  if (!inserted) return null
+  // The record just inserted is found by its own random IV.
+  const outstanding = await readOutstanding({ collectionType: 'notes', itemUid }, guard)
+  assertGuard()
+  const ours = outstanding.find((entry) => (
+    entry.sealed && typeof entry.rev === 'number'
+    && entry.sealed.iv.length === sealed.iv.length && entry.sealed.iv.every((byte, i) => byte === sealed.iv[i])
+  ))
+  return ours && typeof ours.rev === 'number' ? { id: ours.id, rev: ours.rev } : null
+}
+
+/** Deletes a held note record at its revision only (#1113 D1); false when it moved on or is gone. */
+export async function deleteHeldNoteRecord(known: HeldNoteRecordRef): Promise<boolean> {
+  const { account, accountFingerprint } = useEtebaseStore.getState()
+  const guard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+  if (!guard) return false
+  const deleted = await casStub(known.id, known.rev, 'delete', guard)
+  assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+  return deleted
+}
+
+/**
+ * Opens this account's held refused-text records (#1113 D1): sealed v2 note records
+ * held as 'base-changed' or 'retry-exhausted'. Only records of the current account fingerprint are read,
+ * and each opens only under its own `<fingerprint>|notes|<itemUid>` binding. Each is
+ * decoded on its own; one that does not open or validate is left as it is. Resolves
+ * 'not-ready' when the key is not available yet, so nothing can be known.
+ */
+export async function openHeldNoteRecords(): Promise<ReopenedHeldNote[] | 'not-ready'> {
+  const accountEpoch = getAccountEpoch()
+  const { account, accountFingerprint } = useEtebaseStore.getState()
+  const guard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+  if (!guard) return 'not-ready'
+  const assertGuard = () => assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+  const entries = await getQueuedMutations(guard)
+  assertGuard()
+  const reopened: ReopenedHeldNote[] = []
+  for (const entry of entries) {
+    if (entry.accountFingerprint !== guard.accountFingerprint) continue
+    if (entry.type !== 'sealed-update' || entry.collectionType !== 'notes' || !isHeldTextReason(entry.held)) continue
+    const reason = entry.held
+    if (!entry.sealed || typeof entry.rev !== 'number' || !entry.itemUid || !entry.collectionUid) continue
+    const opened = await cacheOpenQueuePayload(entry.sealed, `${guard.accountFingerprint}|notes|${entry.itemUid}`, accountEpoch)
+    assertGuard()
+    if (opened.kind === 'not-ready') return 'not-ready'
+    if (opened.kind !== 'opened') continue
+    const payload = parseSealedNotePayload(opened.plaintext)
+    if (payload?.v !== 2) continue
+    let rev = entry.rev
+    if (opened.resealed) {
+      // Opened with the previous key only: store the identical plaintext under the current key.
+      if (!await casStub(entry.id, rev, { sealed: opened.resealed }, guard)) continue
+      assertGuard()
+      rev += 1
+    }
+    reopened.push({
+      ref: { id: entry.id, rev },
+      itemUid: entry.itemUid,
+      collectionUid: entry.collectionUid,
+      draft: { title: payload.body.meta.name, content: payload.body.content },
+      mtime: payload.body.meta.mtime,
+      base: payload.base,
+      reason,
+      ...(payload.copy ? { copy: payload.copy } : {}),
+    })
+  }
+  return reopened
+}
+
+/**
+ * The prepared copy as stored with its held text: the SDK's cacheSave, base64, with
+ * the revisions sent so far, ending with this item's (#1113 D1).
+ */
+export function storeNoteCopyItem(collectionUid: string, item: any, sent: string[]): SealedNoteCopy | null {
+  const { account, collections } = useEtebaseStore.getState()
+  if (!account || !item?.uid || !item.etag) return null
+  if (sent.length === 0 || sent.length > MAX_NOTE_COPY_REVISIONS || sent[sent.length - 1] !== item.etag) return null
+  const collection = resolveCollection(collections, 'notes', collectionUid)
+  if (!collection) return null
+  const saved = account.getCollectionManager().getItemManager(collection).cacheSave(item)
+  return { uid: item.uid, item: bytesToBase64(saved), revision: item.etag, sent: [...sent] }
+}
+
+/**
+ * Loads a stored prepared copy (#1113 D1), with the title and text of its revision
+ * decrypted locally. Null when it does not load as the same UID at the same revision
+ * or cannot be decrypted; nothing is sent.
+ */
+export async function loadNoteCopyItem(
+  collectionUid: string,
+  copy: SealedNoteCopy,
+): Promise<{ item: any; title: string; content: string; mtime: number | null } | null> {
+  const { account, collections } = useEtebaseStore.getState()
+  if (!account) return null
+  const collection = resolveCollection(collections, 'notes', collectionUid)
+  if (!collection) return null
+  try {
+    const item = account.getCollectionManager().getItemManager(collection).cacheLoad(base64ToBytes(copy.item))
+    if (item.uid !== copy.uid || item.etag !== copy.revision) return null
+    const meta = item.getMeta()
+    const raw = await item.getContent()
+    const content = typeof raw === 'string' ? raw : new TextDecoder().decode(raw)
+    const mtime = typeof meta?.mtime === 'number' && Number.isFinite(meta.mtime) ? meta.mtime : null
+    return { item, title: typeof meta?.name === 'string' ? meta.name : '', content, mtime }
+  } catch {
+    return null
+  }
 }
 
 type UpdateItemOptions = NonNullable<Parameters<EtebaseActions['updateItem']>[3]>
@@ -740,7 +1040,19 @@ async function updateNoteAtCapturedBase(
     if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
     return refuse()
   }
+  // The note's own refused text, held as a v2 record (#1113 D1), is not queued work:
+  // it never replays on its own, so the save goes on and an accepted one deletes it.
+  let ownRefusedText = false
   if (outstanding.length > 0) {
+    try {
+      ownRefusedText = await isHeldRefusedTextRecord(outstanding, itemUid, offlineQueueGuard, accountEpoch)
+      assertGuard()
+    } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
+      ownRefusedText = false
+    }
+  }
+  if (outstanding.length > 0 && !ownRefusedText) {
     options.onCustodyObserved?.()
     try {
       const merged = await replaceNoteStubWithDescendant(
@@ -786,7 +1098,16 @@ async function updateNoteAtCapturedBase(
     assertGuard()
     // A missing copy is not proof of anything; a live or deleted one that differs is.
     if (!fresh) return refuse()
-    if (!await noteMatchesBase(core, fresh, itemUid, base, assertGuard)) return refuse('changed')
+    // The server already holds exactly this text (the banner's Retry replayed this note's own
+    // record, or the same edit was saved elsewhere): nothing is written, and the save is done
+    // at that revision.
+    const typedTitle = meta?.name
+    if (typeof typedTitle === 'string' && await noteMatchesBase(core, fresh, itemUid, { title: typedTitle, content, revision: null }, assertGuard)) {
+      const heldRevision = core.savedRevisionOf(fresh)
+      if (heldRevision) return await publish({ item: fresh, etag: heldRevision })
+    }
+    // A digest-only base cannot be compared, so a mismatch proves nothing about it.
+    if (!await noteMatchesBase(core, fresh, itemUid, base, assertGuard)) return base.digestOnly !== undefined ? refuse() : refuse('changed')
     const freshRevision = core.savedRevisionOf(fresh)
     if (!freshRevision) return refuse()
     if (!admissionRevision) admissionRevision = freshRevision
@@ -821,7 +1142,11 @@ export async function hasOutstandingNoteCustody(itemUid: string): Promise<boolea
   try {
     const outstanding = await readOutstanding({ collectionType: 'notes', itemUid }, guard)
     assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
-    return outstanding.length > 0
+    if (outstanding.length === 0) return false
+    // The note's own refused text (#1113 D1) is not queued work, as in the save path.
+    const own = await isHeldRefusedTextRecord(outstanding, itemUid, guard, accountEpoch)
+    assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+    return !own
   } catch (err) {
     if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
     return true
@@ -1538,6 +1863,8 @@ async function queueSealedNoteUpdate(
 ): Promise<'queued' | false> {
   const base = options.base
   if (type !== 'notes' || options.sealIntent !== 'note' || !base) return false
+  // Custody needs the base text's proof; a digest-only base is never admitted offline.
+  if (base.digestOnly !== undefined) return false
   if (typeof meta?.name !== 'string' || typeof meta.mtime !== 'number' || !Number.isFinite(meta.mtime)) return false
   await cacheEnsureFingerprint(offlineQueueGuard.accountFingerprint, accountEpoch)
   assertOfflineQueueAccountGuard(offlineQueueGuard, getState())

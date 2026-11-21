@@ -84,7 +84,7 @@ const BASE_TITLE = 'Kept note title 744'
 const BASE_BODY = 'BASE BODY R0 744'
 const PEER_BODY = 'PEER BODY A 744'
 const HELD_BODY = 'PRIVATE HELD BODY B 744'
-const BASE_CHANGED_TEXT = "Not saved to the server: this item changed after your offline edit, so it wasn't saved over it. Your edit is kept on this device."
+const BASE_CHANGED_TEXT = "Not saved to the server: this item changed somewhere else after your edit, so it wasn't saved over it. Your edit is kept on this device."
 const TARGET_MISSING_TEXT = "Not saved to the server: this item was deleted or isn't available to this account. Your edit is kept on this device."
 const LEGACY_TEXT = "Can't be verified, won't be sent automatically; changes paused."
 

@@ -99,6 +99,7 @@
     "saveStateSaved": "Saved",
     "saveStateFailed": "Not saved",
     "closingSave": "Saving your last changes to this note…",
+    "reopeningHeldText": "Checking this browser for text that was not saved…",
     "saveStateCopied": "Saved as a copy",
     "conflictChanged": "This note changed somewhere else after you started editing, so your text was not saved over it. Your text is still here.",
     "conflictUnproved": "This browser could not confirm that the note is unchanged since you started editing, so your text was not saved over it. Your text is still here.",
@@ -116,6 +117,7 @@
     "copyFailedOffline": "Not copied: you are offline, and a copy needs a connection.",
     "copyFailedUnconfirmed": "Not copied: the server did not confirm the copy. Saving as a copy again will not make a second one.",
     "copyFailedDeleted": "Not copied: the copy was deleted somewhere else before this browser could confirm it. Saving as a copy again makes a new one.",
+    "copyFailedChanged": "Not copied: the copy was changed somewhere else before this browser could confirm it. Saving as a copy again makes a new one.",
     "copyFailedReadOnly": "Not copied: you cannot add notes to this notebook.",
     "copyFailedNoNotebook": "Not copied: this note's notebook is not available in this browser.",
     "allNotebooks": "All",
@@ -193,5 +195,18 @@
       "controlChars": "This contains characters that can't be sent.",
       "email": "Enter a valid email address or leave this empty."
     }
+  },
+  "SignOut": {
+    "unsyncedTitle": "Log out with changes on this device?",
+    "unsyncedCount": "{count, plural, one {# change is only on this device. Logging out deletes it.} other {# changes are only on this device. Logging out deletes them.}}",
+    "unsyncedUnknown": "This browser could not check for changes that are only on this device. Logging out deletes any it has.",
+    "syncNow": "Sync now",
+    "syncing": "Syncing…",
+    "cancel": "Cancel",
+    "logOutAndDelete": "Log out and delete",
+    "confirmTitle": "Delete these changes?",
+    "confirmCount": "{count, plural, one {# change that is only on this device will be deleted when you log out. It cannot be recovered.} other {# changes that are only on this device will be deleted when you log out. They cannot be recovered.}}",
+    "confirmUnknown": "Any changes that are only on this device will be deleted when you log out. They cannot be recovered.",
+    "deleteAndLogOut": "Delete and log out"
   }
 }

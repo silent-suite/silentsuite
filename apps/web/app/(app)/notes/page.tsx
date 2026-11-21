@@ -22,6 +22,7 @@ import {
   proveNoteBase,
   readNewerNoteVersion,
   registerNoteEditor,
+  reopenHeldNoteText,
   releaseHeldNoteDraft,
   releaseNoteObligation,
   useNoteStore,
@@ -107,6 +108,7 @@ const COPY_FAILURE_KEY = {
   offline: 'copyFailedOffline',
   unconfirmed: 'copyFailedUnconfirmed',
   deleted: 'copyFailedDeleted',
+  changed: 'copyFailedChanged',
   'read-only': 'copyFailedReadOnly',
   'no-notebook': 'copyFailedNoNotebook',
 } as const satisfies Record<NoteCopyFailure, string>
@@ -254,7 +256,7 @@ function NoteRow({ note, notebook, selected, dateLabel, onSelect }: {
  * A note whose closed editor is still saving, shown read-only as plain text
  * until that save ends, so a new editor starts from its result (#1113 D1).
  */
-function ClosingNoteView({ note }: { note: Note }) {
+function ClosingNoteView({ note, status = 'closingSave' }: { note: Note; status?: 'closingSave' | 'reopeningHeldText' }) {
   const t = useTranslations('Notes')
   return (
     // translate="no": a browser's page translation would send the note text to its service.
@@ -262,7 +264,7 @@ function ClosingNoteView({ note }: { note: Note }) {
       <p className="w-full truncate border-b border-[rgb(var(--border))] pb-2 text-lg font-semibold text-[rgb(var(--foreground))]">
         {note.title.trim() || t('untitled')}
       </p>
-      <span role="status" aria-live="polite" className="text-xs text-[rgb(var(--muted))]">{t('closingSave')}</span>
+      <span role="status" aria-live="polite" className="text-xs text-[rgb(var(--muted))]">{t(status)}</span>
       <div className="min-h-[16rem] flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-3 text-[0.9375rem] text-[rgb(var(--foreground))] opacity-60">
         {note.content}
       </div>
@@ -352,8 +354,10 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
   // The last draft handed to the save chain while saves run; null when it is idle.
   const queuedRef = useRef<Draft | null>(null)
 
+  // Text reopened from its held record has only its base's digest: it never counts as typed back.
   const isDirty = () => (
-    draftRef.current.title !== savedRef.current.title || draftRef.current.content !== savedRef.current.content
+    lineageRef.current.base.digestOnly !== undefined
+    || draftRef.current.title !== savedRef.current.title || draftRef.current.content !== savedRef.current.content
   )
 
   const flush = useCallback(() => {
@@ -366,7 +370,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
     const draft = draftRef.current
     const matches = (other: Draft) => draft.title === other.title && draft.content === other.content
     // Text typed back to the saved version while other text is queued still needs its own save.
-    if (matches(savedRef.current) && (!queuedRef.current || matches(queuedRef.current))) return
+    // Reopened text with a digest-only base is never clean (isDirty).
+    if (!isDirty() && (!queuedRef.current || matches(queuedRef.current))) return
     // Captured now, before the chain: the text, the lineage it was typed on and any obligation.
     const lineage = lineageRef.current
     const obligation = getNoteObligation(note.id)
@@ -618,6 +623,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
     isClean: () => !isDirty(),
     chainIdle: () => inFlightRef.current === 0,
     base: () => lineageRef.current.base,
+    draft: () => draftRef.current,
     flushAndWait: async () => {
       flush()
       await saveChainRef.current
@@ -831,6 +837,9 @@ function NotesPageBody() {
   const activeListId = useNotebookStore((s) => s.activeListId)
   const moveNote = useNoteStore((s) => s.moveNote)
   const closingNoteIds = useNoteStore((s) => s.closingNoteIds)
+  const heldTextReopen = useNoteStore((s) => s.heldTextReopen)
+  const heldTextReopenGen = useNoteStore((s) => s.heldTextReopenGen)
+  const hasAccount = useEtebaseStore((s) => s.account !== null)
   const isSidebarExpanded = useSidebarStore((s) => s.isExpanded)
   const setSidebarExpanded = useSidebarStore((s) => s.setExpanded)
   const layout = LAYOUT[isSidebarExpanded ? 'lg' : 'md']
@@ -907,6 +916,11 @@ function NotesPageBody() {
   useEffect(() => {
     if (selectedId && !movingNoteIds.has(selectedId) && !visibleNotes.some((note) => note.id === selectedId)) setSelectedId(null)
   }, [selectedId, movingNoteIds, visibleNotes])
+
+  // Text whose save was refused before a reload comes back from its sealed record (#1113 D1).
+  useEffect(() => {
+    if (hasAccount) void reopenHeldNoteText()
+  }, [hasAccount])
 
   // A filter on a notebook that was hidden or deleted falls back to all notebooks.
   useEffect(() => {
@@ -1120,9 +1134,11 @@ function NotesPageBody() {
         <div className={`min-w-0 flex-1 ${selectedNote ? 'flex' : layout.detailWhileClosed} min-h-0 flex-col`}>
           {selectedNote && closingNoteIds?.includes(selectedNote.id) ? (
             <ClosingNoteView note={selectedNote} />
+          ) : selectedNote && heldTextReopen === 'running' ? (
+            <ClosingNoteView note={selectedNote} status="reopeningHeldText" />
           ) : selectedNote ? (
             <NoteEditor
-              key={selectedNote.id}
+              key={`${selectedNote.id}:${heldTextReopenGen}`}
               note={selectedNote}
               canWrite={canEditSelected}
               moveRunning={movingNoteIds.has(selectedNote.id)}

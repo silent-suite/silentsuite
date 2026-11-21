@@ -862,8 +862,18 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(titleBox().value).toBe(DRAFT_TITLE)
     })
 
-    it('asks before the tab closes while refused text is kept, and not once the text is back to the saved one', async () => {
-      await refusedDraft()
+    it('asks before the tab closes while refused text is only in this page, and not once the text is back to the saved one', async () => {
+      const { account, collection, item } = await seedSavedNote()
+      await addOtherNote(account, collection, item)
+      // Other custody of the note: its refused text cannot get a record of its own.
+      expect(await opaqueCustody(collection, item)).toBe(true)
+      renderNotesPage()
+      fireEvent.click(baseRow())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
       expect(beforeUnloadPrevented()).toBe(true)
       fireEvent.click(otherRow())
       await settle()
@@ -874,6 +884,23 @@ describe('#744 the rendered note editor saves only through its captured base', (
       fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
 
       expect(beforeUnloadPrevented()).toBe(false)
+    })
+
+    it('does not ask before the tab closes once refused text is stored in its sealed record', async () => {
+      const { item } = await refusedDraft()
+
+      const records = await getAll(queueGuard())
+      expect(records.map((record) => [record.itemUid, record.held])).toEqual([[item.uid, 'base-changed']])
+      expect(beforeUnloadPrevented()).toBe(false)
+    })
+
+    it('asks again before the tab closes once text is typed after the stored refusal', async () => {
+      await refusedDraft()
+      expect(beforeUnloadPrevented()).toBe(false)
+
+      fireEvent.change(bodyBox(), { target: { value: `${BASE_BODY} typed after` } })
+
+      expect(beforeUnloadPrevented()).toBe(true)
     })
 
     it('opens kept text as an editable note when Strict Mode replays the editor effects', async () => {
@@ -894,9 +921,9 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(server.transactions.length - before).toBeLessThanOrEqual(1)
     })
 
-    it('stops asking once the kept text is saved', async () => {
+    it("deletes the kept text's record once the text is saved", async () => {
       const { account, collection, peerItem } = await refusedDraft()
-      expect(beforeUnloadPrevented()).toBe(true)
+      expect(await getAll(queueGuard())).toHaveLength(1)
       // The peer puts the body back, so the server again matches the base the draft was typed on.
       await peerWrites(account, collection, peerItem, BASE_BODY)
 
@@ -904,7 +931,120 @@ describe('#744 the rendered note editor saves only through its captured base', (
       await settle()
 
       expect(saveStatus()).toHaveTextContent('Saved')
+      expect(await getAll(queueGuard())).toEqual([])
       expect(beforeUnloadPrevented()).toBe(false)
+    })
+
+    /** A reload of the page: its memory is gone; the account, its queue and its key stay. */
+    async function reloadPage() {
+      while (mounted.length > 0) mounted.pop()!.unmount()
+      await settle()
+      resetNoteLifecycle()
+      renderNotesPage()
+      await settle()
+    }
+
+    it('opens no editor while held text is being reopened, then opens the note', async () => {
+      await seedSavedNote()
+      renderNotesPage()
+      await settle()
+      expect(useNoteStore.getState().heldTextReopen).not.toBe('running')
+      act(() => useNoteStore.setState({ heldTextReopen: 'running' }))
+      fireEvent.click(ui().getByRole('button', { name: new RegExp(BASE_TITLE) }))
+      await settle()
+
+      expect(ui().queryByRole('textbox', { name: 'Note title' })).toBeNull()
+      expect(ui().getAllByText('Checking this browser for text that was not saved…').length).toBeGreaterThan(0)
+      act(() => useNoteStore.setState({ heldTextReopen: 'done' }))
+      await settle()
+
+      expect([titleBox().value, titleBox().readOnly]).toEqual([BASE_TITLE, false])
+    })
+
+    it('reopens refused text after a reload, with the reason and Save as a copy', async () => {
+      const { account, collection, item } = await refusedDraft()
+
+      await reloadPage()
+      fireEvent.click(baseRow())
+      await settle()
+
+      expect([titleBox().value, bodyBox().value, titleBox().readOnly]).toEqual([DRAFT_TITLE, BASE_BODY, false])
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      expect(ui().getByText(/^This browser could not confirm that the note is unchanged/)).toBeTruthy()
+      fireEvent.click(ui().getByRole('button', { name: 'Save as a copy' }))
+      await settle()
+
+      expect(titleBox().value).toBe(`${DRAFT_TITLE} (conflicted copy)`)
+      const response = await account.getCollectionManager().getItemManager(collection).list()
+      expect(response.data.filter((candidate: any) => candidate.getMeta().name === `${DRAFT_TITLE} (conflicted copy)`)).toHaveLength(1)
+      expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
+      expect(await getAll(queueGuard())).toEqual([])
+    })
+
+    it('reopens text whose save failed with an error after a reload, and saves it', async () => {
+      const { account, collection, item } = await seedSavedNote()
+      await addOtherNote(account, collection, item)
+      // Every write fails until the page has reloaded, as the closing editor saves again.
+      let failing = true
+      EtebaseRequest.default = async (url: string, options: any) => {
+        if (failing && isTransaction(...requestOf(url, options))) return respond(500, { detail: 'Server error' })
+        return server.handle(url, options)
+      }
+      renderNotesPage()
+      fireEvent.click(baseRow())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      expect((await getAll(queueGuard())).map((record) => record.held)).toEqual(['retry-exhausted'])
+
+      await reloadPage()
+      expect(await serverTitle(account, collection, item.uid)).toBe(BASE_TITLE)
+      failing = false
+      fireEvent.click(baseRow())
+      await settle()
+      // Text whose save failed saves again once its editor opens, as before a reload.
+      expect([titleBox().value, saveStatus().textContent]).toEqual([DRAFT_TITLE, 'Unsaved changes'])
+      hideTab()
+      await settle()
+
+      expect(saveStatus()).toHaveTextContent('Saved')
+      expect(await serverTitle(account, collection, item.uid)).toBe(DRAFT_TITLE)
+      expect(await getAll(queueGuard())).toEqual([])
+    })
+
+    it('keeps reopened text unsaved even when it is empty, so the newer version is not adopted over it', async () => {
+      const { account, collection, item } = await seedSavedNote()
+      await addOtherNote(account, collection, item)
+      renderNotesPage()
+      fireEvent.click(baseRow())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: '' } })
+      fireEvent.change(bodyBox(), { target: { value: '' } })
+      await peerWritesA(account, collection, item)
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
+
+      await reloadPage()
+      fireEvent.click(ui().getByRole('button', { name: new RegExp(BASE_TITLE) }))
+      await settle()
+
+      expect([titleBox().value, bodyBox().value]).toEqual(['', ''])
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      expect(await getAll(queueGuard())).toHaveLength(1)
+    })
+
+    it('deletes the reopened text\'s record when the text is typed back to the saved text in the same editor', async () => {
+      const { item } = await refusedDraft()
+      expect(await getAll(queueGuard())).toHaveLength(1)
+
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+
+      expect(await getAll(queueGuard())).toEqual([])
+      expect(storedNote(item.uid).title).toBe(BASE_TITLE)
     })
 
     it('drops kept text and the leave prompt on the account reset', async () => {
