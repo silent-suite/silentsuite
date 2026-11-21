@@ -169,6 +169,12 @@ describe('MarkdownEditor', () => {
     expect(winningBackground(piece)).toMatch(/16,\s*185,\s*129/)
   })
 
+  it('keeps the note text out of browser page translation', () => {
+    const { container } = render(<MarkdownEditor value="Secret body" onChange={() => {}} ariaLabel="Note body" />)
+    expect(container.firstElementChild).toHaveAttribute('translate', 'no')
+    expect(container.firstElementChild).toContainElement(container.querySelector('.cm-content'))
+  })
+
   it('keeps the same editor instance when only the class name changes', () => {
     const { container, rerender } = render(<MarkdownEditor value="kept" onChange={() => {}} ariaLabel="Note body" className="shown" />)
     const view = viewOf(container)

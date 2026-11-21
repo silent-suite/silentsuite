@@ -240,7 +240,8 @@ export function PendingSyncBanner() {
           >
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <span className="flex-1">
-              {title && <span className="font-medium">{title}</span>}
+              {/* translate="no": a browser's page translation would send the note title to its service. */}
+              {title && <span className="font-medium" translate="no">{title}</span>}
               {title && <span className="mx-1">&middot;</span>}
               <span>{notice.legacy ? LEGACY_TEXT : HELD_TEXT[notice.held!]}</span>
             </span>

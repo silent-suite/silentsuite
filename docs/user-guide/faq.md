@@ -24,7 +24,6 @@ On the roadmap, not yet shipped:
 - Native iOS app — planned, with scope and timing not yet decided; EteSync for iOS is not a supported or working SilentSuite client
 - OAuth-based one-click import from Google / iCloud
 - Push notifications
-- Multiple collections per account ([#88](https://github.com/silent-suite/silentsuite/issues/88))
 
 ### Is SilentSuite free?
 

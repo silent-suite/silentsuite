@@ -10,6 +10,8 @@ interface ConfirmDialogProps {
   confirmLabel?: string
   cancelLabel?: string
   variant?: 'danger' | 'warning'
+  /** 'no' keeps the message out of a browser's page translation, for a message that carries user text. */
+  messageTranslate?: 'yes' | 'no'
   onConfirm: () => void
   onCancel: () => void
 }
@@ -20,6 +22,7 @@ export function ConfirmDialog({
   confirmLabel = 'Delete',
   cancelLabel = 'Cancel',
   variant = 'danger',
+  messageTranslate,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -77,6 +80,7 @@ export function ConfirmDialog({
             </h3>
             <p
               id="confirm-message"
+              translate={messageTranslate}
               className="mt-1 text-sm text-[rgb(var(--muted))]"
             >
               {message}

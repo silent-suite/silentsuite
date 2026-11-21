@@ -11,6 +11,7 @@ Thank you for your interest in contributing to SilentSuite. This guide will help
 | [Code Conventions](./code-conventions.md) | Style guide and patterns we follow |
 | [Testing](./testing.md) | How to run and write tests |
 | [Authenticated Restore Smoke](./authenticated-restore-smoke.md) | Verify encrypted-session restore with redacted diagnostics |
+| [Notes Markdown Profile](./notes-markdown.md) | What a note may contain and how clients show it, with shared test vectors |
 | [Pull Request Guide](./pull-request-guide.md) | How to submit changes |
 | [Translation Guide](../../TRANSLATING.md) | Help translate the web app safely and consistently |
 

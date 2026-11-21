@@ -48,7 +48,7 @@ Note titles, note text and notebook names are encrypted on your device, and the 
 
 ## Sharing
 
-- The server knows who created each notebook, its members and their access levels (read-only, read-write or admin), and each invitation's sender, recipient, notebook and access level. Members' copies of the notebook key, and the key inside an invitation, are encrypted.
+- The server knows who created each notebook, its members and their access levels (read-only, read-write or admin), and each invitation's sender, recipient, notebook and access level. Members' copies of the notebook key, and the key inside an invitation, are encrypted. See [what happens when you remove a member](./collections.md#removing-a-member).
 - When you invite someone, the server sees the username or email address you looked up. When you accept, it stores your account's type value for that notebook, so it learns that your value and the sender's mean the same type.
 
 ## Timing and logs

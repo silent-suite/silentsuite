@@ -557,6 +557,19 @@ describe('NotesPage', () => {
     expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveValue('# Hello')
   })
 
+  it('keeps note text out of browser page translation: the list row and the preview', async () => {
+    loaded([note('secret', { title: 'Secret title', content: 'Secret body' })])
+
+    renderWithIntl(<NotesPage />)
+
+    // A translating browser sends the text it finds on the page to its service.
+    expect(screen.getByRole('button', { name: /Secret title/ })).toHaveAttribute('translate', 'no')
+
+    fireEvent.click(screen.getByRole('button', { name: /Secret title/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByTestId('note-preview')).toHaveAttribute('translate', 'no')
+  })
+
   it('autosaves the latest draft after a pause and keeps it when the same note refreshes from the server', async () => {
     vi.useFakeTimers()
     loaded([note('note-1', { title: 'Original', content: 'server body' })])
@@ -1140,6 +1153,8 @@ describe('NotesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete note' }))
     const dialog = screen.getByRole('dialog', { name: 'Delete note?' })
     expect(within(dialog).getByRole('button', { name: 'Delete note' })).toBeInTheDocument()
+    // The message names the note, so a translating browser would send its title away.
+    expect(within(dialog).getByText(/Doomed/)).toHaveAttribute('translate', 'no')
 
     expect(container.contains(dialog), 'confirmation is rendered inside the page container').toBe(false)
     let outer: HTMLElement | null = null
