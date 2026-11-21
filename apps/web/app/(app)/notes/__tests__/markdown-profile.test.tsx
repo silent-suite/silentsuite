@@ -50,10 +50,29 @@ const IMAGE_PLACEHOLDER_PREFIX = messages.Notes.imageBlockedWithAlt.replace('{al
 
 const HEADING = /^H([1-6])$/
 
+// The visual box of a task item. It is hidden from assistive technology; the
+// item's state is read from the visually hidden text next to it.
+const TASK_CHECKBOX = '[data-task]'
+
+// A task item carries its checkbox itself, or in its first paragraph when the
+// list is loose; a checkbox further down belongs to a nested list.
+function isTaskItem(item: Element): boolean {
+  return item.querySelector(`:scope > ${TASK_CHECKBOX}, :scope > p:first-child > ${TASK_CHECKBOX}`) !== null
+}
+
+function tableKind(table: HTMLTableElement): string {
+  return `table:${table.rows.length}x${table.rows[0]?.cells.length ?? 0}`
+}
+
 function blockKind(element: Element): string {
   const tag = element.tagName
   const heading = HEADING.exec(tag)
   if (heading) return `heading:${heading[1]}`
+  if ((tag === 'UL' || tag === 'OL') && Array.from(element.children).some(isTaskItem)) return 'list:task'
+  // A table may sit in a wrapper that scrolls it sideways on a narrow screen.
+  if (tag === 'DIV' && element.children.length === 1 && element.firstElementChild instanceof HTMLTableElement) {
+    return tableKind(element.firstElementChild)
+  }
   switch (tag) {
     case 'P':
       return 'paragraph'
@@ -61,6 +80,8 @@ function blockKind(element: Element): string {
       return 'list:bullet'
     case 'OL':
       return 'list:ordered'
+    case 'TABLE':
+      return tableKind(element as HTMLTableElement)
     case 'PRE':
       return 'code'
     case 'BLOCKQUOTE':
@@ -103,6 +124,12 @@ function placeholderAlts(container: HTMLElement): string[] {
   })
 }
 
+function taskStates(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll(TASK_CHECKBOX)).map((box) =>
+    box.getAttribute('data-task') === 'checked' ? 'checked' : 'unchecked',
+  )
+}
+
 function attributeValues(container: HTMLElement): string[] {
   const values: string[] = []
   for (const element of Array.from(container.querySelectorAll('*'))) {
@@ -139,10 +166,7 @@ describe('Notes Markdown profile vectors (web)', () => {
     expect(byId.get('link-javascript-literal-tab')).toContain(String.fromCharCode(9))
   })
 
-  const commonmarkCases = vectors.cases.filter((c) => c.since === 'commonmark')
-  const gfmCases = vectors.cases.filter((c) => c.since === 'gfm')
-
-  it.each(commonmarkCases.map((c) => [c.id, c] as const))('%s', (_id, vectorCase) => {
+  it.each(vectors.cases.map((c) => [c.id, c] as const))('%s', (_id, vectorCase) => {
     const { markdown, expect: want } = vectorCase
     const view = renderWithIntl(<NoteMarkdownPreview content={markdown} />)
     const container = view.container
@@ -174,9 +198,6 @@ describe('Notes Markdown profile vectors (web)', () => {
     }
     if (want.inline) expect(inlineSpans(container)).toEqual(want.inline)
     if (want.hardBreaks !== undefined) expect(container.querySelectorAll('br')).toHaveLength(want.hardBreaks)
+    if (want.tasks) expect(taskStates(container)).toEqual(want.tasks)
   })
-
-  // The GFM cases need remark-gfm, which lands with the next PR. They are
-  // listed by name so the skip is visible in every run.
-  it.skip.each(gfmCases.map((c) => [c.id] as const))('%s (gfm: not rendered until remark-gfm is added)', () => {})
 })
