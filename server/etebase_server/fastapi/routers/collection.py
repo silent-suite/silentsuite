@@ -203,6 +203,12 @@ class ItemDepIn(BaseModel):
             )
 
 
+# Most items or deps one batch or transaction request may carry. Every item is
+# written while the collection row is locked, so this bounds how long one
+# request holds that lock. Shipped clients send at most 50 per request.
+MAX_BULK_ITEMS = 200
+
+
 class ItemBatchIn(BaseModel):
     items: t.List[CollectionItemIn]
     deps: t.Optional[t.List[ItemDepIn]] = None
@@ -521,6 +527,9 @@ def item_bulk_common(
     validate_etag: bool,
     background_tasks: BackgroundTasks,
 ):
+    if len(data.items) > MAX_BULK_ITEMS or len(data.deps or ()) > MAX_BULK_ITEMS:
+        raise HttpError("too_many_items", "Request has too many items.", status_code=status.HTTP_400_BAD_REQUEST)
+
     queryset = get_collection_queryset(user)
     with transaction.atomic():  # We need this for locking the collection object
         collection_object = queryset.select_for_update().get(uid=uid)
