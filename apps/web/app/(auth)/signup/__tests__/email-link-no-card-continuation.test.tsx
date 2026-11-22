@@ -614,6 +614,9 @@ describe('email-link seven-day no-card continuation', () => {
     const card = screen.getByRole('button', { name: /^pay by card for/i })
     expect(card).toHaveTextContent('Pay by Card (Powered by Stripe)')
     expect(card).toHaveTextContent('Card gets billed after the 30-day trial. You can cancel anytime.')
+    // The yearly price and renewal are visible before the card is entered, not only in the accessible name.
+    expect(card).toHaveTextContent('€36.00 per year after the trial, renews yearly until you cancel.')
+    expect(card).toHaveAccessibleName(/€36\.00\/year, billed after the 30-day trial, renews yearly until you cancel/)
     // The repeated plan/price bar is gone; each method states its own terms once.
     expect(screen.queryByText('€36.00/year')).not.toBeInTheDocument()
     expect(screen.queryByText(/Choose a payment method to review|Annual only|Card with Stripe|Bitcoin with BTCPay|billed annually/i)).not.toBeInTheDocument()
@@ -810,6 +813,7 @@ describe('email-link seven-day no-card continuation', () => {
     } else {
       expect(screen.getByText(/Add your card information/)).toHaveTextContent('After that the 30 days free trial starts and you only get billed on 10.09.2099, if not cancelled before.')
       expect(screen.queryByText(/€0 today|UTC/)).not.toBeInTheDocument()
+      expect(screen.getByText(/Add your card information/)).toHaveTextContent('€36.00 per year after the trial, renews yearly until you cancel.')
       // Only the card-trial sentence remains; the old auto-renew / cancel-anytime / refund-window line is not shown.
       expect(screen.queryByText(/Auto-renews|Cancel anytime|refund window/)).not.toBeInTheDocument()
     }
