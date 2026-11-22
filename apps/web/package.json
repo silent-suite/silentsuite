@@ -44,6 +44,7 @@
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.71.2",
     "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.3.0",
     "temporal-polyfill": "^0.3.2",
     "zod": "4.6.6",
