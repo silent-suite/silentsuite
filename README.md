@@ -111,14 +111,15 @@ Download Bridge binaries and signed Android APKs with checksums from
 
 ### Self-host
 
+Install a published release with the installer:
+
 ```bash
-git clone https://github.com/silent-suite/silentsuite.git
-cd silentsuite/self-host
-cp .env.example .env   # then edit
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash
 ```
 
-Full guide: [Self-host SilentSuite](./docs/self-hosting/)
+It verifies the release bundle and the server image, then writes `.env` (with the verified image digest) and `etebase-server.ini` before it starts anything. A plain clone has neither file, so `docker compose up` in `self-host/` will not start the stack on its own.
+
+Next steps, including the reverse proxy: [Quick Start](./docs/self-hosting/quick-start.md). Full guide: [Self-host SilentSuite](./docs/self-hosting/)
 
 ## Help test and contribute
 

@@ -213,7 +213,10 @@ class CollectionMember(models.Model):
     collection = models.ForeignKey(Collection, related_name="members", on_delete=models.CASCADE)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     encryptionKey = models.BinaryField(editable=True, blank=False, null=False)
-    collectionType = models.ForeignKey(CollectionType, on_delete=models.PROTECT, null=True)
+    # RESTRICT, not PROTECT: deleting a user cascades to their own collection
+    # types and to the memberships that point at them, so the cascade may
+    # remove both. Deleting a type that another member still uses stays blocked.
+    collectionType = models.ForeignKey(CollectionType, on_delete=models.RESTRICT, null=True)
     accessLevel = models.IntegerField(
         choices=AccessLevels.choices,
         default=AccessLevels.READ_ONLY,

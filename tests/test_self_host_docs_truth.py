@@ -186,3 +186,22 @@ def test_no_page_claims_trusted_proxy_subnets_are_unsupported(path: Path):
     text = path.read_text(encoding="utf-8")
     assert "CIDR ranges are not supported" not in text, path.name
     assert "matches exact IPs here" not in text, path.name
+
+
+# ── README self-host entry point ──────────────────────────────────────
+
+
+def readme_self_host_section() -> str:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    match = re.search(r"^### Self-host\n(.*?)(?=^## )", text, re.MULTILINE | re.DOTALL)
+    assert match, "README.md must keep a '### Self-host' section"
+    return match.group(1)
+
+
+def test_readme_self_host_uses_the_installer_not_a_bare_compose_up():
+    """A fresh clone has no server image digest and no etebase-server.ini; only the installer writes them."""
+
+    section = readme_self_host_section()
+    assert "self-host/install.sh | bash" in section
+    assert "cp .env.example" not in section
+    assert "docker compose up" not in section.split("```")[1]
