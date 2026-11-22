@@ -21,8 +21,10 @@ import com.etebase.client.FetchOptions
 import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.CachedItem
 import io.silentsuite.sync.R
+import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.ui.etebase.ListEntriesFragment.Companion.setItemView
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -71,6 +73,9 @@ class ItemRevisionsListFragment : ListFragment(), AdapterView.OnItemClickListene
             }
 
             emptyTextView!!.text = getString(R.string.journal_revisions_list_empty)
+        }
+        revisionsModel.observeLoadFailed(viewLifecycleOwner) {
+            emptyTextView?.setText(R.string.journal_revisions_load_error)
         }
 
         listView.onItemClickListener = this
@@ -132,11 +137,12 @@ class ItemRevisionsListFragment : ListFragment(), AdapterView.OnItemClickListene
 
 class RevisionsViewModel : ViewModel() {
     private val revisions = MutableLiveData<List<CachedItem>>()
+    private val loadFailed = MutableLiveData<Boolean>()
     private var asyncTask: Job? = null
 
     fun loadRevisions(accountCollectionHolder: AccountHolder, cachedCollection: CachedCollection, cachedItem: CachedItem) {
         asyncTask = viewModelScope.launch {
-            val ret = withContext(Dispatchers.IO) {
+            val ret = try { withContext(Dispatchers.IO) {
                 val result = LinkedList<CachedItem>()
                 val col = cachedCollection.col
                 val itemManager = accountCollectionHolder.colMgr.getItemManager(col)
@@ -150,6 +156,12 @@ class RevisionsViewModel : ViewModel() {
                     result.addAll(chunk.data.map { CachedItem(it, it.meta, it.contentString) })
                 }
                 result
+            } } catch (e: Exception) {
+                // Offline or a server error: say so on the screen instead of crashing.
+                if (e is CancellationException) throw e
+                Logger.log.warning("Loading revisions failed: ${e.javaClass.name}")
+                loadFailed.value = true
+                return@launch
             }
             revisions.value = ret
         }
@@ -161,4 +173,7 @@ class RevisionsViewModel : ViewModel() {
 
     fun observe(owner: LifecycleOwner, observer: (List<CachedItem>) -> Unit) =
             revisions.observe(owner, observer)
+
+    fun observeLoadFailed(owner: LifecycleOwner, observer: (Boolean) -> Unit) =
+            loadFailed.observe(owner, observer)
 }

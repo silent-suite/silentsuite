@@ -266,6 +266,7 @@
     <string name="collection_members_title">Members</string>
     <string name="collection_members_list_loading">Loading members...</string>
     <string name="collection_members_list_empty">No members</string>
+    <string name="collection_members_list_load_error">Couldn\'t load members. Check your connection and try again.</string>
     <string name="collection_members_add">Invite user</string>
     <string name="collection_members_add_read_only">Read only</string>
     <string name="collection_member_read_only">Read-only access</string>
@@ -285,6 +286,7 @@
     <string name="collection_members_remove_admin">Removing access to admins is currently not supported.</string>
     <string name="collection_members_no_access">Only admins are allowed to manage collection memberships. Would you like to leave the collection?</string>
     <string name="collection_members_leave">Leave</string>
+    <string name="collection_members_leave_error">Couldn\'t leave. Check your connection and try again.</string>
 
     <!-- Invitations -->
     <string name="invitations_title">Invitations</string>
@@ -294,11 +296,13 @@
     <string name="invitations_accessibility_read_only">Read-only invitation from %1$s</string>
     <string name="invitations_loading">Loading invitations...</string>
     <string name="invitations_list_empty">No invitations</string>
+    <string name="invitations_load_error">Couldn\'t load invitations. Check your connection and try again.</string>
     <string name="invitations_accept_reject_dialog">Would you like to accept or reject the invitation?</string>
     <string name="invitations_accept">Accept</string>
     <string name="invitations_reject">Reject</string>
     <string name="invitations_accept_success_syncing">Invitation accepted. Syncing shared collections…</string>
     <string name="invitations_accept_error">Couldn\'t accept invitation. Please try again.</string>
+    <string name="invitations_reject_error">Couldn\'t reject invitation. Please try again.</string>
 
     <!-- JournalItemActivity -->
     <string name="about">About</string>
@@ -531,6 +535,7 @@
     <string name="journal_entries_list_empty_tasks_setup">Task app needed.\nAndroid does not include a built-in task provider. Install Tasks.org or OpenTasks, then sync.</string>
     <string name="journal_entries_loading">Loading recent activity...</string>
     <string name="journal_revisions_list_empty">No revisions available for this item.</string>
+    <string name="journal_revisions_load_error">Couldn\'t load revisions. Check your connection and try again.</string>
     <string name="journal_item_title_unavailable">Item details unavailable</string>
     <string name="journal_item_modified">Modified: %s</string>
     <string name="journal_item_modified_unavailable">Modified date unavailable</string>

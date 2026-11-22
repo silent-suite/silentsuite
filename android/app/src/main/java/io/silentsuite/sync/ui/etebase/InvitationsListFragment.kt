@@ -101,6 +101,9 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
         invitationsModel.observe(viewLifecycleOwner) {
             setListAdapterInvitations(it)
         }
+        invitationsModel.observeLoadFailed(viewLifecycleOwner) {
+            emptyTextView?.setText(R.string.invitations_load_error)
+        }
 
         listView.onItemClickListener = this
     }
@@ -130,7 +133,9 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
                 .setView(view)
                 .setNegativeButton(R.string.invitations_reject) { _, _ ->
                     if (invitation.realInvitation() == null) completeFixtureAction(applicationContext, identity, invitation, RuntimeInvitationAction.REJECT)
-                    else invitationsModel.reject(applicationContext, identity, model.value!!, invitation.realInvitation()!!)
+                    else invitationsModel.reject(applicationContext, identity, model.value!!, invitation.realInvitation()!!) {
+                        Toast.makeText(applicationContext, R.string.invitations_reject_error, Toast.LENGTH_LONG).show()
+                    }
                 }
                 .setPositiveButton(R.string.invitations_accept) { _, _ ->
                     if (invitation.realInvitation() == null) {
@@ -211,6 +216,7 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
 
 class InvitationsViewModel : ViewModel() {
     private val invitations = MutableLiveData<List<InvitationRow>>()
+    private val loadFailed = MutableLiveData<Boolean>()
     private var asyncTask: Job? = null
 
     fun loadInvitations(
@@ -219,7 +225,7 @@ class InvitationsViewModel : ViewModel() {
         accountCollectionHolder: AccountHolder
     ) {
         asyncTask = viewModelScope.launch {
-            val ret = withContext(Dispatchers.IO) {
+            val ret = try { withContext(Dispatchers.IO) {
                 if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account)
                     return@withContext null
                 val result = LinkedList<SignedInvitation>()
@@ -243,6 +249,12 @@ class InvitationsViewModel : ViewModel() {
                         Utils.prettyFingerprint(it.fromPubkey),
                     ), it)
                 }
+            } } catch (e: Exception) {
+                // Offline or a server error: say so on the screen instead of crashing.
+                if (e is CancellationException) throw e
+                Logger.log.warning("Loading invitations failed: ${e.javaClass.name}")
+                loadFailed.value = true
+                return@launch
             }
             if (ret != null && identity.validate(applicationContext) && identity.account == accountCollectionHolder.account)
                 invitations.value = ret
@@ -282,14 +294,20 @@ class InvitationsViewModel : ViewModel() {
         applicationContext: Context,
         identity: InvitationLifecycleIdentity,
         accountCollectionHolder: AccountHolder,
-        invitation: SignedInvitation
+        invitation: SignedInvitation,
+        onFailure: () -> Unit = {}
     ) {
         viewModelScope.launch {
-            val rejected = withContext(Dispatchers.IO) {
+            val rejected = try { withContext(Dispatchers.IO) {
                 if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account)
                     return@withContext false
                 accountCollectionHolder.etebase.invitationManager.reject(invitation)
                 identity.validate(applicationContext) && identity.account == accountCollectionHolder.account
+            } } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Logger.log.warning("Invitation rejection failed: ${e.javaClass.name}")
+                onFailure()
+                return@launch
             }
             if (rejected) {
                 invitations.value = invitations.value.orEmpty().filter { it.realInvitation() != invitation }
@@ -303,4 +321,7 @@ class InvitationsViewModel : ViewModel() {
 
     internal fun observe(owner: LifecycleOwner, observer: (List<InvitationRow>) -> Unit) =
             invitations.observe(owner, observer)
+
+    internal fun observeLoadFailed(owner: LifecycleOwner, observer: (Boolean) -> Unit) =
+            loadFailed.observe(owner, observer)
 }
