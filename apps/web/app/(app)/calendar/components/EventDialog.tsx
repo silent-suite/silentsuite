@@ -26,6 +26,7 @@ import {
   shortTimezoneLabel,
 } from '@/app/lib/tz'
 import { inclusiveAllDayEndDate } from '../lib/all-day'
+import { overriddenOccurrence } from '../lib/calendar-grid-events'
 
 // ---------------------------------------------------------------------------
 // Time formatting (respects user preference)
@@ -393,8 +394,15 @@ export function EventDialog({
   // clicked and "this" / "this and future" edits are made against that occurrence. A generated
   // birthday is read-only, so it also shows the clicked occurrence rather than the series start
   // (a fixed leap year that is neither the birth year nor this year).
+  // An occurrence another client moved or changed (a RECURRENCE-ID override) opens as it shows.
+  const overridden = useMemo(
+    () => (isRecurring && instanceDate ? overriddenOccurrence(event, instanceDate) : undefined),
+    [isRecurring, event, instanceDate],
+  )
   const occurrence = useMemo(() => {
-    if (!isEdit || !instanceDate || instanceDate.getTime() === event.startDate.getTime()) return undefined
+    if (!isEdit || !instanceDate) return undefined
+    if (overridden) return overridden
+    if (instanceDate.getTime() === event.startDate.getTime()) return undefined
     if (isRecurring) return occurrenceOf(event, instanceDate)
     if (!isManagedEvent) return undefined
     const shift = instanceDate.getTime() - event.startDate.getTime()
@@ -405,7 +413,7 @@ export function EventDialog({
     }
     delete shifted.startWallClock
     return shifted
-  }, [isEdit, isRecurring, isManagedEvent, event, instanceDate])
+  }, [isEdit, isRecurring, isManagedEvent, event, instanceDate, overridden])
   const formEvent = isEdit ? (occurrence ?? event) : undefined
 
   // Initial all-day flag — needed before form state so we can pick the right
@@ -421,9 +429,9 @@ export function EventDialog({
   // Form state
   // ---------------------------------------------------------------------------
 
-  const [title, setTitle] = useState(isEdit ? event.title : '')
-  const [location, setLocation] = useState(isEdit ? (event.location || '') : '')
-  const [description, setDescription] = useState(isEdit ? (event.description || '') : '')
+  const [title, setTitle] = useState(formEvent ? formEvent.title : '')
+  const [location, setLocation] = useState(formEvent ? (formEvent.location || '') : '')
+  const [description, setDescription] = useState(formEvent ? (formEvent.description || '') : '')
   const [allDay, setAllDay] = useState(initialIsAllDay)
   // For all-day events, `endDate` follows iCal DTEND;VALUE=DATE convention (exclusive — the day
   // *after* the last day of the event); the form shows the inclusive last day.
@@ -456,7 +464,7 @@ export function EventDialog({
     isEdit ? event.recurrenceRule : null,
   )
   const [categories, setCategories] = useState<string[]>(
-    isEdit ? (event.categories ?? []) : [],
+    formEvent ? (formEvent.categories ?? []) : [],
   )
   const [alarms, setAlarms] = useState<AlarmRow[]>(() => {
     if (isEdit) return (event.alarms ?? []).map(alarmRow)
@@ -539,6 +547,8 @@ export function EventDialog({
     pendingPatch?: Partial<CalendarEvent>
     /** The same changes applied to the series itself, for "all events". */
     seriesPatch?: Partial<CalendarEvent>
+    /** The same changes applied to the series' own slot of the occurrence, for "this and future". */
+    futurePatch?: Partial<CalendarEvent>
   } | null>(null)
 
   // Refs
@@ -668,14 +678,17 @@ export function EventDialog({
     try {
       if (isEdit) {
         const patch: Partial<CalendarEvent> = {}
+        // Text fields are compared with what the form opened with: a moved occurrence's own
+        // title and the like are not changes.
+        const shown = formEvent!
 
-        if (title.trim() !== event.title) patch.title = title.trim()
-        if ((description.trim() || '') !== (event.description || ''))
+        if (title.trim() !== shown.title) patch.title = title.trim()
+        if ((description.trim() || '') !== (shown.description || ''))
           patch.description = description.trim()
-        if ((location.trim() || '') !== (event.location || '')) patch.location = location.trim()
+        if ((location.trim() || '') !== (shown.location || '')) patch.location = location.trim()
         if (allDay !== event.allDay) patch.allDay = allDay
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
-        if (JSON.stringify(categories) !== JSON.stringify(event.categories ?? [])) patch.categories = categories
+        if (JSON.stringify(categories) !== JSON.stringify(shown.categories ?? [])) patch.categories = categories
         if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
         // An all-day event without a zone that becomes timed is anchored in the dialog's zone,
         // rather than being saved as a UTC instant.
@@ -707,8 +720,16 @@ export function EventDialog({
           const seriesPatch = occurrence
             ? { ...patch, ...timePatch(event, seriesInitial, shiftWallInputs(seriesInitial, initialInputs, typed)) }
             : formPatch
+          // "This and future" starts the new series at the series' own slot of this occurrence, so a
+          // moved occurrence's time change is applied to that slot, by the same days and time.
+          let futurePatch = formPatch
+          if (overridden) {
+            const slot = occurrenceOf(event, instanceDate!)
+            const slotInitial = editWallInputs(slot, initialFormTz)
+            futurePatch = { ...patch, ...timePatch(slot, slotInitial, shiftWallInputs(slotInitial, initialInputs, typed)) }
+          }
           // Show scope dialog for recurring events
-          setScopeDialog({ mode: 'edit', pendingPatch: formPatch, seriesPatch })
+          setScopeDialog({ mode: 'edit', pendingPatch: formPatch, seriesPatch, futurePatch })
           setSaving(false)
           return
         }
@@ -765,6 +786,8 @@ export function EventDialog({
     isRecurring,
     event,
     occurrence,
+    overridden,
+    instanceDate,
     formEvent,
     initialInputs,
     initialFormTz,
@@ -815,7 +838,11 @@ export function EventDialog({
       } else if (scopeDialog.mode === 'edit' && scopeDialog.pendingPatch) {
         void updateRecurringEvent(
           event.id,
-          scope === 'all' ? (scopeDialog.seriesPatch ?? scopeDialog.pendingPatch) : scopeDialog.pendingPatch,
+          scope === 'all'
+            ? (scopeDialog.seriesPatch ?? scopeDialog.pendingPatch)
+            : scope === 'this_and_future'
+              ? (scopeDialog.futurePatch ?? scopeDialog.pendingPatch)
+              : scopeDialog.pendingPatch,
           scope,
           effectiveInstanceDate,
         )

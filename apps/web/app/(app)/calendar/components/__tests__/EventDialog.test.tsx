@@ -929,6 +929,90 @@ describe('EventDialog edits a later occurrence at its own date (WEB-01)', () => 
   })
 })
 
+describe('EventDialog opens a moved occurrence as it was moved', () => {
+  beforeEach(() => {
+    mocks.updateRecurringEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  // Another client moved the 15 March occurrence from 10:00 to 15:00 and renamed it.
+  const series = () => ({
+    ...deserializeCalendarEvent([
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+      'BEGIN:VEVENT', 'UID:override-series',
+      'DTSTART;TZID=Europe/Berlin:20270301T100000', 'DTEND;TZID=Europe/Berlin:20270301T110000',
+      'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:Weekly', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:override-series',
+      'RECURRENCE-ID;TZID=Europe/Berlin:20270315T100000',
+      'DTSTART;TZID=Europe/Berlin:20270315T150000', 'DTEND;TZID=Europe/Berlin:20270315T160000',
+      'SUMMARY:Moved', 'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n')),
+    calendarId: 'cal-a',
+  })
+  const moved = new Date('2027-03-15T09:00:00Z')
+
+  async function saveWithScope(scope: RegExp) {
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    const scopeDialog = await screen.findByRole('dialog', { name: 'Edit recurring event' })
+    fireEvent.click(within(scopeDialog).getByRole('button', { name: scope }))
+    await waitFor(() => expect(mocks.updateRecurringEvent).toHaveBeenCalledTimes(1))
+    return mocks.updateRecurringEvent.mock.calls[0]! as [string, Partial<CalendarEvent>, string, Date]
+  }
+
+  it('shows the override\'s time and title', () => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={moved} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Event title')).toHaveValue('Moved')
+    expect(screen.getByLabelText('Start date')).toHaveValue('2027-03-15')
+    expect(screen.getByLabelText('Start time')).toHaveValue('15:00')
+    expect(screen.getByLabelText('End time')).toHaveValue('16:00')
+  })
+
+  it.each([
+    [/This event/],
+    [/All events/],
+  ] as const)('a location-only save for %s sends only the location', async (scopeName) => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={moved} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event location'), { target: { value: 'Room 2' } })
+
+    const [, patch, , instance] = await saveWithScope(scopeName)
+
+    expect(patch).toEqual({ location: 'Room 2' })
+    expect(instance).toEqual(moved)
+  })
+
+  it('a "this and future" end change moves the series\' own slot by the same amount', async () => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={moved} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('End time'), { target: { value: '15:30' } })
+
+    const [, patch, scope, instance] = await saveWithScope(/This and all future/)
+
+    // The series' 10:00-11:00 slot on 15 March (Berlin) ends 30 minutes earlier, as the moved one did.
+    expect([scope, instance]).toEqual(['this_and_future', moved])
+    expect(patch).toEqual({ endDate: new Date('2027-03-15T09:30:00Z') })
+  })
+
+  it('control: a "this event" end change keeps the moved slot', async () => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={moved} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('End time'), { target: { value: '15:30' } })
+
+    const [, patch] = await saveWithScope(/This event/)
+
+    expect(patch).toEqual({ endDate: new Date('2027-03-15T14:30:00Z') })
+  })
+
+  it('control: another occurrence opens with the series\' time and title', () => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={new Date('2027-03-08T09:00:00Z')} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Event title')).toHaveValue('Weekly')
+    expect(screen.getByLabelText('Start time')).toHaveValue('10:00')
+  })
+})
+
 // WEB-04: a create that is not saved keeps the dialog and its input.
 describe('EventDialog create that is not saved (WEB-04)', () => {
   beforeEach(() => {

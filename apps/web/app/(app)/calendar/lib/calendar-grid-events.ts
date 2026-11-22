@@ -65,6 +65,65 @@ export interface DisplayEventExpansion {
   droppedCount: number
 }
 
+/**
+ * A same-UID RECURRENCE-ID override of `event`'s series: the occurrence it replaces and, unless it
+ * cancels that occurrence, the single event shown instead (the series' fields it does not set).
+ * Null when it does not apply or cannot be read, so the series' own occurrence stays.
+ */
+function readOverride(event: CalendarEvent, block: string[]): { instance: Date; changed: CalendarEvent | null } | null {
+  if (!event.recurrenceRule || topLevelProperty(block, 'UID')?.value !== event.uid) return null
+  const rid = topLevelProperty(block, 'RECURRENCE-ID')
+  if (!rid) return null
+  const instance = parseICalDateValue(rid.value, rid.params.TZID ?? event.timezone).date
+  if (!Number.isFinite(instance.getTime())) return null
+  if (topLevelProperty(block, 'STATUS')?.value.toUpperCase() === 'CANCELLED') return { instance, changed: null }
+  try {
+    const changed = fromVEvent(block.join('\r\n'))
+    if (!Number.isFinite(changed.startDate.getTime()) || !Number.isFinite(changed.endDate.getTime())) return null
+    return {
+      instance,
+      changed: {
+        ...changed, recurrenceRule: null, overrides: undefined, calendarId: event.calendarId,
+        title: topLevelProperty(block, 'SUMMARY') ? changed.title : event.title,
+        description: topLevelProperty(block, 'DESCRIPTION') ? changed.description : event.description,
+        location: topLevelProperty(block, 'LOCATION') ? changed.location : event.location,
+        categories: topLevelProperty(block, 'CATEGORIES') ? changed.categories : event.categories,
+        endDate: topLevelProperty(block, 'DTEND') || topLevelProperty(block, 'DURATION')
+          ? changed.endDate : occurrenceEnd(event, changed.startDate),
+      },
+    }
+  } catch {
+    // Keep the master slot if an unreadable override cannot replace it.
+    return null
+  }
+}
+
+/**
+ * The occurrence of `master` at `instance` as a same-UID override moved or changed it: the series
+ * with the override's start, end, title, description, location and labels, as the grid shows it.
+ * Undefined when no readable override replaces that occurrence.
+ */
+export function overriddenOccurrence(master: CalendarEvent, instance: Date): CalendarEvent | undefined {
+  for (const block of master.overrides ?? []) {
+    const override = readOverride(master, block)
+    if (!override?.changed || override.instance.getTime() !== instance.getTime()) continue
+    const { changed } = override
+    const occurrence: CalendarEvent = {
+      ...master,
+      startDate: changed.startDate,
+      endDate: changed.endDate,
+      title: changed.title,
+      description: changed.description,
+      location: changed.location,
+      categories: changed.categories,
+    }
+    if (changed.startWallClock) occurrence.startWallClock = changed.startWallClock
+    else delete occurrence.startWallClock
+    return occurrence
+  }
+  return undefined
+}
+
 function expandEvents(
   events: CalendarEvent[],
   range: DateRange,
@@ -79,36 +138,16 @@ function expandEvents(
     const replaced = new Set<number>()
     const replacements: DisplayEvent[] = []
     for (const block of event.overrides ?? []) {
-      if (!event.recurrenceRule || topLevelProperty(block, 'UID')?.value !== event.uid) continue
-      const rid = topLevelProperty(block, 'RECURRENCE-ID')
-      if (!rid) continue
-      const instance = parseICalDateValue(rid.value, rid.params.TZID ?? event.timezone).date
-      if (!Number.isFinite(instance.getTime())) continue
-      if (topLevelProperty(block, 'STATUS')?.value.toUpperCase() === 'CANCELLED') {
-        replaced.add(instance.getTime())
-        continue
-      }
-      try {
-        const changed = fromVEvent(block.join('\r\n'))
-        if (!Number.isFinite(changed.startDate.getTime()) || !Number.isFinite(changed.endDate.getTime())) continue
-        replaced.add(instance.getTime())
-        const display = expandEvents([{
-          ...changed, recurrenceRule: null, overrides: undefined, calendarId: event.calendarId,
-          title: topLevelProperty(block, 'SUMMARY') ? changed.title : event.title,
-          description: topLevelProperty(block, 'DESCRIPTION') ? changed.description : event.description,
-          location: topLevelProperty(block, 'LOCATION') ? changed.location : event.location,
-          categories: topLevelProperty(block, 'CATEGORIES') ? changed.categories : event.categories,
-          endDate: topLevelProperty(block, 'DTEND') || topLevelProperty(block, 'DURATION')
-            ? changed.endDate : occurrenceEnd(event, changed.startDate),
-        }], range, gridSemantics)
-        droppedCount += display.droppedCount
-        replacements.push(...display.events.map(occurrence => ({
-          ...occurrence, id: `${event.id}__${instance.getTime()}`, masterId: event.id,
-          isRecurring: true, instanceDate: instance,
-        })))
-      } catch {
-        // Keep the master slot if an unreadable override cannot replace it.
-      }
+      const override = readOverride(event, block)
+      if (!override) continue
+      replaced.add(override.instance.getTime())
+      if (!override.changed) continue
+      const display = expandEvents([override.changed], range, gridSemantics)
+      droppedCount += display.droppedCount
+      replacements.push(...display.events.map(occurrence => ({
+        ...occurrence, id: `${event.id}__${override.instance.getTime()}`, masterId: event.id,
+        isRecurring: true, instanceDate: override.instance,
+      })))
     }
     if (!event.recurrenceRule) {
       const overlaps = gridSemantics
