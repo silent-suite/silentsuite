@@ -20,7 +20,7 @@ import type { AnonymousPaymentSessionRecovery, AnnualProvider } from '@/app/lib/
 import { SignupRecoveryWarning } from '../components/signup-recovery-warning'
 import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
-import { CheckoutReturnAnalytics } from '../commercial-funnel-analytics'
+import { CheckoutReturnAnalytics, createSignupStepRecorder } from '../commercial-funnel-analytics'
 
 type PaymentState = 'pending' | 'settled' | 'account' | 'vault' | 'expired' | 'timeout' | 'unknown'
 type PaymentFlowCheckState = 'idle' | 'loading' | 'ready' | 'failed'
@@ -111,6 +111,10 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
     releaseCallback.current?.()
   }, [released])
   const [state, setState] = useState<PaymentState>('pending')
+  const [recordSignupStep] = useState(createSignupStepRecorder)
+  useEffect(() => {
+    if (state === 'vault') recordSignupStep('account_created')
+  }, [recordSignupStep, state])
   const [restoredEmail, setRestoredEmail] = useState('')
   const [restartError, setRestartError] = useState<string | null>(null)
   const [sessionPassword, setSessionPassword] = useState('')
@@ -324,6 +328,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
   }, [])
 
   function handleVaultComplete() {
+    recordSignupStep('completed')
     completeSignup()
     if (returnTo) {
       setShowReturnFallback(false)

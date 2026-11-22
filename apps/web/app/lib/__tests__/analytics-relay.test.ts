@@ -70,6 +70,8 @@ describe('app analytics relay', () => {
     ['Checkout Returned', buildCheckoutReturnedPayload('cancelled', 'unknown')],
     ['Subscription Management Entry', buildSubscriptionManagementEntryPayload()],
     ...SIGNUP_STEPS.map((step) => [`Signup Step ${step}`, buildSignupStepPayload(step)] as const),
+    ...(['/signup/success', '/signup/pending-payment'] as const).flatMap((path) => (['account_created', 'completed'] as const)
+      .map((step) => [`Signup Step ${step} on ${path}`, buildSignupStepPayload(step, path)] as const)),
   ])('forwards the canonical %s payload with only the allowlisted headers', async (_label, payload) => {
     hostedEnv()
     const fetcher = upstream()
@@ -108,6 +110,8 @@ describe('app analytics relay', () => {
     ['extra top-level key', { ...buildSignupStepPayload('completed'), interactive: true }],
     ['wrong domain', { ...buildSignupStepPayload('completed'), domain: 'silentsuite.io' }],
     ['wrong url', { ...buildSignupStepPayload('completed'), url: 'https://app.silentsuite.io/calendar' }],
+    ['early step on a payment return page', buildSignupStepPayload('plan_shown', '/signup/success')],
+    ['step on the cancel page', { ...buildSignupStepPayload('completed'), url: 'https://app.silentsuite.io/signup/cancel' }],
     ['url with query', { ...buildSignupStepPayload('completed'), url: 'https://app.silentsuite.io/signup?email=a@example.com' }],
     ['pageview props', { ...buildSignupPageviewPayload('https://app.silentsuite.io/signup', ''), props: { step: 'completed' } }],
     ['pageview on private route', { domain: 'app.silentsuite.io', name: 'pageview', url: 'https://app.silentsuite.io/calendar' }],

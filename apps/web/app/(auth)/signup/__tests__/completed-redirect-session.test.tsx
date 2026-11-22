@@ -4,9 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SignupSuccessPage from '../success/page'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 
-const mocks = vi.hoisted(() => ({ session: null as string | null, proof: vi.fn(), login: vi.fn(), signup: vi.fn(), push: vi.fn() }))
+const mocks = vi.hoisted(() => ({ session: null as string | null, proof: vi.fn(), login: vi.fn(), signup: vi.fn(), push: vi.fn(), recordStep: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: mocks.push }), useSearchParams: () => new URLSearchParams('setup_intent=setup-test&redirect_status=succeeded') }))
-vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
+vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => mocks.recordStep, signupStepFor: () => null }))
 vi.mock('../components/step-create-vault', () => ({ StepCreateVault: ({ onComplete }: { onComplete: () => void }) => <button onClick={onComplete}>Complete vault</button> }))
 vi.mock('../components/step-create-paid-account', () => ({ StepCreatePaidAccount: () => <div>Create new account step</div> }))
 vi.mock('@/app/lib/secure-storage', () => ({
@@ -52,6 +52,9 @@ describe('completed historical redirect session recovery', () => {
     fireEvent.click(await screen.findByText('Complete vault'))
     expect(useAuthStore.getState().isAuthenticated).toBe(true)
     expect(mocks.push).toHaveBeenCalledWith('/')
+    // A card signup that returns here after 3DS finishes the funnel on this page.
+    expect(mocks.recordStep.mock.calls.map(([step]) => step)).toEqual(expect.arrayContaining(['account_created', 'completed']))
+    expect(mocks.recordStep.mock.calls.map(([step]) => step).at(-1)).toBe('completed')
     expect(vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/auth/token-exchange', '/auth/session'])
     expect(mocks.proof).toHaveBeenCalledWith('restored-encrypted-session', undefined)
     expect(mocks.signup).not.toHaveBeenCalled()

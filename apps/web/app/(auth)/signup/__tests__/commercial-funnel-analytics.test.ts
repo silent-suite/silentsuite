@@ -5,6 +5,7 @@ import {
   sendCommercialEvent,
   shouldSendCommercialAnalytics,
   signupStepFor,
+  signupStepPayloadFor,
 } from '../commercial-funnel-analytics'
 import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_STEPS } from '@/app/lib/public-analytics'
 
@@ -88,6 +89,21 @@ describe('signup step events', () => {
     expect(buildSignupStepPayload('email_verified')).toEqual({ domain: 'app.silentsuite.io', name: 'Signup Step', url: 'https://app.silentsuite.io/signup', props: { step: 'email_verified' } })
     expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup'), buildSignupStepPayload('completed'), 'true')).toBe(true)
     expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup/success'), buildSignupStepPayload('completed'), 'true')).toBe(false)
+  })
+
+  it.each(['/signup/success', '/signup/pending-payment'] as const)('lets a paid signup finishing on %s record its last two steps there', (path) => {
+    const location = new URL(`https://app.silentsuite.io${path}?setup_intent=seti_secret&redirect_status=succeeded`)
+    for (const step of ['account_created', 'completed'] as const) {
+      const payload = signupStepPayloadFor(step, location)
+      expect(payload).toEqual({ domain: 'app.silentsuite.io', name: 'Signup Step', url: `https://app.silentsuite.io${path}`, props: { step } })
+      expect(shouldSendCommercialAnalytics(location, payload!, 'true')).toBe(true)
+    }
+    for (const step of ['verification_requested', 'email_verified', 'plan_shown'] as const) expect(signupStepPayloadFor(step, location)).toBeNull()
+  })
+
+  it('keeps every step on /signup pinned to /signup', () => {
+    for (const step of SIGNUP_STEPS) expect(signupStepPayloadFor(step, new URL('https://app.silentsuite.io/signup?recovery=payment'))).toEqual(buildSignupStepPayload(step))
+    expect(signupStepPayloadFor('completed', new URL('https://app.silentsuite.io/signup/cancel'))).toBeNull()
   })
 
   it.each([
