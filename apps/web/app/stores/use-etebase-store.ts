@@ -1016,6 +1016,7 @@ async function updateNoteAtCapturedBase(
   let admissionRevision: string | null = knownRevision(base.revision) ? base.revision : null
   let sawConflict = false
   let proving = false
+  let standIn = false
   const admitOffline = async (): Promise<'queued' | false> => {
     const queued = await queueOfflineUpdate(
       'notes',
@@ -1075,21 +1076,27 @@ async function updateNoteAtCapturedBase(
       etagOverride: etag,
       beforeDispatch: assertGuard,
     })
-    const publish = async (saved: { item: any; etag: string }): Promise<'remote'> => {
+    // `replaced` is the revision the write went over; null when the server already held the text.
+    const publish = async (saved: { item: any; etag: string }, replaced: string | null): Promise<'remote'> => {
       assertGuard()
       const nextCache = new Map(get().itemCache)
       nextCache.set(itemUid, saved.item)
       set({ itemCache: nextCache })
-      options.onSaved?.(saved.etag)
+      options.onSaved?.(saved.etag, replaced)
       await writeItemToCache('notes', collection.uid, itemUid, content, accountEpoch, meta ?? itemMetaOf(saved.item))
       assertGuard()
       return 'remote'
     }
     // An obligated save skips the revision dispatch: it writes only after the fresh proof below.
-    if (!options.obligated && cached && admissionRevision) {
+    // So does a save whose cached item is at another revision (a sync can leave an older one):
+    // its metadata, merged into the write, would not be the metadata of the revision written over.
+    // The fresh read then stands in for that dispatch, so a server error there shows the save
+    // error, as one on the dispatch would.
+    standIn = !options.obligated && Boolean(cached && admissionRevision) && core.savedRevisionOf(cached) !== admissionRevision
+    if (!options.obligated && cached && admissionRevision && !standIn) {
       const first = await dispatch(cached, admissionRevision)
       assertGuard()
-      if (first.kind === 'saved') return await publish(first)
+      if (first.kind === 'saved') return await publish(first, admissionRevision)
       sawConflict = true
     }
     // One rebind: a fresh, live copy that still equals the editing base.
@@ -1104,7 +1111,7 @@ async function updateNoteAtCapturedBase(
     const typedTitle = meta?.name
     if (typeof typedTitle === 'string' && await noteMatchesBase(core, fresh, itemUid, { title: typedTitle, content, revision: null }, assertGuard)) {
       const heldRevision = core.savedRevisionOf(fresh)
-      if (heldRevision) return await publish({ item: fresh, etag: heldRevision })
+      if (heldRevision) return await publish({ item: fresh, etag: heldRevision }, null)
     }
     // A digest-only base cannot be compared, so a mismatch proves nothing about it.
     if (!await noteMatchesBase(core, fresh, itemUid, base, assertGuard)) return base.digestOnly !== undefined ? refuse() : refuse('changed')
@@ -1113,13 +1120,13 @@ async function updateNoteAtCapturedBase(
     if (!admissionRevision) admissionRevision = freshRevision
     const second = await dispatch(fresh, freshRevision)
     assertGuard()
-    if (second.kind === 'saved') return await publish(second)
+    if (second.kind === 'saved') return await publish(second, freshRevision)
     return refuse('changed')
   } catch (err) {
     if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
     if (!isOfflineError(err)) {
       console.error('[etebase-store] Failed to update notes item', getSafeErrorDetails(err))
-      if (sawConflict || proving) return refuse()
+      if (sawConflict || (proving && !standIn)) return refuse()
       if (!options.suppressErrorToast) showErrorToast(`Failed to save ${itemSaveNoun('notes')}. Please try again.`)
       return false
     }
@@ -2512,8 +2519,11 @@ interface EtebaseActions {
       sealIntent?: SealIntent
       /** The editing base the content was typed on; required with `sealIntent`. */
       base?: SealedEditingBase
-      /** Called with the saved etag right after a conditional save is published. */
-      onSaved?: (etag: string) => void
+      /**
+       * Called with the saved etag right after a conditional save is published; a note save
+       * also passes the revision its write replaced, or null when nothing was written.
+       */
+      onSaved?: (etag: string, replaced?: string | null) => void
       /**
        * Called when the save is refused because reconciliation is unproved; a note
        * save passes 'changed' when the note proved to have moved on (#1113 D1).

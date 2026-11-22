@@ -86,7 +86,11 @@ const calendarStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn(() => order.
 // setState is observed only to prove the provider no longer toggles a notes
 // loading flag: list skeletons derive from domainLoadState (#747).
 const noteStoreMock = vi.hoisted(() => ({
-  syncFromRemote: vi.fn((_notes: unknown[] = []) => order.push('syncNotes')),
+  // Hands back the rows as the real store does when none was read before its own writes.
+  syncFromRemote: vi.fn((notes: unknown[] = []) => {
+    order.push('syncNotes')
+    return notes
+  }),
   setState: vi.fn(),
 }))
 const preferencesSyncMock = vi.hoisted(() => ({

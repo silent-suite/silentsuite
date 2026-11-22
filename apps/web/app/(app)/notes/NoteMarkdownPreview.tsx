@@ -1,7 +1,8 @@
 'use client'
 
-import { Component, useMemo, type ReactNode } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import { Component, useMemo, type CSSProperties, type ReactNode } from 'react'
+import ReactMarkdown, { type Components, type Options } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useTranslations } from 'next-intl'
 
 // The Notes Markdown profile (docs/contributing/notes-markdown.md) allows
@@ -16,6 +17,121 @@ const ALLOWED_LINK_TARGET = /^(?:https?:\/\/|mailto:)/i
 function allowedLinkTarget(url: string): string {
   return ALLOWED_LINK_TARGET.test(url) ? url : ''
 }
+
+// The profile takes three GFM extensions: tables, task list items and
+// strikethrough. remark-gfm also turns on literal autolinks (a bare
+// `https://...`, `www.` or email address becomes a link) and footnotes, which
+// the profile leaves out. Their parser constructs are turned off by name, so the
+// text parses as plain CommonMark would, as on every other client.
+//
+// remark-gfm also searches all text again after parsing and makes links of the
+// bare addresses it finds. That search restarts one character after each address
+// it rejects, so `www._www._...` takes time that grows with the square of its
+// length (4.8 to 7.5 s for 100 KB in the Notes tests), and nothing throws to show
+// plain text instead. Its transform is therefore removed. As a backstop, a link
+// with no source position (only that search makes them; every link written in
+// Markdown has one) is put back as its text.
+const CONSTRUCTS_OUTSIDE_PROFILE = [
+  'wwwAutolink',
+  'protocolAutolink',
+  'emailAutolink',
+  'gfmFootnoteDefinition',
+  'gfmFootnoteCall',
+  'gfmPotentialFootnoteCall',
+]
+
+// The renderer pads every row of a table to the width of its delimiter row, and in
+// GFM every line after that row, up to a blank line or another block, is a row. A
+// table's cells are therefore columns times rows, while the note grows only with
+// their sum: `|a` repeated 500 times, a delimiter row and 2,000 short lines (about
+// 6 KB) make about 1,000,000 cells and 5.7 to 5.9 s, and nothing throws. Past this many cells
+// over all tables, the parse result is refused and the body is shown as plain text,
+// as for a body that nests too deep. The count is made on the parsed tree from the
+// widths and row counts, before any cell is built. 10,000 cells is 100 rows of 100
+// columns or 500 rows of 20, more than a note holds in practice. Tables at the
+// budget render in 0.17 to 0.58 s (server render, Node 22, five runs for each of
+// eight shapes; one column of 10,000 rows is the slowest); one over it is refused
+// in 0.19 to 0.27 s.
+const MAX_TABLE_CELLS = 10000
+
+class TooManyTableCells extends RangeError {
+  constructor() {
+    // The message names no note text: React may log it.
+    super('Tables in the note hold too many cells')
+  }
+}
+
+interface MarkdownNode {
+  type: string
+  position?: unknown
+  children?: MarkdownNode[]
+  align?: unknown[]
+}
+
+interface FromMarkdownExtension {
+  enter?: object
+  transforms?: unknown[]
+}
+
+// The literal-autolink extension is the one that handles `literalAutolink` tokens.
+function withoutAddressSearch(extension: unknown): unknown {
+  const candidate = extension as FromMarkdownExtension | null
+  return typeof candidate === 'object' && candidate !== null && candidate.enter && 'literalAutolink' in candidate.enter
+    ? { ...candidate, transforms: [] }
+    : extension
+}
+
+export function remarkNotesProfile(this: { data(): object }) {
+  const data = this.data() as { micromarkExtensions?: unknown[]; fromMarkdownExtensions?: unknown[] }
+  data.micromarkExtensions = [...(data.micromarkExtensions ?? []), { disable: { null: CONSTRUCTS_OUTSIDE_PROFILE } }]
+  data.fromMarkdownExtensions = (data.fromMarkdownExtensions ?? []).flat(Infinity).map(withoutAddressSearch)
+  return (tree: MarkdownNode) => {
+    const pending = [tree]
+    let tableCells = 0
+    for (let node = pending.pop(); node; node = pending.pop()) {
+      if (!node.children) continue
+      if (node.type === 'table') {
+        // The width mdast-util-to-hast pads each row to: the delimiter row's, or
+        // the row's own cells when there is none.
+        for (const row of node.children) tableCells += node.align ? node.align.length : (row.children?.length ?? 0)
+        if (tableCells > MAX_TABLE_CELLS) throw new TooManyTableCells()
+      }
+      node.children = node.children.flatMap((child) =>
+        child.type === 'link' && !child.position ? (child.children ?? []) : [child],
+      )
+      for (const child of node.children) pending.push(child)
+    }
+  }
+}
+
+const REMARK_PLUGINS: Options['remarkPlugins'] = [remarkGfm, remarkNotesProfile]
+
+// GFM table alignment arrives as an inline style; the profile allows no style
+// attribute, so it becomes a class.
+function cellClass(style: CSSProperties | undefined, header = false): string {
+  const base = header
+    ? 'border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 align-top font-semibold'
+    : 'border border-[rgb(var(--border))] px-2 py-1 align-top'
+  switch (style?.textAlign) {
+    case 'center':
+      return `${base} text-center`
+    case 'right':
+      return `${base} text-right`
+    default:
+      return `${base} text-left`
+  }
+}
+
+function taskListRole(className: string | undefined): 'list' | undefined {
+  return className?.split(' ').includes('contains-task-list') ? 'list' : undefined
+}
+
+const TABLE_SCROLL_CLASS =
+  'mb-2 max-w-full overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[rgb(var(--primary))]'
+
+const TASK_BOX ='relative mr-1.5 inline-block h-3.5 w-3.5 rounded-sm border align-[-0.125em]'
+const TASK_BOX_CLASS = `${TASK_BOX} border-[rgb(var(--muted))]`
+const TASK_BOX_CHECKED_CLASS = `${TASK_BOX} border-emerald-600 bg-emerald-600 after:absolute after:left-[4px] after:top-[1px] after:h-2 after:w-1 after:rotate-45 after:border-b-2 after:border-r-2 after:border-white after:content-['']`
 
 // The Markdown parser takes time quadratic in how deeply a body nests lists and
 // quotes: measured in Node 22, 15 s for 10,000 `- ` markers on one line (20 KB)
@@ -80,7 +196,12 @@ function nestsTooDeep(content: string): boolean {
  * (react-markdown shows it as text), and `urlTransform` below drops every link
  * target except http://, https:// and mailto:, where react-markdown's own default would
  * also keep irc, ircs, xmpp and every relative URL. A link left with no target
- * renders as its text, so no `href=""` link back into the app remains. No plugins.
+ * renders as its text, so no `href=""` link back into the app remains. The only
+ * plugins are remark-gfm and `remarkNotesProfile`, which narrows it to the profile.
+ *
+ * A task list checkbox is a picture (a `span`, hidden from assistive technology)
+ * plus visually hidden state text, not an `<input>`: the preview holds no form
+ * control, so nothing in it can toggle or write the note.
  *
  * Images are never rendered as elements. A note body is private, so an
  * `![](https://tracker/pixel.png)` in one must not tell a remote host that the
@@ -110,6 +231,53 @@ export function NoteMarkdownPreview({ content }: { content: string }) {
           </span>
         )
       },
+      // Only a task list item produces an input: raw HTML never becomes an element.
+      // The box is a picture. Its state is visually hidden text read just before
+      // the item's own text ("Not checked, buy milk"), so each item is told apart
+      // without putting note text into an attribute.
+      input: ({ checked }) => (
+        <>
+          <span
+            aria-hidden="true"
+            data-task={checked === true ? 'checked' : 'unchecked'}
+            className={checked === true ? TASK_BOX_CHECKED_CLASS : TASK_BOX_CLASS}
+          />
+          <span className="sr-only select-none">{`${checked === true ? t('taskChecked') : t('taskNotChecked')},`}</span>
+        </>
+      ),
+      // A list whose items show no marker is not announced as a list by WebKit
+      // unless it says so, so a task list says it.
+      ul: ({ node: _node, className, children }) => <ul className={className} role={taskListRole(className)}>{children}</ul>,
+      ol: ({ node: _node, className, children, start }) => (
+        <ol className={className} role={taskListRole(className)} start={start}>
+          {children}
+        </ol>
+      ),
+      li: ({ className, children }) => (
+        <li className={className?.split(' ').includes('task-list-item') ? 'list-none' : undefined}>{children}</li>
+      ),
+      // A wide table scrolls sideways in its own box instead of widening the preview.
+      // The box is focusable and named so the keyboard can scroll it: a scroll box
+      // with nothing focusable inside cannot be reached otherwise in every browser.
+      // The name is one fixed string, since the profile allows no note text in an
+      // attribute. The focus outline is drawn inside the box, because the global
+      // one sits outside it and an ancestor's scroll area can clip that.
+      table: ({ children }) => (
+        <div
+          role="region"
+          aria-label={t('tableScroll')}
+          tabIndex={0}
+          className={TABLE_SCROLL_CLASS}
+        >
+          <table className="border-collapse">{children}</table>
+        </div>
+      ),
+      th: ({ style, children }) => (
+        <th scope="col" className={cellClass(style, true)}>
+          {children}
+        </th>
+      ),
+      td: ({ style, children }) => <td className={cellClass(style)}>{children}</td>,
     }),
     [t],
   )
@@ -119,7 +287,7 @@ export function NoteMarkdownPreview({ content }: { content: string }) {
   if (nestsTooDeep(content)) return <PlainText content={content} />
   return (
     <PlainTextOnFailure content={content}>
-      <ReactMarkdown components={components} urlTransform={allowedLinkTarget}>
+      <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={allowedLinkTarget}>
         {content}
       </ReactMarkdown>
     </PlainTextOnFailure>
@@ -134,7 +302,8 @@ export function NoteMarkdownPreview({ content }: { content: string }) {
  * shown as plain text instead (a React text child, so nothing in it is parsed),
  * and this code reports nothing, since an error report must never carry note
  * text. React itself may log or report the RangeError, which names no note text.
- * A later body gets a fresh try.
+ * A later body gets a fresh try. The table cell budget fails the same way, from
+ * the plugin, before any cell is built.
  */
 class PlainTextOnFailure extends Component<
   { content: string; children: ReactNode },
