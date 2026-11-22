@@ -4,6 +4,7 @@ const withPWA = require('@ducanh2912/next-pwa').default
 const { withSentryConfig } = require('@sentry/nextjs')
 const { glitchtipSourceMapUpload } = require('./sentry-build-options')
 const { runtimeCachingBeforeDefaults } = require('./pwa-runtime-caching')
+const { plainDecodeEntityPlugin } = require('./note-markdown-worker-webpack')
 
 const withNextIntl = createNextIntlPlugin('./i18n/request.ts')
 // `https:` lets users reach their own Etebase server on any host, port or base path.
@@ -57,7 +58,7 @@ const nextConfig = {
       },
     ]
   },
-  webpack: (config) => {
+  webpack: (config, { webpack }) => {
     config.resolve.extensionAlias = {
       '.js': ['.ts', '.tsx', '.js'],
     }
@@ -65,6 +66,8 @@ const nextConfig = {
       ...config.resolve.alias,
       etebase: resolveEtebase(),
     }
+    // The Notes preview's worker has no `document`; see the file.
+    config.plugins.push(plainDecodeEntityPlugin(webpack))
     return config
   },
 }
