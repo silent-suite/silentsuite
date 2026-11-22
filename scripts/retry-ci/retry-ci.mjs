@@ -4,7 +4,9 @@
 // default branch; nothing here comes from the pull request. Every check fails
 // closed: nothing is rerun unless all of them pass, and a failed rerun request
 // stops the command. The pull request, its history and each target run are
-// re-read before every rerun request.
+// re-read before every rerun request, and after each request the job waits
+// until GitHub shows the new attempt, so the next comment (held by the
+// concurrency group until then) cannot ask for the same rerun twice.
 //
 // Why this is safe: it only reruns existing `pull_request` runs from a fork.
 // GitHub reruns them in their original event context (read-only token, no
@@ -84,6 +86,7 @@ function wellFormedRun(run) {
     typeof run.head_sha === 'string' &&
     typeof run.head_branch === 'string' &&
     Number.isSafeInteger(run.head_repository?.id) &&
+    Number.isSafeInteger(run.run_attempt) &&
     typeof run.status === 'string' &&
     (run.status !== 'completed' || typeof run.conclusion === 'string') &&
     Number.isFinite(Date.parse(run.created_at))
@@ -173,6 +176,8 @@ function client({ token, fetchImpl, api }) {
 }
 
 const TIMELINE_PAGES = 10
+const VISIBLE_TRIES = 20
+const VISIBLE_WAIT_MS = 2000
 const samePull = (a, b) =>
   a.number === b.number && a.head.sha === b.head.sha && a.head.ref === b.head.ref && a.head.repo.id === b.head.repo.id
 
@@ -191,7 +196,7 @@ export function checkTarget(now, selected) {
   ) {
     return refuse(`run ${selected.id} could not be re-read`)
   }
-  if (now.status !== 'completed' || !RETRYABLE_CONCLUSIONS.has(now.conclusion)) {
+  if (now.run_attempt !== selected.run_attempt || now.status !== 'completed' || !RETRYABLE_CONCLUSIONS.has(now.conclusion)) {
     return refuse(`run ${selected.id} changed since the check (rerun by someone else?)`)
   }
   return { ok: true }
@@ -199,7 +204,7 @@ export function checkTarget(now, selected) {
 
 // Returns { ok, reason?, sha?, runs?, retried: [run ids] }. Throws only on
 // API errors before any rerun was requested.
-export async function retryCi({ env, fetchImpl = fetch }) {
+export async function retryCi({ env, fetchImpl = fetch, sleep = ms => new Promise(done => setTimeout(done, ms)) }) {
   const comment = checkComment({ userId: env.COMMENT_USER_ID, body: env.COMMENT_BODY })
   if (!comment.ok) return { ...comment, retried: [] }
   if (!/^[1-9][0-9]*$/.test(env.PR_NUMBER ?? '')) return { ...refuse('no pull request number'), retried: [] }
@@ -226,6 +231,19 @@ export async function retryCi({ env, fetchImpl = fetch }) {
       }
     }
     return checkTimeline(events, since)
+  }
+
+  const rerunVisible = async selected => {
+    for (let tries = 0; tries < VISIBLE_TRIES; tries++) {
+      if (tries) await sleep(VISIBLE_WAIT_MS)
+      try {
+        const now = await call('GET', `${repo}/actions/runs/${selected.id}`)
+        if (now?.id === selected.id && Number.isSafeInteger(now.run_attempt) && now.run_attempt > selected.run_attempt) return true
+      } catch {
+        // keep waiting; an unreadable answer is not a visible rerun
+      }
+    }
+    return false
   }
 
   const first = await readPull()
@@ -263,10 +281,18 @@ export async function retryCi({ env, fetchImpl = fetch }) {
     } catch (error) {
       return stop(`the pull request or run could not be re-read: ${error.message}`)
     }
+    let postError = null
     try {
       await call('POST', `${repo}/actions/runs/${run.id}/rerun-failed-jobs`)
     } catch (error) {
-      return stop(`rerun of run ${run.id} failed: ${error.message}`)
+      postError = error
+    }
+    // Hold the concurrency group until the new attempt shows. An error reply
+    // whose rerun shows anyway counts as started.
+    if (!(await rerunVisible(run))) {
+      if (postError) return stop(`rerun of run ${run.id} failed: ${postError.message}`)
+      retried.push(run.id)
+      return stop(`rerun of run ${run.id} was requested but GitHub does not show it yet; wait for it to start before commenting again`)
     }
     retried.push(run.id)
   }

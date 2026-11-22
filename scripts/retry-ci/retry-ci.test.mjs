@@ -182,6 +182,9 @@ test('refuses incomplete or oversized listings', () => {
   assert.equal(selectRuns(pull(), { total_count: 101, workflow_runs: [] }).ok, false)
   assert.equal(selectRuns(pull(), { total_count: 2, workflow_runs: [run('ci', { conclusion: 'failure' })] }).ok, false)
   assert.equal(selectRuns(pull(), {}).ok, false)
+  for (const run_attempt of [undefined, 0.5, '1']) {
+    assert.equal(selectRuns(pull(), listing([run('ci', { conclusion: 'failure', run_attempt })])).ok, false, String(run_attempt))
+  }
   assert.equal(selectRuns(pull(), listing([null, run('ci', { conclusion: 'failure' })])).ok, false, 'null entry')
   assert.equal(selectRuns(pull(), listing([run('ci', { conclusion: 'failure', head_repository: null })])).ok, false)
 })
@@ -199,8 +202,9 @@ const env = {
 }
 
 // A stateful stand-in. POST rerun-failed-jobs turns the run into its next
-// attempt (queued) the way GitHub shows an accepted rerun; `finish(id,
-// conclusion)` plays that attempt ending.
+// attempt (queued) the way GitHub shows an accepted rerun, unless `post` says
+// the change stays invisible; `finish(id, conclusion)` plays that attempt
+// ending.
 function fakeGitHub({
   pullAt = () => pull(),
   runs = [],
@@ -218,7 +222,7 @@ function fakeGitHub({
     calls.push(`${init.method} ${path}`)
     assert.equal(init.headers.Authorization, 'Bearer test-token')
     assert.equal(init.headers.Accept, 'application/vnd.github+json')
-    const answer = (status, body = null) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
+    const answer = (status, body = null) => ({ ok: status >= 200 && status < 300, status, json: async () => structuredClone(body) })
     const query = new URL(url).searchParams
     if (init.method === 'GET' && path.endsWith('/pulls/1115')) return answer(200, pullAt(posts))
     if (init.method === 'GET' && path.includes('/pulls?')) return answer(200, fromBranch)
@@ -238,7 +242,7 @@ function fakeGitHub({
       posts++
       const id = Number(rerun[1])
       const outcome = post(id)
-      if (outcome.accepted) {
+      if (outcome.accepted && outcome.visible !== false) {
         const target = state.get(id)
         Object.assign(target, { run_attempt: target.run_attempt + 1, status: 'queued', conclusion: null })
       }
@@ -252,7 +256,11 @@ function fakeGitHub({
 const posts = github => github.calls.filter(call => call.startsWith('POST'))
 
 // One /retry-ci comment end to end.
-const comment = (github, extra = {}) => retryCi({ env: { ...env, ...extra }, fetchImpl: github.fetchImpl })
+let slept = 0
+const sleep = async () => {
+  slept++
+}
+const comment = (github, extra = {}) => retryCi({ env: { ...env, ...extra }, fetchImpl: github.fetchImpl, sleep })
 
 const DECIDE = [
   'GET /repos/silent-suite/silentsuite/pulls/1115',
@@ -280,8 +288,10 @@ test('reruns each failed run after re-reading the pull request and its history',
     ...DECIDE,
     ...LIVE(11),
     'POST /repos/silent-suite/silentsuite/actions/runs/11/rerun-failed-jobs',
+    'GET /repos/silent-suite/silentsuite/actions/runs/11',
     ...LIVE(12),
     'POST /repos/silent-suite/silentsuite/actions/runs/12/rerun-failed-jobs',
+    'GET /repos/silent-suite/silentsuite/actions/runs/12',
   ])
 })
 
@@ -338,6 +348,7 @@ test('re-reads each target run right before its rerun', async () => {
   const twoRuns = () => [run('ci', { id: 81, conclusion: 'failure' }), run('build-android', { id: 82, conclusion: 'failure' })]
   const changes = {
     'rerun by a maintainer meanwhile': (id, sent, now) => (id === 82 ? { ...now, run_attempt: 2, status: 'queued', conclusion: null } : now),
+    'rerun finished and failed again': (id, sent, now) => (id === 82 ? { ...now, run_attempt: 2, conclusion: 'failure' } : now),
     'now a success': (id, sent, now) => (id === 82 ? { ...now, conclusion: 'success' } : now),
     'another run answers': (id, sent, now) => (id === 82 ? { ...now, id: 83 } : now),
     unreadable: (id, sent, now) => (id === 82 ? { id: 82 } : now),
@@ -366,6 +377,35 @@ test('every later comment retries again once the previous rerun has finished', a
   github.finish(61, 'success')
   assert.match((await comment(github)).reason, /no failed build or test run/)
   assert.equal(posts(github).length, 4)
+})
+
+test('holds the lock until GitHub shows the rerun, so a later comment cannot repeat it', async () => {
+  const runs = () => [run('ci', { id: 71, conclusion: 'failure' }), run('build-android', { id: 72, conclusion: 'failure' })]
+  const runGets = (github, id) => github.calls.filter(call => call === `GET /repos/silent-suite/silentsuite/actions/runs/${id}`).length
+
+  // Accepted but not shown in time: stop, report it as requested, and say to wait.
+  slept = 0
+  const hidden = fakeGitHub({ runs: runs(), post: () => ({ accepted: true, status: 201, visible: false }) })
+  const result = await comment(hidden)
+  assert.equal(result.ok, false)
+  assert.match(result.reason, /does not show it yet/)
+  assert.deepEqual(result.retried, [71])
+  assert.equal(posts(hidden).length, 1, 'no request for the next run')
+  assert.equal(runGets(hidden, 71), 1 + 20, 'one check before, twenty polls after')
+  assert.equal(slept, 19)
+
+  // An error reply whose rerun shows anyway counts as started and goes on.
+  const ambiguous = fakeGitHub({ runs: runs(), post: () => ({ accepted: true, status: 502 }) })
+  const started = await comment(ambiguous)
+  assert.equal(started.ok, true)
+  assert.deepEqual(started.retried, [71, 72])
+
+  // An error reply with nothing shown stops as a failed request.
+  const refused = fakeGitHub({ runs: runs(), post: () => ({ accepted: false, status: 502 }) })
+  const failedRequest = await comment(refused)
+  assert.match(failedRequest.reason, /rerun of run 71 failed/)
+  assert.deepEqual(failedRequest.retried, [])
+  assert.equal(posts(refused).length, 1)
 })
 
 test('accepts a force push from before CI started and a long readable timeline', async () => {
