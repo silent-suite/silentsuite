@@ -968,6 +968,13 @@ class TestVCard4PhotoDowngrade:
             (None, self.PAYLOAD, {"ENCODING": ["b"], "TYPE": ["png"], "PREF": ["1"]})
         ], "BEHAVIOR: PREF kept on converted photo"
 
+    @pytest.mark.parametrize("name", ["PHOTO", "LOGO"])
+    def test_percent_escaped_base64_payload_is_decoded(self, mem_db, user, name):
+        _, _, _, card = self._serve(mem_db, user, f"{name};PREF=1:data:image/png;base64,TQ%3D%3D")
+        assert self._media(card, name.lower()) == [
+            (None, b"M", {"ENCODING": ["b"], "TYPE": ["png"], "PREF": ["1"]})
+        ], f"BEHAVIOR: percent-escaped base64 {name} served decoded"
+
     def test_percent_encoded_data_uri_photo_is_served(self, mem_db, user):
         _, _, _, card = self._serve(mem_db, user, "PHOTO:data:image/svg+xml,%3Csvg%2F%3E")
         assert self._media(card, "photo") == [
@@ -996,6 +1003,7 @@ class TestVCard4PhotoDowngrade:
     @pytest.mark.parametrize("media_line", [
         "PHOTO;MEDIATYPE=image/jpeg:data:image/jpeg;base64,{b64}",
         "item1.PHOTO;VALUE=uri:{url}",
+        "PHOTO;MEDIATYPE=image/png:data:image/png;base64,TQ%3D%3D",
     ])
     def test_client_edit_of_served_card_keeps_the_photo(self, mem_db, user, media_line):
         collection, item, text, _ = self._serve(

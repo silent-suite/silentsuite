@@ -614,7 +614,8 @@ def _vcard4_media_line_to_3(name, params, value, group):
     if match:
         mediatype, *flags = match.group(1).split(";")
         if any(flag.strip().lower() == "base64" for flag in flags):
-            value = match.group(2)
+            # A data URI may percent-escape base64 characters (%3D for =).
+            value = urllib.parse.unquote(match.group(2))
         else:
             value = base64.b64encode(
                 urllib.parse.unquote_to_bytes(match.group(2))
