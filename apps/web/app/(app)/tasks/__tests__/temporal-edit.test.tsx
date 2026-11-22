@@ -68,10 +68,8 @@ function contentLines(content: string): string[] {
   return content.replace(/\r\n[ \t]/g, '').split('\r\n')
 }
 
-function openMobileEditor() {
-  const mobileEdit = screen.getAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('md:hidden'))
-  expect(mobileEdit, 'mobile Edit task button').toBeTruthy()
-  fireEvent.click(mobileEdit!)
+function openEditor() {
+  fireEvent.click(screen.getByRole('button', { name: 'Edit task' }))
   return screen.getByRole('dialog', { name: 'Edit Task' })
 }
 
@@ -113,7 +111,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
   it('keeps both timed, zoned dates exactly when only the title changes', async () => {
     const original = seedTask([START_LINE, DUE_LINE])
     renderWithIntl(<TasksPage />)
-    const dialog = openMobileEditor()
+    const dialog = openEditor()
 
     fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: 'Renamed task' } })
     const { lines, saved } = await saveAndReadContent(dialog, updateItem)
@@ -129,7 +127,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
   it('keeps both timed, zoned dates exactly when only the notes change', async () => {
     const original = seedTask([START_LINE, DUE_LINE])
     renderWithIntl(<TasksPage />)
-    const dialog = openMobileEditor()
+    const dialog = openEditor()
 
     fireEvent.change(within(dialog).getByPlaceholderText('Add notes...'), { target: { value: 'New notes' } })
     const { lines, saved } = await saveAndReadContent(dialog, updateItem)
@@ -144,7 +142,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
   it('changes only the due date to the picked day and keeps the start time and zone', async () => {
     const original = seedTask([START_LINE, DUE_LINE])
     renderWithIntl(<TasksPage />)
-    const dialog = openMobileEditor()
+    const dialog = openEditor()
 
     fireEvent.change(within(dialog).getByLabelText('Due date'), { target: { value: '2026-06-05' } })
     const { lines, saved } = await saveAndReadContent(dialog, updateItem)
@@ -158,7 +156,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
   it('clears only the due date and keeps the start time and zone', async () => {
     const original = seedTask([START_LINE, DUE_LINE])
     renderWithIntl(<TasksPage />)
-    const dialog = openMobileEditor()
+    const dialog = openEditor()
 
     fireEvent.change(within(dialog).getByLabelText('Due date'), { target: { value: '' } })
     const { lines, saved } = await saveAndReadContent(dialog, updateItem)
@@ -172,7 +170,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
   it('changes only the start date to the picked day and keeps the due time and zone', async () => {
     const original = seedTask([START_LINE, DUE_LINE])
     renderWithIntl(<TasksPage />)
-    const dialog = openMobileEditor()
+    const dialog = openEditor()
 
     fireEvent.change(within(dialog).getByLabelText('Start date'), { target: { value: '2026-05-25' } })
     const { lines, saved } = await saveAndReadContent(dialog, updateItem)
@@ -186,7 +184,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
   it('clears only the start date and keeps the due time and zone', async () => {
     const original = seedTask([START_LINE, DUE_LINE])
     renderWithIntl(<TasksPage />)
-    const dialog = openMobileEditor()
+    const dialog = openEditor()
 
     fireEvent.change(within(dialog).getByLabelText('Start date'), { target: { value: '' } })
     const { lines, saved } = await saveAndReadContent(dialog, updateItem)
@@ -200,7 +198,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
   it('keeps a date that was changed and then set back to its original day', async () => {
     const original = seedTask([START_LINE, DUE_LINE])
     renderWithIntl(<TasksPage />)
-    const dialog = openMobileEditor()
+    const dialog = openEditor()
 
     const due = within(dialog).getByLabelText<HTMLInputElement>('Due date')
     const shownDay = due.value
@@ -218,7 +216,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
   it('leaves a date-only start and a missing due date as they were on a title-only save', async () => {
     seedTask(['DTSTART;VALUE=DATE:20260530'])
     renderWithIntl(<TasksPage />)
-    const dialog = openMobileEditor()
+    const dialog = openEditor()
 
     fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: 'Renamed task' } })
     const { lines, saved } = await saveAndReadContent(dialog, updateItem)
@@ -257,7 +255,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
     it('keeps every remote field on a title-only save and sends only the title', async () => {
       seedTask([START_LINE, DUE_LINE])
       renderWithIntl(<TasksPage />)
-      const dialog = openMobileEditor()
+      const dialog = openEditor()
 
       syncRemote(REMOTE)
       fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: 'Renamed task' } })
@@ -284,7 +282,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
     it('omits fields that were changed and then set back, so their remote values survive', async () => {
       seedTask([START_LINE, DUE_LINE])
       renderWithIntl(<TasksPage />)
-      const dialog = openMobileEditor()
+      const dialog = openEditor()
 
       const notes = within(dialog).getByPlaceholderText('Add notes...')
       fireEvent.change(notes, { target: { value: 'Draft notes' } })
@@ -316,7 +314,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
     it('sends a status change as one coherent status, completion and progress group', async () => {
       seedTask([START_LINE, DUE_LINE])
       renderWithIntl(<TasksPage />)
-      const dialog = openMobileEditor()
+      const dialog = openEditor()
 
       syncRemote({ description: REMOTE.description, location: REMOTE.location })
       fireEvent.change(within(dialog).getByLabelText('Task status'), { target: { value: 'completed' } })
@@ -338,7 +336,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
     it('sends a progress change with its matching status and completion', async () => {
       seedTask([START_LINE, DUE_LINE])
       renderWithIntl(<TasksPage />)
-      const dialog = openMobileEditor()
+      const dialog = openEditor()
 
       syncRemote({ description: REMOTE.description })
       fireEvent.change(within(dialog).getByLabelText('Percent complete'), { target: { value: '40' } })
@@ -353,7 +351,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
     it('closes without saving anything when nothing was changed', async () => {
       seedTask([START_LINE, DUE_LINE])
       renderWithIntl(<TasksPage />)
-      const dialog = openMobileEditor()
+      const dialog = openEditor()
 
       syncRemote(REMOTE)
       fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
@@ -368,7 +366,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
     it('treats a title that differs only by surrounding spaces as unchanged', async () => {
       seedTask([START_LINE, DUE_LINE])
       renderWithIntl(<TasksPage />)
-      const dialog = openMobileEditor()
+      const dialog = openEditor()
 
       syncRemote(REMOTE)
       fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: '  Timed task  ' } })
