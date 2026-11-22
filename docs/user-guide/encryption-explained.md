@@ -1,17 +1,17 @@
 # How Encryption Works
 
-SilentSuite uses end-to-end encryption (E2EE) so that your data is never readable by anyone except you -- not even the SilentSuite server.
+SilentSuite uses end-to-end encryption (E2EE) so that the content of your calendars, contacts, tasks and notes is never readable by anyone except you -- not even the SilentSuite server.
 
 ## The Basics
 
 - All encryption and decryption happens **on your device**.
 - Your password is used to derive encryption keys using **Argon2** (a memory-hard key derivation function designed to resist brute-force attacks).
 - Data is encrypted using **XChaCha20-Poly1305**, a modern authenticated encryption algorithm.
-- The server only ever stores and transmits **encrypted blobs**. It cannot decrypt them.
+- Your calendar, contact, task and note content reaches the server only as **encrypted blobs**. It cannot decrypt them.
 
 ## What's Encrypted
 
-Everything.
+All of your content:
 
 - Calendar event titles, dates, locations, descriptions, and reminders
 - Contact names, emails, phone numbers, addresses, and notes
@@ -32,7 +32,9 @@ The server knows:
 The server **cannot** see:
 
 - The contents of any event, contact, task, or note
-- Any plaintext whatsoever
+- The names of your calendars, address books, task lists, or notebooks
+
+Some account and sharing data is not encrypted: your username and email address, public keys, sign-up and last sign-in times, and who you share with. [What the server sees in Notes](./notes-server-sees.md) lists it in detail.
 
 ## What Happens If You Forget Your Password
 
