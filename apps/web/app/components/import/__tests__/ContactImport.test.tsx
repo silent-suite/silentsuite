@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, onTestFinished, vi } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
-import ContactImport from '../ContactImport'
+import ContactImport, { MAX_CONTACT_IMPORT_FILE_BYTES } from '../ContactImport'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import { deserializeContact, serializeContact, type Contact } from '@silentsuite/core'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -503,5 +503,29 @@ describe('ContactImport birthdays', () => {
       // Only the real frame lines may look like a card boundary to a line-trimming splitter.
       expect(wire.split('\r\n').filter(cardFrame), 'BEHAVIOR: no continuation reads as a frame').toEqual(['BEGIN:VCARD', 'END:VCARD'])
     })
+  })
+})
+
+describe('ContactImport file size limit', () => {
+  const card = 'BEGIN:VCARD\nVERSION:4.0\nUID:big-1\nFN:Long Notes\nEND:VCARD'
+  const sized = (bytes: number) => {
+    const file = new File([card], 'contacts.vcf', { type: 'text/vcard' })
+    Object.defineProperty(file, 'size', { value: bytes })
+    return file
+  }
+
+  it('accepts a 40 MB file, like a large address book with long notes', async () => {
+    const { container } = renderWithIntl(<ContactImport onImportComplete={vi.fn()} />)
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [sized(40 * 1024 * 1024)] } })
+    expect(await screen.findByRole('button', { name: /Import 1 contacts/ })).toBeTruthy()
+    expect(screen.queryByText(/File is too large/)).toBeNull()
+  })
+
+  it('refuses a file over 50 MB', async () => {
+    expect(MAX_CONTACT_IMPORT_FILE_BYTES).toBe(50 * 1024 * 1024)
+    const { container } = renderWithIntl(<ContactImport onImportComplete={vi.fn()} />)
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [sized(MAX_CONTACT_IMPORT_FILE_BYTES + 1)] } })
+    expect(await screen.findByText('File is too large. Maximum size is 50 MB.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Import 1 contacts/ })).toBeNull()
   })
 })

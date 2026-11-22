@@ -18,6 +18,9 @@ import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { normalizeLabels } from '@/app/components/LabelEditor'
 import type { ImportIncompleteError } from '@/app/lib/import-outcome'
 
+// Large address books with long notes can exceed 10 MB; each batch still uploads separately.
+export const MAX_CONTACT_IMPORT_FILE_BYTES = 50 * 1024 * 1024
+
 const sourceKeyOf = (contact: VCard) => (contact as VCard & { sourceKey?: string }).sourceKey
 
 function hasProviderContacts(contacts: VCard[]): boolean {
@@ -134,8 +137,8 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     try {
       const allContacts: VCard[] = []
       for (const file of files) {
-        if (file.size > 10 * 1024 * 1024) {
-          setError('File is too large. Maximum size is 10 MB.')
+        if (file.size > MAX_CONTACT_IMPORT_FILE_BYTES) {
+          setError('File is too large. Maximum size is 50 MB.')
           return
         }
         const text = await file.text()
