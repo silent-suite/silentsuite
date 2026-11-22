@@ -31,7 +31,8 @@ class ServerFailureContractTest {
      */
     private fun assertLatestLoadFailureShows(source: String, load: String, model: String, error: String) {
         assertTrue("a cancelled or superseded load of $model does not report its failure",
-            load.indexOf("if (!isActive || coroutineContext[Job] !== asyncTask) return@launch") in
+            load.indexOf("val generation = ++loadGeneration") in 0 until load.indexOf("viewModelScope.launch {") &&
+                load.indexOf("if (!isActive || generation != loadGeneration) return@launch") in
                 0 until load.indexOf("loadFailed.value = true"))
         assertTrue("$model clears the failure when a load starts",
             load.indexOf("loadFailed.value = false") in 0 until load.indexOf("viewModelScope.launch {"))

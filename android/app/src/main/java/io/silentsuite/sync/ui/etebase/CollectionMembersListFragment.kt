@@ -185,6 +185,8 @@ class CollectionMembersViewModel : ViewModel() {
     private val members = MutableLiveData<List<RuntimeMember>>()
     private val loadFailed = MutableLiveData<Boolean>()
     private var asyncTask: Job? = null
+    /** Counts loads, so only the latest one reports its failure. */
+    private var loadGeneration = 0
 
     fun loadMembers(
         applicationContext: Context,
@@ -194,6 +196,7 @@ class CollectionMembersViewModel : ViewModel() {
     ) {
         // Only the latest load's outcome counts: a failure before it is not shown again.
         loadFailed.value = false
+        val generation = ++loadGeneration
         asyncTask = viewModelScope.launch {
             val ret = try { withContext(Dispatchers.IO) {
                 if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account ||
@@ -219,7 +222,7 @@ class CollectionMembersViewModel : ViewModel() {
                 if (e is CancellationException) throw e
                 Logger.log.warning("Loading members failed: ${e.javaClass.name}")
                 // A load cancelled with its view, or replaced by a newer one, does not report its failure.
-                if (!isActive || coroutineContext[Job] !== asyncTask) return@launch
+                if (!isActive || generation != loadGeneration) return@launch
                 loadFailed.value = true
                 return@launch
             }
