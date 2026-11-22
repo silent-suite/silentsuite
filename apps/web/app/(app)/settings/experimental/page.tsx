@@ -76,7 +76,7 @@ function ExperimentalSettings() {
           />
         </div>
         <p id="notes-experiment-description" className="text-sm text-[rgb(var(--muted))]">
-          End-to-end encrypted Markdown notes. Experimental and available in the web app only.
+          End-to-end encrypted Markdown notes. Experimental. The Android app has its own switch for Notes.
           This choice is saved for this account in this browser, not synced to other devices.
           Turning Notes off hides the feature without deleting your notes or interrupting sync.
         </p>
