@@ -531,7 +531,7 @@
     <string name="journal_entries_list_empty_calendar">No recent calendar activity.\nCreate or edit events in your Android calendar app, then sync.</string>
     <string name="journal_entries_list_empty_contacts">No recent contact activity.\nCreate or edit contacts in your Android contacts app, then sync.</string>
     <string name="journal_entries_list_empty_tasks">No recent task activity.\nCreate or edit tasks in your task app, then sync.</string>
-    <string name="journal_entries_list_empty_notes">No recent notes activity.\nNotes are read-only on Android in this version. Edit them in the web app, then sync.</string>
+    <string name="journal_entries_list_empty_notes">No recent notes activity.\nCreate or edit notes in the Notes screen in this app, then sync.</string>
     <string name="journal_entries_list_empty_tasks_setup">Task app needed.\nAndroid does not include a built-in task provider. Install Tasks.org or OpenTasks, then sync.</string>
     <string name="journal_entries_loading">Loading recent activity...</string>
     <string name="journal_revisions_list_empty">No revisions available for this item.</string>
