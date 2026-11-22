@@ -90,8 +90,12 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
         membersModel.observe(viewLifecycleOwner) {
             setListAdapterMembers(it)
         }
-        membersModel.observeLoadFailed(viewLifecycleOwner) {
+        membersModel.observeLoadFailed(viewLifecycleOwner) { failed ->
+            if (!failed) return@observeLoadFailed
             emptyTextView?.setText(R.string.collection_members_list_load_error)
+            // Rows from an earlier load hide the empty text, so the failure is said where it shows.
+            if ((listAdapter?.count ?: 0) > 0)
+                Toast.makeText(requireContext(), R.string.collection_members_list_load_error, Toast.LENGTH_LONG).show()
         }
 
         listView.onItemClickListener = this
@@ -187,6 +191,8 @@ class CollectionMembersViewModel : ViewModel() {
         accountCollectionHolder: AccountHolder,
         cachedCollection: CachedCollection
     ) {
+        // Only the latest load's outcome counts: a failure before it is not shown again.
+        loadFailed.value = false
         asyncTask = viewModelScope.launch {
             val ret = try { withContext(Dispatchers.IO) {
                 if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account ||

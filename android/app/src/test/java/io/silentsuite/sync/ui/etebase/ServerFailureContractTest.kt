@@ -24,6 +24,22 @@ class ServerFailureContractTest {
 
     private fun strings() = File("src/main/res/values/strings.xml").readText()
 
+    /**
+     * The failure of [model]'s latest load in [source] shows: the flag is cleared when a load starts, so an earlier
+     * failure is not replayed after a later success, and with rows from an earlier load on screen (which hide the
+     * empty text) the error is said in a toast as well.
+     */
+    private fun assertLatestLoadFailureShows(source: String, load: String, model: String, error: String) {
+        assertTrue("$model clears the failure when a load starts",
+            load.indexOf("loadFailed.value = false") in 0 until load.indexOf("viewModelScope.launch {"))
+        val shown = body(source, "        $model.observeLoadFailed(viewLifecycleOwner) { failed ->", "        ")
+        assertTrue(shown.contains("if (!failed) return@observeLoadFailed"))
+        assertTrue(shown.contains("emptyTextView?.setText(R.string.$error)"))
+        assertTrue("with earlier rows on screen the error is a toast too",
+            shown.contains("if ((listAdapter?.count ?: 0) > 0)") &&
+                shown.contains("Toast.makeText(requireContext(), R.string.$error, Toast.LENGTH_LONG).show()"))
+    }
+
     /** [block] catches every failure of its server call and rethrows cancellation. */
     private fun assertCatches(what: String, block: String) {
         assertTrue("$what catches a failed server call", block.contains("} catch (e: Exception) {"))
@@ -46,6 +62,7 @@ class ServerFailureContractTest {
         assertTrue(view.contains("R.string.collection_members_list_load_error"))
         assertTrue(source.contains("R.string.collection_members_remove_error"))
         assertTrue(strings().contains("name=\"collection_members_list_load_error\""))
+        assertLatestLoadFailureShows(source, load, "membersModel", "collection_members_list_load_error")
     }
 
     @Test fun `leaving a collection of another type than Notes catches a failed server call and keeps the screen`() {
@@ -73,6 +90,7 @@ class ServerFailureContractTest {
         assertTrue(view.contains("R.string.invitations_load_error"))
         assertTrue(source.contains("R.string.invitations_reject_error"))
         assertTrue(strings().contains("name=\"invitations_load_error\""))
+        assertLatestLoadFailureShows(source, load, "invitationsModel", "invitations_load_error")
         assertTrue(strings().contains("name=\"invitations_reject_error\""))
     }
 
@@ -86,5 +104,6 @@ class ServerFailureContractTest {
         assertTrue(view.contains("revisionsModel.observeLoadFailed(viewLifecycleOwner)"))
         assertTrue(view.contains("R.string.journal_revisions_load_error"))
         assertTrue(strings().contains("name=\"journal_revisions_load_error\""))
+        assertLatestLoadFailureShows(source, load, "revisionsModel", "journal_revisions_load_error")
     }
 }

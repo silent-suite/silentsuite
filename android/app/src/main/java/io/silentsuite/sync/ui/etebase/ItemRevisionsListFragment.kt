@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.TextView
+import android.widget.Toast
 import androidx.fragment.app.ListFragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.commit
@@ -74,8 +75,12 @@ class ItemRevisionsListFragment : ListFragment(), AdapterView.OnItemClickListene
 
             emptyTextView!!.text = getString(R.string.journal_revisions_list_empty)
         }
-        revisionsModel.observeLoadFailed(viewLifecycleOwner) {
+        revisionsModel.observeLoadFailed(viewLifecycleOwner) { failed ->
+            if (!failed) return@observeLoadFailed
             emptyTextView?.setText(R.string.journal_revisions_load_error)
+            // Rows from an earlier load hide the empty text, so the failure is said where it shows.
+            if ((listAdapter?.count ?: 0) > 0)
+                Toast.makeText(requireContext(), R.string.journal_revisions_load_error, Toast.LENGTH_LONG).show()
         }
 
         listView.onItemClickListener = this
@@ -141,6 +146,8 @@ class RevisionsViewModel : ViewModel() {
     private var asyncTask: Job? = null
 
     fun loadRevisions(accountCollectionHolder: AccountHolder, cachedCollection: CachedCollection, cachedItem: CachedItem) {
+        // Only the latest load's outcome counts: a failure before it is not shown again.
+        loadFailed.value = false
         asyncTask = viewModelScope.launch {
             val ret = try { withContext(Dispatchers.IO) {
                 val result = LinkedList<CachedItem>()

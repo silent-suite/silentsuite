@@ -101,8 +101,12 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
         invitationsModel.observe(viewLifecycleOwner) {
             setListAdapterInvitations(it)
         }
-        invitationsModel.observeLoadFailed(viewLifecycleOwner) {
+        invitationsModel.observeLoadFailed(viewLifecycleOwner) { failed ->
+            if (!failed) return@observeLoadFailed
             emptyTextView?.setText(R.string.invitations_load_error)
+            // Rows from an earlier load hide the empty text, so the failure is said where it shows.
+            if ((listAdapter?.count ?: 0) > 0)
+                Toast.makeText(requireContext(), R.string.invitations_load_error, Toast.LENGTH_LONG).show()
         }
 
         listView.onItemClickListener = this
@@ -224,6 +228,8 @@ class InvitationsViewModel : ViewModel() {
         identity: InvitationLifecycleIdentity,
         accountCollectionHolder: AccountHolder
     ) {
+        // Only the latest load's outcome counts: a failure before it is not shown again.
+        loadFailed.value = false
         asyncTask = viewModelScope.launch {
             val ret = try { withContext(Dispatchers.IO) {
                 if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account)
