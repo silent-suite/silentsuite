@@ -28,6 +28,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.*
@@ -167,6 +168,8 @@ class RevisionsViewModel : ViewModel() {
                 // Offline or a server error: say so on the screen instead of crashing.
                 if (e is CancellationException) throw e
                 Logger.log.warning("Loading revisions failed: ${e.javaClass.name}")
+                // A load cancelled with its view, or replaced by a newer one, does not report its failure.
+                if (!isActive || coroutineContext[Job] !== asyncTask) return@launch
                 loadFailed.value = true
                 return@launch
             }

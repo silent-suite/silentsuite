@@ -30,6 +30,9 @@ class ServerFailureContractTest {
      * empty text) the error is said in a toast as well.
      */
     private fun assertLatestLoadFailureShows(source: String, load: String, model: String, error: String) {
+        assertTrue("a cancelled or superseded load of $model does not report its failure",
+            load.indexOf("if (!isActive || coroutineContext[Job] !== asyncTask) return@launch") in
+                0 until load.indexOf("loadFailed.value = true"))
         assertTrue("$model clears the failure when a load starts",
             load.indexOf("loadFailed.value = false") in 0 until load.indexOf("viewModelScope.launch {"))
         val shown = body(source, "        $model.observeLoadFailed(viewLifecycleOwner) { failed ->", "        ")
