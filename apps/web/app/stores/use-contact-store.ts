@@ -117,6 +117,12 @@ interface ContactLedger {
   draft: StoredContact
   refused: boolean
   queued: boolean
+  /**
+   * The last record this context saw on the server, with its revision: the
+   * record the ledger began on, or the latest accepted draft. A refused draft
+   * never reached the server, so a later save or delete is proved against this.
+   */
+  serverBase: StoredContact
 }
 
 const contactLedgers = new Map<string, ContactLedger>()
@@ -272,10 +278,10 @@ export const useContactStore = create<ContactState & ContactActions>()(
         })
       }
 
-      const startGeneration = (id: string, draft: StoredContact): number => {
+      const startGeneration = (id: string, draft: StoredContact, base: StoredContact): number => {
         const generation = ++nextGeneration
         // A new draft carries an earlier refusal until it is itself accepted remotely.
-        const ledger = liveLedger(id) ?? { accountEpoch: getAccountEpoch(), unsettled: new Set<number>(), latest: 0, draft, refused: false, queued: false }
+        const ledger = liveLedger(id) ?? { accountEpoch: getAccountEpoch(), unsettled: new Set<number>(), latest: 0, draft, refused: false, queued: false, serverBase: base }
         ledger.unsettled.add(generation)
         ledger.latest = generation
         ledger.draft = draft
@@ -289,13 +295,15 @@ export const useContactStore = create<ContactState & ContactActions>()(
       const settleGeneration = (
         id: string,
         generation: number,
-        outcome: { kind: 'remote'; etag: string } | { kind: 'queued' } | { kind: 'refused' } | { kind: 'failed'; base: StoredContact },
+        outcome: { kind: 'remote'; etag: string; draft: StoredContact } | { kind: 'queued' } | { kind: 'refused' } | { kind: 'failed'; base: StoredContact },
         /** A favorite intent: its star value and the base it was toggled on. */
         star?: { value: boolean; base: StoredContact },
       ) => {
         const ledger = liveLedger(id)
         if (!ledger || !ledger.unsettled.delete(generation)) return
         if (outcome.kind === 'remote') {
+          // Saves dispatch in order, so this is now the newest record on the server.
+          ledger.serverBase = { ...outcome.draft, revision: outcome.etag }
           // An older acceptance leaves the newer draft, its state and revision alone.
           if (generation === ledger.latest) {
             const saved: StoredContact = { ...ledger.draft, revision: outcome.etag }
@@ -350,6 +358,16 @@ export const useContactStore = create<ContactState & ContactActions>()(
         if (!guard) return false
         const base = get().contacts.find((contact) => contact.id === id)
         if (!base) return false
+        // A settled refused draft never reached the server, so its text and null
+        // revision can never prove a later save: that save is proved against the
+        // last server record instead, and a newer remote record still refuses it.
+        // While an earlier save is unsettled, the shown draft stays the base so the
+        // saves chain. A favorite keeps the shown record, so custody never seals
+        // refused fields.
+        const refusedLedger = liveLedger(id)
+        const proof = sealIntent !== 'favorite' && refusedLedger?.refused && refusedLedger.unsettled.size === 0
+          ? refusedLedger.serverBase
+          : base
         const draft: StoredContact = { ...base, ...patch, updated_at: new Date(), revision: null }
         // A birthday set without its own type is a date: a text type read with
         // the previous value must not carry over to it.
@@ -357,7 +375,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
         const star = sealIntent === 'favorite'
           ? { value: draft.favorite === true, base: { ...base, favorite: base.favorite === true } }
           : undefined
-        const generation = startGeneration(id, draft)
+        const generation = startGeneration(id, draft, base)
         const persist = async (): Promise<boolean> => {
           let savedEtag: string | null = null
           let refused = false
@@ -366,10 +384,10 @@ export const useContactStore = create<ContactState & ContactActions>()(
             const { serializeContact } = await import('@silentsuite/core')
             // The account that captured the draft must still be the one dispatching it.
             assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
-            const witness = serializeContact(base)
+            const witness = serializeContact(proof)
             const content = serializeContact(draft)
             outcome = await useEtebaseStore.getState().updateItem('contacts', id, content, {
-              contactBase: { revision: base.revision, witness },
+              contactBase: { revision: proof.revision, witness },
               sealIntent,
               collectionUid: base.listId,
               suppressErrorToast: true,
@@ -386,7 +404,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
             console.error('[contact-store] Failed to save contact', getSafeErrorDetails(err))
           }
           if (!isCurrentAccountEpoch(accountEpoch)) return false
-          if (outcome === 'remote' && savedEtag) settleGeneration(id, generation, { kind: 'remote', etag: savedEtag })
+          if (outcome === 'remote' && savedEtag) settleGeneration(id, generation, { kind: 'remote', etag: savedEtag, draft })
           else if (outcome === 'queued') settleGeneration(id, generation, { kind: 'queued' })
           else if (refused) settleGeneration(id, generation, { kind: 'refused' }, star)
           else settleGeneration(id, generation, { kind: 'failed', base }, star)
@@ -481,12 +499,18 @@ export const useContactStore = create<ContactState & ContactActions>()(
         // An identity this context cannot prove on the server is refused, never queued (#744 C3).
         if (!etebase.itemCache.has(id)) return false
         // #744 §9 C1: a drafted contact or an unknown revision refuses; otherwise delete only at the revision shown.
-        if (liveLedger(id) || !contact.revision) return false
+        // A settled refused draft never reached the server: delete at the last server record it was drafted on.
+        const ledger = liveLedger(id)
+        const settledRefusal = ledger?.refused && ledger.unsettled.size === 0 && !ledger.queued ? ledger : undefined
+        if (ledger && !settledRefusal) return false
+        const target = settledRefusal ? settledRefusal.serverBase : contact
+        const latestAtDelete = settledRefusal?.latest
+        if (!target.revision) return false
         try {
           const outcome = await etebase.deleteItem('contacts', id, {
-            collectionUid: contact.listId,
+            collectionUid: target.listId,
             conditional: true,
-            expectedRevision: contact.revision,
+            expectedRevision: target.revision,
           })
           if (!isCurrentAccountEpoch(accountEpoch) || outcome === false) return false
         } catch (err) {
@@ -497,7 +521,8 @@ export const useContactStore = create<ContactState & ContactActions>()(
         }
         // A draft begun while the delete was in flight stays shown with its own save state, as
         // does unsaved typing still in an open field; the server copy is gone, so that draft is
-        // refused visibly, never dropped silently.
+        // refused visibly, never dropped silently. The refused draft this delete replaced retires.
+        if (settledRefusal && liveLedger(id) === settledRefusal && settledRefusal.latest === latestAtDelete) contactLedgers.delete(id)
         if (liveLedger(id) || hasContactFieldDraft(id)) return true
         // Not optimistic: the contact leaves the list only once the delete is accepted.
         set((state) => ({ contacts: state.contacts.filter((c) => c.id !== id) }))
