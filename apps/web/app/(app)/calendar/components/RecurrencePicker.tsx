@@ -66,6 +66,36 @@ function buildRRule(
   return parts.join(';')
 }
 
+const partKey = (part: string): string => part.split('=', 1)[0]!.toUpperCase()
+
+/**
+ * `rrule` with each named part set in place (appended when absent) or removed when undefined.
+ * Every other part (BYDAY, BYMONTHDAY, BYSETPOS, WKST, ...) is kept as written, so editing the
+ * interval or end of an imported rule does not change which days it falls on.
+ */
+function withParts(rrule: string, changes: Record<string, string | undefined>): string {
+  const parts = rrule.split(';').filter((part) => part !== '')
+  for (const [key, value] of Object.entries(changes)) {
+    const index = parts.findIndex((part) => partKey(part) === key)
+    if (value === undefined) {
+      if (index !== -1) parts.splice(index, 1)
+    } else if (index !== -1) {
+      parts[index] = `${key}=${value}`
+    } else {
+      parts.push(`${key}=${value}`)
+    }
+  }
+  return parts.join(';')
+}
+
+/** The end parts for an end condition: at most one of COUNT and UNTIL. */
+function endParts(endType: EndType, count: number, until: string): Record<string, string | undefined> {
+  return {
+    COUNT: endType === 'count' && count > 0 ? String(count) : undefined,
+    UNTIL: endType === 'until' && until ? until.replace(/-/g, '') : undefined,
+  }
+}
+
 export function RecurrencePicker({ value, onChange, disabled = false }: RecurrencePickerProps) {
   const [showCustom, setShowCustom] = useState(false)
   const [freq, setFreq] = useState<Frequency>(() => parseFrequency(value))
@@ -78,51 +108,63 @@ export function RecurrencePicker({ value, onChange, disabled = false }: Recurren
   const [count, setCount] = useState(() => parseCount(value) ?? 10)
   const [until, setUntil] = useState(() => parseUntil(value) ?? '')
 
+  // Edits change only the part the user touched; the rest of the current rule is kept.
+  const edit = useCallback(
+    (changes: Record<string, string | undefined>) => onChange(withParts(value ?? `FREQ=${freq}`, changes)),
+    [value, freq, onChange],
+  )
+
   const handleFreqChange = useCallback(
     (newFreq: Frequency) => {
       setFreq(newFreq)
       if (newFreq === 'NONE') {
         setShowCustom(false)
         onChange(null)
-      } else {
+      } else if (!value) {
         onChange(buildRRule(newFreq, interval, endType, count, until))
+      } else {
+        // BY* parts select days within the old frequency's period (BYDAY=MO,WE,FR of a week,
+        // BYMONTHDAY=15 of a month) and change meaning or become invalid under another one, so a
+        // new frequency drops them. Interval, end, WKST and any other parts are kept.
+        const kept = value.split(';').filter((part) => part !== '' && !partKey(part).startsWith('BY'))
+        onChange(withParts(kept.join(';'), { FREQ: newFreq }))
       }
     },
-    [interval, endType, count, until, onChange],
+    [value, interval, endType, count, until, onChange],
   )
 
   const handleIntervalChange = useCallback(
     (val: number) => {
       const clamped = Math.max(1, val)
       setInterval(clamped)
-      onChange(buildRRule(freq, clamped, endType, count, until))
+      edit({ INTERVAL: clamped > 1 ? String(clamped) : undefined })
     },
-    [freq, endType, count, until, onChange],
+    [edit],
   )
 
   const handleEndTypeChange = useCallback(
     (val: EndType) => {
       setEndType(val)
-      onChange(buildRRule(freq, interval, val, count, until))
+      edit(endParts(val, count, until))
     },
-    [freq, interval, count, until, onChange],
+    [edit, count, until],
   )
 
   const handleCountChange = useCallback(
     (val: number) => {
       const clamped = Math.max(1, val)
       setCount(clamped)
-      onChange(buildRRule(freq, interval, endType, clamped, until))
+      edit(endParts(endType, clamped, until))
     },
-    [freq, interval, endType, until, onChange],
+    [edit, endType, until],
   )
 
   const handleUntilChange = useCallback(
     (val: string) => {
       setUntil(val)
-      onChange(buildRRule(freq, interval, endType, count, val))
+      edit(endParts(endType, count, val))
     },
-    [freq, interval, endType, count, onChange],
+    [edit, endType, count],
   )
 
   return (
