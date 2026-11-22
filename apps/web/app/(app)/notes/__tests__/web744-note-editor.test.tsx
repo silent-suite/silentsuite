@@ -395,6 +395,31 @@ describe('#744 the rendered note editor saves only through its captured base', (
     expect(await serverTitle(account, collection, item.uid)).toBe('Unmount title 744')
   })
 
+  it('asks before the tab closes while typing waits for its autosave or its save runs, and not once it is saved', async () => {
+    const leavePrevented = () => {
+      const event = new harness.window.Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    const { account, collection, item } = await openSavedNote()
+    expect(leavePrevented()).toBe(false)
+
+    // Typed, autosave not yet run: the text exists only in this page.
+    fireEvent.change(titleBox(), { target: { value: 'Typed before close' } })
+    expect(leavePrevented()).toBe(true)
+
+    // Its save is running.
+    const write = server.holdNext(isTransaction)
+    hideTab()
+    await write.arrived
+    expect(leavePrevented()).toBe(true)
+
+    write.release(false)
+    await settle()
+    expect(await serverTitle(account, collection, item.uid)).toBe('Typed before close')
+    expect(leavePrevented()).toBe(false)
+  })
+
   it('#744 obliges a note whose editor mounts while custody is outstanding', async () => {
     const { account, collection, item } = await makeSavedNote(BASE_TITLE, BASE_BODY)
     server.seed(collection, [item])

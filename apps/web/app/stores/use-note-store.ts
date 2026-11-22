@@ -341,11 +341,10 @@ function recordHolds(id: string, text: NoteText): boolean {
 
 /**
  * Notes with text that exists only in this page: held text its record does not hold,
- * an open editor's typing its record does not hold, a closing save. With `heldOnly`,
- * an open editor counts only while its note has held text or a record, as the leave
- * prompt has always asked only for held text.
+ * an open editor's typing its record does not hold (waiting for its autosave or with
+ * its save running), a closing save.
  */
-function noteTextOnlyInPage(heldOnly = false): Set<string> {
+function noteTextOnlyInPage(): Set<string> {
   const ids = new Set<string>()
   for (const id of [...heldNoteDrafts.keys()]) {
     const held = getHeldNoteDraft(id)
@@ -355,7 +354,6 @@ function noteTextOnlyInPage(heldOnly = false): Set<string> {
     const editor = getMountedNoteEditor(id)
     if (!editor || editor.isClean()) continue
     const record = getHeldNoteRecord(id)
-    if (heldOnly && !record && !getHeldNoteDraft(id)) continue
     const typed = editor.draft?.()
     if (!record || !typed || !recordHolds(id, typed)) ids.add(id)
   }
@@ -363,17 +361,28 @@ function noteTextOnlyInPage(heldOnly = false): Set<string> {
   return ids
 }
 
+/** Whether an open editor has typing not yet saved, or a save still running. */
+function editorHasUnsavedWork(): boolean {
+  for (const id of [...mountedEditors.keys()]) {
+    const editor = getMountedNoteEditor(id)
+    if (editor && (!editor.isClean() || !editor.chainIdle())) return true
+  }
+  return false
+}
+
 /**
- * While held text, a held record, a closing save or a running copy exists, a leave
- * listener is installed; it asks only when, at that moment, some text exists only in
- * this page (held text or typing its record does not hold, a closing save, a copy).
+ * While held text, a held record, a closing save, a running copy, or an open editor's
+ * unsaved typing or running save exists, a leave listener is installed; it asks only
+ * when, at that moment, some text exists only in this page (held text or typing its
+ * record does not hold, a closing save, a copy).
  */
 function syncUnloadGuard(): void {
   if (typeof window === 'undefined') return
   const needed = heldNoteDrafts.size > 0 || heldNoteRecords.size > 0 || closingNoteSaves.size > 0 || noteCopiesInFlight.size > 0
+    || editorHasUnsavedWork()
   if (needed && !unloadGuard) {
     unloadGuard = (event) => {
-      if (noteCopiesInFlight.size === 0 && noteTextOnlyInPage(true).size === 0) return
+      if (noteCopiesInFlight.size === 0 && noteTextOnlyInPage().size === 0) return
       event.preventDefault()
       // Older browsers show the prompt only when returnValue is set.
       event.returnValue = ''
@@ -671,7 +680,13 @@ export function registerNoteEditor(id: string, editor: MountedNoteEditor): () =>
   mountedEditors.set(id, entry)
   return () => {
     if (mountedEditors.get(id) === entry) mountedEditors.delete(id)
+    syncUnloadGuard()
   }
+}
+
+/** An open editor's typing or save state changed: the leave prompt follows it. */
+export function noteEditorStateChanged(): void {
+  syncUnloadGuard()
 }
 
 /** The note's mounted editor in this account, if any. */

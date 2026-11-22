@@ -56,6 +56,7 @@ vi.mock('@/app/stores/use-note-store', () => ({
   observeNoteCustody: async () => {},
   proveNoteBase: async () => false,
   registerNoteEditor: () => () => {},
+  noteEditorStateChanged: () => {},
   releaseNoteObligation: () => {},
   // Held text and closing saves are covered by the rendered #744 editor test.
   getHeldNoteDraft: () => undefined,
