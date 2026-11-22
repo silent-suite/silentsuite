@@ -1,20 +1,19 @@
 # /retry-ci: intigenesis (user id 313311150) comments exactly `/retry-ci` on
 # his own open fork pull request to main, and this reruns the failed jobs of
 # that head commit's CI runs (and the jobs GitHub reruns with them, which can
-# include the read-only policy checks inside those workflows), once per head
-# commit. Owner-approved scope: no other user, no preview, deploy, signing or
-# release workflow, no other repository access.
+# include the read-only policy checks inside those workflows). He may do it as
+# often as he likes, once every run on the commit has finished. Owner-approved
+# scope: no other user, no preview, deploy, signing or release workflow, no
+# other repository access.
 #
 # issue_comment runs this file and the script from the default branch; the
 # pull request's code is never checked out or executed here, and the comment
 # body reaches the script only through the environment. The reruns themselves
 # keep their original fork `pull_request` context: read-only token, no
 # secrets. One concurrency group for every /retry-ci, so two comments are
-# never evaluated at once; the `retry-ci-<sha>` artifact uploaded before any
-# rerun is the once-per-commit record. Known limit: concurrency group names
-# are repository-wide, so a fork PR whose own workflow claims `retry-ci` can
-# cancel a queued or running /retry-ci; at worst that spends one commit's
-# retry, which a maintainer can redo by hand. Rules and allowlist:
+# never evaluated at once. Concurrency group names are repository-wide, so a
+# fork PR whose own workflow claims `retry-ci` can cancel a queued or running
+# /retry-ci; commenting again retries. Rules and allowlist:
 # scripts/retry-ci/retry-ci.mjs. The result is in this run's summary in the
 # Actions tab; a refusal fails the run.
 name: Retry CI
@@ -29,7 +28,6 @@ jobs:
   retry:
     name: Retry failed CI
     if: >-
-      github.run_attempt == 1 &&
       github.event.issue.pull_request &&
       github.event.comment.user.id == 313311150 &&
       github.event.issue.user.id == 313311150 &&
@@ -56,25 +54,6 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Decide whether this comment may retry CI
-        id: admit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          COMMENT_USER_ID: ${{ github.event.comment.user.id }}
-          COMMENT_BODY: ${{ github.event.comment.body }}
-          COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
-        run: node scripts/retry-ci/retry-ci.mjs admit
-
-      - name: Record the admission for this commit
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: retry-ci-${{ steps.admit.outputs.sha }}
-          path: ${{ runner.temp }}/retry-ci/admission.json
-          if-no-files-found: error
-          retention-days: 90
-
       - name: Retry failed CI jobs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,5 +62,4 @@ jobs:
           COMMENT_USER_ID: ${{ github.event.comment.user.id }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
-          ADMITTED_SHA: ${{ steps.admit.outputs.sha }}
-        run: node scripts/retry-ci/retry-ci.mjs rerun
+        run: node scripts/retry-ci/retry-ci.mjs
