@@ -10,8 +10,11 @@ package io.silentsuite.sync.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import androidx.annotation.IdRes
 import androidx.core.app.ActivityCompat
@@ -21,14 +24,24 @@ import at.bitfire.ical4android.TaskProvider.ProviderName
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.resource.LocalTaskList
+import io.silentsuite.sync.ui.importlocal.DeviceImport
 
 class PermissionsActivity : BaseActivity() {
 
     private var lastAnnouncedRequirements: Set<Int>? = null
 
+    /** Android answered a request with "don't ask again", so only the app's settings can grant it now. */
+    private var settingsOffered = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_permissions)
+        settingsOffered = savedInstanceState?.getBoolean(STATE_SETTINGS_OFFERED, false) ?: false
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_SETTINGS_OFFERED, settingsOffered)
     }
 
     override fun onResume() {
@@ -48,6 +61,9 @@ class PermissionsActivity : BaseActivity() {
 
         setupPermissions(ProviderName.OpenTasks, R.id.opentasks_permissions, R.string.permissions_opentasks)?.let(requirements::add)
         setupPermissions(ProviderName.TasksOrg, R.id.tasksorg_permissions, R.string.permissions_tasks_org)?.let(requirements::add)
+
+        findViewById<View>(R.id.permissions_settings).visibility =
+            if (settingsOffered && requirements.isNotEmpty()) View.VISIBLE else View.GONE
 
         val previous = lastAnnouncedRequirements
         if (previous != null && requirements != lastAnnouncedRequirements && requirements.isNotEmpty()) {
@@ -90,13 +106,24 @@ class PermissionsActivity : BaseActivity() {
         ActivityCompat.requestPermissions(this, ProviderName.TasksOrg.permissions, 0)
     }
 
+    fun openAppSettings(v: View) {
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        val outcome = DeviceImport.permissionOutcome(
+            permissions.toList(),
+            granted = { ActivityCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED },
+            canAskAgain = { ActivityCompat.shouldShowRequestPermissionRationale(this, it) },
+        )
+        if (outcome == DeviceImport.PermissionOutcome.DENIED_PERMANENTLY) settingsOffered = true
         refresh()
     }
 
     companion object {
         private val REQUEST_CODE_ASK_MULTIPLE_PERMISSIONS = 124
+        private const val STATE_SETTINGS_OFFERED = "permissionsSettingsOffered"
 
         fun requestAllPermissions(activity: Activity) {
             val taskPermissions = TASK_PROVIDERS
