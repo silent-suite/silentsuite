@@ -88,8 +88,7 @@ internal class EtebasePushRemote(
     override fun fetchNotebook(notebookUid: String): NotebookCheck.Found {
         guard.check()
         val col = colMgr.fetch(notebookUid)
-        // Its answer holds or releases every change waiting in the notebook, so it has to be this notebook.
-        check(col.uid == notebookUid && col.collectionType == Constants.ETEBASE_TYPE_NOTES) { "the server answered with another collection" }
+        requireFetchedNotebook(notebookUid, col.uid, { col.collectionType }, col::verify)
         return NotebookCheck.Found(readOnly = col.accessLevel == CollectionAccessLevel.ReadOnly, deleted = col.isDeleted)
     }
 
@@ -202,6 +201,17 @@ internal class EtebasePushRemote(
          */
         fun requireMovedCopy(move: PendingEntry.Move, uid: String, verifies: () -> Boolean) {
             check(uid == move.noteUid && verifies()) { "the server answered with another note, or one that does not verify" }
+        }
+
+        /**
+         * [fetchNotebook]'s check of the server's answer for [notebookUid]. That answer holds or releases every change waiting
+         * in the notebook, and lets a move's delete of the original go, so it has to be that notebook ([uid]), as signed
+         * ([verifies]), and a notes notebook ([type]). Anything else throws, which the push step takes as no answer.
+         */
+        fun requireFetchedNotebook(notebookUid: String, uid: String, type: () -> String, verifies: () -> Boolean) {
+            check(uid == notebookUid && verifies() && type() == Constants.ETEBASE_TYPE_NOTES) {
+                "the server answered with another collection, or one that does not verify"
+            }
         }
 
         /**

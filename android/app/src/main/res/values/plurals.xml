@@ -107,4 +107,12 @@
         <item quantity="one">%d note you moved is no longer in its new notebook, and may already be deleted in its old notebook too: its delete there was sent before the move stopped. Check its old notebook.</item>
         <item quantity="other">%d notes you moved are no longer in their new notebooks, and may already be deleted in their old notebooks too: their deletes there were sent before the moves stopped. Check their old notebooks.</item>
     </plurals>
+    <plurals name="notes_moves_not_done_text_held">
+        <item quantity="one">%d note you moved is back in its old notebook as it was last synced, because its new notebook was deleted or you lost access to it before the move finished. The text it had in the new notebook is kept in Unsynced text.</item>
+        <item quantity="other">%d notes you moved are back in their old notebooks as they were last synced, because their new notebooks were deleted or you lost access to them before the moves finished. The text they had in the new notebooks is kept in Unsynced text.</item>
+    </plurals>
+    <plurals name="notes_moves_not_done_text_held_delete_sent">
+        <item quantity="one">%d note you moved may already be deleted in its old notebook: its delete there was sent before the move stopped. Its new notebook was deleted or you lost access to it, and the text it had there is kept in Unsynced text. Check its old notebook.</item>
+        <item quantity="other">%d notes you moved may already be deleted in their old notebooks: their deletes there were sent before the moves stopped. Their new notebooks were deleted or you lost access to them, and the text they had there is kept in Unsynced text. Check their old notebooks.</item>
+    </plurals>
 </resources>

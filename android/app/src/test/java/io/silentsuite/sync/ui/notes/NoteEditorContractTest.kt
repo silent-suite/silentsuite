@@ -142,6 +142,15 @@ class NoteEditorContractTest {
         // A copy of moves that have not finished is not only on this device: its delete sends the originals' deletes.
         assertTrue(function("readDelete").contains(
             "neverSynced = entry.isCreate && entry.sent.isEmpty() && !store.hasWaitingMoves(uid)"))
+        // The confirmation asks only over text this editor showed: an entry or a landed upload of another editor's save
+        // answers that the note changed, read once, and the screen loads it again.
+        val read = function("readDelete")
+        assertTrue(read.contains("!store.owns(handle, entry.version) -> DeleteStep.Answered(DeleteAnswer.CHANGED)"))
+        assertTrue(read.contains("unshown(store, handle, uid, landed) -> DeleteStep.Answered(DeleteAnswer.CHANGED)"))
+        assertEquals(1, Regex("""store\.landed\(uid\)""").findAll(read).count())
+        assertTrue(read.indexOf("unshown(store, handle, uid, landed)") in 0 until read.indexOf("baseWithoutEntry(store, uid, landed)"))
+        assertTrue(function("unshown").contains("!store.owns(handle, landed.version)"))
+        assertTrue(screen.contains("if (answer == NoteEditorViewModel.DeleteAnswer.CHANGED) model.reload()"))
         // A failed write that left the delete in place is never reported as nothing deleted.
         assertTrue(onIo.contains("e is IOException && deleteIsThere(store, shown.noteUid) -> DeleteAnswer.UNSURE"))
         // A removal that left the note's own entry in place (a replaced original went first) deleted nothing.
@@ -179,6 +188,15 @@ class NoteEditorContractTest {
         assertTrue(onIo.contains("store.moveNote("))
         // With no entry, the item must be the revision the picker showed, checked before anything is built from it.
         assertTrue(onIo.indexOf("item.etag != shown.revision") in 0 until onIo.indexOf("into.itemMgr.create("))
+        // The landed record the copy is built from is read once and handed to the store, which checks it under its lock, so
+        // an upload that lands in between is never taken as one the copy holds.
+        assertEquals(1, Regex("""store\.landed\(uid\)""").findAll(onIo).count())
+        assertTrue(onIo.indexOf("landed = store.landed(uid)") in 0 until onIo.indexOf("baseWithoutEntry(store, uid, landed)"))
+        assertTrue(onIo.contains("landedRevision = landed?.revision"))
+        // Like the delete, the picker offers nothing over text this editor did not show, such as another editor's save: the
+        // read answers that the note changed, and the screen loads it again.
+        assertTrue(function("readMove").contains("DeleteAnswer.CHANGED -> MoveAnswer.CHANGED"))
+        assertTrue(screen.contains("if (step.answer == NoteEditorViewModel.MoveAnswer.CHANGED) model.reload()"))
         assertTrue(onIo.contains("if (!into.writable) return MoveAnswer.TARGET_GONE to null"))
         // The copy takes the item's text and raw metadata as they are, before the original is marked deleted: a move is
         // not an edit, and other clients' fields go across byte for byte.
@@ -201,6 +219,12 @@ class NoteEditorContractTest {
         for (name in listOf("notes_move_recorded", "notes_move_unsure", "notes_move_maybe_both")) {
             assertFalse(name, strings.substringAfter("<string name=\"$name\">").substringBefore("</string>").contains("%"))
         }
+        // A landed record that does not decode is not a change: the screen says what to do instead, and a reload, which keeps
+        // the record while an editor is open, would only answer the same.
+        assertTrue(onIo.contains("PendingNotesStore.NoteMove.LandedUnreadable -> MoveAnswer.LANDED_UNREADABLE to null"))
+        assertTrue(screen.contains("NoteEditorViewModel.MoveAnswer.LANDED_UNREADABLE -> getString(R.string.notes_move_landed_unreadable)"))
+        assertTrue(strings.substringAfter("<string name=\"notes_move_landed_unreadable\">").substringBefore("</string>")
+            .contains("Close this note everywhere it is open"))
         val confirmed = screen.substringAfter("    internal fun moveConfirmed(").substringBefore("\n    }\n")
         assertTrue(confirmed.indexOf("ProcessIncarnation.isCurrent(shownIn)") in 0 until confirmed.indexOf("model.move("))
         assertTrue(confirmed.contains("identity != ExactAccountIdentity(account.type, account.name, creationId)"))

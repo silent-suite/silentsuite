@@ -461,7 +461,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
         }
         renderedDeleteMessage = getString(message)
         Toast.makeText(host, message, Toast.LENGTH_LONG).show()
-        // The note as it is now, for a clean editor: what changed since the confirmation was prepared.
+        // The note as it is now, for a clean editor: what changed since the screen showed it.
         if (answer == NoteEditorViewModel.DeleteAnswer.CHANGED) model.reload()
     }
 
@@ -520,6 +520,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             NoteEditorViewModel.MoveAnswer.NOT_SAVED -> getString(R.string.notes_move_not_saved)
             NoteEditorViewModel.MoveAnswer.HELD -> getString(R.string.notes_move_held)
             NoteEditorViewModel.MoveAnswer.UNREADABLE -> getString(R.string.notes_move_unreadable)
+            NoteEditorViewModel.MoveAnswer.LANDED_UNREADABLE -> getString(R.string.notes_move_landed_unreadable)
             NoteEditorViewModel.MoveAnswer.DISCARD_UNFINISHED -> getString(R.string.notes_move_discard_unfinished)
             NoteEditorViewModel.MoveAnswer.REMOVAL_PENDING -> getString(R.string.notes_move_removal_pending)
             NoteEditorViewModel.MoveAnswer.NO_TARGET -> getString(R.string.notes_move_no_target)
@@ -530,7 +531,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
         }
         renderedMoveMessage = message
         Toast.makeText(host, message, Toast.LENGTH_LONG).show()
-        // The note as it is now, for a clean editor: what changed since the picker was prepared.
+        // The note as it is now, for a clean editor: what changed since the screen showed it.
         if (step.answer == NoteEditorViewModel.MoveAnswer.CHANGED) model.reload()
     }
 

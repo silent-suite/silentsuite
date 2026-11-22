@@ -894,7 +894,7 @@
     <string name="notes_delete_discard">Discard and delete</string>
     <string name="notes_delete_recorded">Deleted on this device. The delete is sent at the next Notes sync.</string>
     <string name="notes_delete_dropped">Deleted from this device. It had never synced, so nothing is sent.</string>
-    <string name="notes_delete_changed">This note changed since you were asked, so nothing was deleted. Review it, then delete it again if you want to.</string>
+    <string name="notes_delete_changed">This note changed, so nothing was deleted. Review it, then delete it again if you want to.</string>
     <string name="notes_delete_not_saved">This note has text that was not saved, so nothing was deleted. Copy the text if you want to keep it.</string>
     <string name="notes_delete_held">This note\'s unsynced text is kept in Unsynced text, so nothing was deleted. Discard that text there first.</string>
     <string name="notes_delete_unreadable">This note\'s change on this device can\'t be read, so nothing was deleted.</string>
@@ -914,10 +914,11 @@
     <string name="notes_move_unsure">Moved on this device, but the move may not last if the device loses power. If the note shows in both notebooks, delete the one you don\'t want.</string>
     <string name="notes_move_failed">The move could not be saved on this device, so the note was not moved.</string>
     <string name="notes_move_maybe_both">The move could not be finished on this device. The note stays here, and a copy may also show in the other notebook.</string>
-    <string name="notes_move_changed">This note changed since you were asked, so it was not moved. Review it, then move it again if you want to.</string>
+    <string name="notes_move_changed">This note changed, so it was not moved. Review it, then move it again if you want to.</string>
     <string name="notes_move_not_saved">This note has text that was not saved, so it was not moved. Copy the text if you want to keep it.</string>
     <string name="notes_move_held">This note\'s unsynced text is kept in Unsynced text, so it was not moved.</string>
     <string name="notes_move_unreadable">This note\'s change on this device can\'t be read, so it was not moved.</string>
+    <string name="notes_move_landed_unreadable">SilentSuite can\'t read its record of this note\'s last synced change, so it was not moved. Close this note everywhere it is open, then open it again and move it.</string>
     <string name="notes_move_discard_unfinished">A discard of unsynced text did not finish, so the note was not moved. Finish it in Settings, Unsynced Notes.</string>
     <string name="notes_move_removal_pending">An account removal is being checked, so the note was not moved.</string>
     <string name="notes_move_no_target">No other notebook can take notes, so this note can\'t be moved.</string>

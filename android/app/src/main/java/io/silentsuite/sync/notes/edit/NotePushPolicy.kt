@@ -110,7 +110,10 @@ internal object NotePushPolicy {
         MOVED_CHANGED_ELSEWHERE,
         /** A move's delete of the original was dropped for a reason that would drop a delete (read-only, rejected, not built): both stay. */
         MOVED_ORIGINAL_KEPT,
-        /** A move's copy never reached the server and is no longer waiting: the move's delete was dropped, and the note shows in its old notebook again. */
+        /**
+         * A move's copy is not on the server where this account can see it (it never landed, or its notebook is deleted or gone
+         * for this account) and is no longer waiting: the move's delete was dropped, and the note shows in its old notebook again.
+         */
         MOVE_NOT_DONE,
         /** A move's copy was deleted on another device before the original's delete went: the original stays. */
         MOVED_COPY_DELETED,
@@ -125,6 +128,18 @@ internal object NotePushPolicy {
          * original may already be deleted on the server, since a send whose answer never came back may have landed.
          */
         MOVED_ORIGINAL_KEPT_DELETE_SENT,
+        /**
+         * A move's copy is not in a notebook this account can use (that notebook was deleted, or this account can no longer
+         * see it) and the copy's text is kept in holding on this device: the move's delete was dropped, the note shows in its
+         * old notebook as last synced, and the text it had in the copy, changes not synced before the move included, is in
+         * Unsynced text.
+         */
+        MOVE_NOT_DONE_TEXT_HELD,
+        /**
+         * As [MOVE_NOT_DONE_TEXT_HELD], after the original's delete was sent at least once: the original may already be deleted
+         * on the server, since a send whose answer never came back may have landed.
+         */
+        MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT,
     }
 
     /**

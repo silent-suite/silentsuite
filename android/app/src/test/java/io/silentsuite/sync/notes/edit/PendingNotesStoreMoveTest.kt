@@ -71,10 +71,14 @@ class PendingNotesStoreMoveTest {
     private fun copyOf(uid: String = "copy1", text: String = "moved text", notebook: String = "b2") =
         PendingEntry(uid, notebook, PendingEntry.State.UPSERT, 0, "c-$uid", isCreate = true, blob = blob(text))
 
-    /** The user's move as the note screen sends it: [shown] is the entry it showed, or null for none. */
+    /**
+     * The user's move as the note screen sends it: [shown] is the entry it showed, or null for none, and [landed] the
+     * revision of the landed record it built the copy with, or null for none.
+     */
     private fun PendingNotesStore.move(uid: String, shown: PendingEntry?, copy: PendingEntry = copyOf(), notebookCopy: ByteArray? = null,
-                                       targetCopy: ByteArray? = null) =
-        moveNote(uid, "b1", shown?.version, shown?.let { digest(it) }, "del-$uid", blob("deleted $uid"), copy, notebookCopy, targetCopy)
+                                       targetCopy: ByteArray? = null, landed: String? = null) =
+        moveNote(uid, "b1", shown?.version, shown?.let { digest(it) }, "del-$uid", blob("deleted $uid"), copy, notebookCopy, targetCopy,
+            landedRevision = landed)
 
     private fun permitsOf(s: PendingNotesStore) = PendingNotesDiscardPermits(File(s.dir.parentFile!!, PendingNotesDiscardPermits.ROOT),
         {}, atomicMove, PendingNotesStore.nioPresence)
@@ -135,10 +139,73 @@ class PendingNotesStoreMoveTest {
         saved(store.saveLocal(editor, "n1", "b1", "r1", blob("mine"), isCreate = true))
         val sent = store.beginSend("n1")!!
         assertEquals(SendOutcome.Done, store.completeSend("n1", sent.version, "s1", blob("landed")))
-        assertEquals(NoteMove.Moved("copy1"), store.move("n1", shown = null))
+        assertEquals(NoteMove.Moved("copy1"), store.move("n1", shown = null, landed = "s1"))
         val e = entry("n1")
         assertFalse("not a create once it landed", e.isCreate)
         assertTrue("the landed revision counts as ours on a 409: ${e.sent}", "s1" in e.sent)
+    }
+
+    @Test fun `a second editor's save that lands between building the copy and the move answers Changed, and nothing goes over it`() {
+        // Two editors on n1, which has no entry and no landed record. The moving one built its copy from r1, the revision
+        // its picker showed, with no landed record there.
+        store.editorOpened("n1")
+        val second = store.editorOpened("n1")
+        // Before the move takes the store lock, the second editor's save lands as r2.
+        saved(store.saveLocal(second, "n1", "b1", "r1", blob("typed in the second editor"), isCreate = false))
+        val sent = store.beginSend("n1")!!
+        assertEquals(SendOutcome.Done, store.completeSend("n1", sent.version, "r2", blob("r2 on the server")))
+        assertEquals(Read.Missing, store.read("n1"))
+        val outcome = store.moveNote("n1", "b1", null, null, "r1", blob("deleted r1"), copyOf(text = "r1 text"), landedRevision = null)
+        // Moved, its delete would count r2 as ours and, on the 409, rebase over r2: only r1's text would reach the copy.
+        assertEquals("r2 is newer than the copy", NoteMove.Changed(Read.Missing), outcome)
+        assertEquals("no delete is written, so no run deletes r2", Read.Missing, store.read("n1"))
+        assertEquals("and no copy of r1 alone", Read.Missing, store.read("copy1"))
+        assertEquals("r2", store.landed("n1")?.revision)
+        // Built again on r2, the move goes ahead, and its delete names r2, whose text the copy now holds.
+        assertEquals(NoteMove.Moved("copy1"), store.moveNote("n1", "b1", null, null, "r2", blob("deleted r2"),
+            copyOf(text = "r2 text"), landedRevision = "r2"))
+        assertEquals("r2", entry("n1").revision)
+        assertArrayEquals(blob("r2 text"), entry("copy1").blob)
+    }
+
+    @Test fun `a move built on a fetched revision newer than this device's landed upload goes ahead while that record is unchanged`() {
+        // The editor saved, its upload landed as s1, and a later run fetched s3 from another device, which the clean editor
+        // shows: the copy is built from s3, with the landed record s1 there.
+        val editor = store.editorOpened("n1")
+        saved(store.saveLocal(editor, "n1", "b1", "r1", blob("mine"), isCreate = false))
+        val sent = store.beginSend("n1")!!
+        assertEquals(SendOutcome.Done, store.completeSend("n1", sent.version, "s1", blob("landed")))
+        assertEquals("a record that landed after the copy was built", NoteMove.Changed(Read.Missing),
+            store.moveNote("n1", "b1", null, null, "s3", blob("deleted s3"), copyOf(), landedRevision = null))
+        assertEquals(NoteMove.Moved("copy1"),
+            store.moveNote("n1", "b1", null, null, "s3", blob("deleted s3"), copyOf(), landedRevision = "s1"))
+        assertEquals("the delete names what the copy was built from", "s3", entry("n1").revision)
+        assertTrue("s1" in entry("n1").sent)
+    }
+
+    @Test fun `a landed record that does not decode or cannot be read when the move takes the lock moves nothing, and one that does not decode says so until the note's editors close`() {
+        val editor = store.editorOpened("n1")
+        // Another note's save writes the store's counter, so no version is rebuilt from the files and the move's own check
+        // is what reads the record.
+        saved(store.saveLocal("n9", "b1", "r9", blob("another note"), isCreate = false))
+        File(dir, "n1.landed").writeBytes("not a landed record".toByteArray())
+        val before = filesOf(dir)
+        // It may be a newer upload of this device or may not: the answer says it cannot be read, also on a retry.
+        assertEquals("a record that does not decode is not taken for none, nor for another upload", NoteMove.LandedUnreadable,
+            store.move("n1", shown = null, notebookCopy = blob("source notebook"), targetCopy = blob("target notebook")))
+        assertEquals("nor for the one the screen read", NoteMove.LandedUnreadable, store.move("n1", shown = null, landed = "s1"))
+        assertEquals("nothing written or removed, the record included", before, filesOf(dir))
+        // A move whose screen showed an entry that is gone answers that the note changed, whatever record is there.
+        assertEquals(NoteMove.Changed(Read.Missing), store.moveNote("n1", "b1", 1L, "digest", "r1", blob("deleted"), copyOf()))
+        PendingNotesStore.beforeReadForTesting = { if (it.name == "n1.landed") throw IOException("could not read n1.landed") }
+        assertThrows(IOException::class.java) { store.move("n1", shown = null) }
+        PendingNotesStore.beforeReadForTesting = null
+        assertEquals("nothing written", before, filesOf(dir))
+        // The record goes once no editor is open on the note, and a move from the note opened again goes ahead.
+        store.editorClosed(editor)
+        assertFalse(File(dir, "n1.landed").exists())
+        assertEquals(NoteMove.Moved("copy1"), store.move("n1", shown = null))
+        assertEquals(PendingEntry.State.DELETE, entry("n1").state)
     }
 
     @Test fun `a note that never reached the server leaves no delete, only the copy`() {
@@ -844,5 +911,82 @@ class PendingNotesStoreMoveTest {
         assertEquals(shown, entry("n1"))
         assertEquals(PendingEntry.State.UPSERT, entry("copy1").state)
         assertNull(store.landed("copy1"))
+    }
+
+    // ---- keeping a moved copy's text when its notebook is gone ([PendingNotesStore.keepMovedCopy]) ----
+
+    private val copyMove = PendingEntry.Move("copy1", "b2")
+
+    /** n1 moved to b2 as copy1, whose upload landed as srv-c; with [editorOnCopy], a landed record of it stays. Returns n1's delete. */
+    private fun movedAndLanded(editorOnCopy: Boolean = false): PendingEntry {
+        assertEquals(NoteMove.Moved("copy1"), store.move("n1", shown = null))
+        val copy = entry("copy1")
+        if (editorOnCopy) store.editorOpened("copy1")
+        store.beginSend("copy1")
+        assertEquals(SendOutcome.Done, store.completeSend("copy1", copy.version, "srv-c", blob("landed copy")))
+        return entry("n1")
+    }
+
+    @Test fun `a moved copy with no entry is held from the server's copy, with that revision and its landed record's counted as ours`() {
+        val delete = movedAndLanded(editorOnCopy = true)
+        assertEquals("srv-c", store.landed("copy1")?.revision)
+        val outcome = store.keepMovedCopy("n1", delete.version, copyMove, HeldReason.NOTEBOOK_DELETED, "srv-c2", blob("server copy"), now = 7)
+        assertEquals(PendingNotesStore.MovedCopy.Dropped(textKept = true, held = true, deleteSent = false), outcome)
+        val kept = entry("copy1")
+        assertEquals(PendingEntry.State.HELD, kept.state)
+        assertEquals(PendingEntry.Held(HeldReason.NOTEBOOK_DELETED, 7), kept.held)
+        assertEquals("b2", kept.notebookUid)
+        assertEquals("srv-c2", kept.revision)
+        assertArrayEquals(blob("server copy"), kept.blob)
+        assertFalse("the copy is on the server", kept.isCreate)
+        // A Try again whose upload draws a 409 with this copy finds it ours and is done, never a conflicted copy.
+        assertEquals(listOf("srv-c", "srv-c2"), kept.sent)
+        assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `a moved copy already held for another reason stays as it is, and the original's delete goes`() {
+        assertEquals(NoteMove.Moved("copy1"), store.move("n1", shown = null))
+        assertEquals(HoldOutcome.HELD, store.hold("copy1", HeldReason.REJECTED, now = 3))
+        val before = entry("copy1")
+        val outcome = store.keepMovedCopy("n1", entry("n1").version, copyMove, HeldReason.LOST_ACCESS, "srv-x", blob("server copy"), now = 9)
+        assertEquals(PendingNotesStore.MovedCopy.Dropped(textKept = true, held = false, deleteSent = false), outcome)
+        assertEquals("its own text and reason, not the server's copy", before, entry("copy1"))
+        assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `a moved copy deleted on this device keeps nothing, and the original's delete goes all the same`() {
+        movedAndLanded(editorOnCopy = true)
+        // The user deletes the landed copy, and the write that would make the original's delete a plain one fails, so that
+        // delete still names the copy.
+        PendingNotesStore.beforeRenameForTesting = { if (it.name == "n1.note") throw IOException("rename failed") }
+        assertEquals(PendingNotesStore.NoteDelete.Recorded, store.deleteNote("copy1", "b2", null, null, discardConfirmed = false,
+            revision = "d-copy1", deleted = blob("deleted copy1")))
+        PendingNotesStore.beforeRenameForTesting = null
+        val delete = entry("n1")
+        assertEquals(copyMove, delete.move)
+        val copyDelete = entry("copy1")
+        assertEquals(PendingEntry.State.DELETE, copyDelete.state)
+        val outcome = store.keepMovedCopy("n1", delete.version, copyMove, HeldReason.NOTEBOOK_DELETED, "srv-c", blob("server copy"), now = 9)
+        assertEquals(PendingNotesStore.MovedCopy.Dropped(textKept = false, held = false, deleteSent = false), outcome)
+        assertEquals("the user's delete of the copy stays as it is", copyDelete, entry("copy1"))
+        assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `a move's delete dropped with no copy on the server says whether the copy's text is held for a gone notebook, as found then`() {
+        assertEquals(NoteMove.Moved("copy1"), store.move("n1", shown = null))
+        assertEquals(PendingNotesStore.MovedCopy.NotApplied, store.dropMoveDelete("n1", entry("n1").version + 1))
+        assertEquals(HoldOutcome.HELD, store.hold("copy1", HeldReason.NOTEBOOK_DELETED, now = 3))
+        assertEquals(PendingNotesStore.MovedCopy.Dropped(textKept = true, held = false, deleteSent = false),
+            store.dropMoveDelete("n1", entry("n1").version))
+        assertEquals(Read.Missing, store.read("n1"))
+        // Held for another reason, or discarded, the copy's text is not said to be held for its notebook.
+        assertEquals(NoteMove.Moved("copy2"), store.move("n2", shown = null, copy = copyOf("copy2")))
+        assertEquals(HoldOutcome.HELD, store.hold("copy2", HeldReason.REJECTED, now = 4))
+        assertEquals(PendingNotesStore.MovedCopy.Dropped(textKept = false, held = false, deleteSent = false),
+            store.dropMoveDelete("n2", entry("n2").version))
+        // A plain delete is not a move's: nothing goes.
+        store.deleteNote("n3", "b1", null, null, discardConfirmed = false, revision = "d-n3", deleted = blob("deleted n3"))
+        assertEquals(PendingNotesStore.MovedCopy.NotApplied, store.dropMoveDelete("n3", entry("n3").version))
+        assertEquals(PendingEntry.State.DELETE, entry("n3").state)
     }
 }

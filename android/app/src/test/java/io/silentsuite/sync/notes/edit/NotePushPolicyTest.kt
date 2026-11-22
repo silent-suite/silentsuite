@@ -112,7 +112,7 @@ class NotePushPolicyTest {
         // The notice is stored by name: the names stay.
         assertEquals(listOf("CHANGED_ELSEWHERE", "READ_ONLY", "REJECTED", "NOT_BUILT", "MOVED_CHANGED_ELSEWHERE",
             "MOVED_ORIGINAL_KEPT", "MOVE_NOT_DONE", "MOVED_COPY_DELETED", "MOVE_NOT_DONE_DELETE_SENT",
-            "MOVED_ORIGINAL_KEPT_DELETE_SENT"),
+            "MOVED_ORIGINAL_KEPT_DELETE_SENT", "MOVE_NOT_DONE_TEXT_HELD", "MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT"),
             NotePushPolicy.DeleteNotDone.values().map { it.name })
     }
 

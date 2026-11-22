@@ -1015,8 +1015,13 @@ internal class PendingNotesStore private constructor(
      * [deleteSent] and [moveDelete]: the file removed was a pending delete sent at least once, and a move's
      * ([HoldOutcome.deleteSent], [HoldOutcome.moveDelete]).
      */
-    class RemovalNotSynced(cause: IOException, val deleteSent: Boolean = false, val moveDelete: Boolean = false) :
-        IOException("the removal is not synced yet", cause)
+    class RemovalNotSynced(
+        cause: IOException,
+        val deleteSent: Boolean = false,
+        val moveDelete: Boolean = false,
+        /** For a move's delete dropped by [keepMovedCopy] or [dropMoveDelete]: what that call did, as it answers when it returns. */
+        val dropped: MovedCopy.Dropped? = null,
+    ) : IOException("the removal is not synced yet", cause)
 
     /** A write whose rename went through but whose directory sync failed: the new content is there until a power loss. */
     class WriteNotSynced(cause: IOException) : IOException("the write is not synced yet", cause)
@@ -1225,7 +1230,10 @@ internal class PendingNotesStore private constructor(
      * [revision] are the item the screen showed, marked deleted, with its etag. [copy] is a pending create in another
      * notebook, with its own uid, carrying the text the screen showed (the entry's, when there is one) and its metadata
      * byte for byte; its version is given here. [notebookCopy] is written with a new entry for the original, as a save
-     * writes it, and [targetCopy] with the copy's.
+     * writes it, and [targetCopy] with the copy's. [landedRevision] is the revision of the note's landed record that the
+     * screen read when it built the copy with no entry shown (the copy's base, or older than it), or null when it read
+     * none; with no entry, any other record there answers [NoteMove.Changed], and one that does not decode
+     * [NoteMove.LandedUnreadable].
      *
      * Decided under the store lock, against what is there now, with the same checks and refusals as [deleteNote] (no
      * discard question: no text is deleted). Then the copy is written first, and the original second:
@@ -1255,6 +1263,7 @@ internal class PendingNotesStore private constructor(
         copy: PendingEntry,
         notebookCopy: ByteArray? = null,
         targetCopy: ByteArray? = null,
+        landedRevision: String? = null,
     ): NoteMove = locked {
         require(copy.noteUid != noteUid && copy.notebookUid != notebookUid) { "a move makes a new note in another notebook" }
         require(copy.state == PendingEntry.State.UPSERT && copy.isCreate && copy.sent.isEmpty() && copy.origin == null &&
@@ -1270,7 +1279,17 @@ internal class PendingNotesStore private constructor(
         }
         val read = readEntry(noteUid)
         val e = when (read) {
-            Read.Missing -> if (shownVersion != null || shownDigest != null) return@locked NoteMove.Changed(read) else null
+            // With no entry, the copy holds the server copy the screen showed. An upload of this device that landed since it
+            // was built (a second editor's save) is newer than the copy, and its delete would count that upload as ours
+            // ([fromLanded]) and go over it on a 409, so the landed record has to be the one the screen read when it built
+            // the copy.
+            Read.Missing -> when {
+                shownVersion != null || shownDigest != null -> return@locked NoteMove.Changed(read)
+                landedIs(noteUid, landedRevision) -> null
+                // A record that does not decode may be such an upload or may not: the answer says it cannot be read.
+                landedUnreadable(noteUid) -> return@locked NoteMove.LandedUnreadable
+                else -> return@locked NoteMove.Changed(read)
+            }
             is Read.Unreadable -> return@locked NoteMove.Refused(DeleteRefusal.UNREADABLE)
             is Read.Present -> read.entry.also {
                 when {
@@ -1498,11 +1517,139 @@ internal class PendingNotesStore private constructor(
         /** What is there now is not what the user was shown: [now]. Nothing was written or removed. */
         data class Changed(val now: Read) : NoteMove()
 
+        /**
+         * With no entry, and none shown, the note's landed record (an upload of this device that landed while an editor was
+         * open on the note) does not decode, so whether it is newer than the copy cannot be told. Nothing was written or
+         * removed. The record goes once no editor is open on the note ([editorClosed]), or with this process.
+         */
+        object LandedUnreadable : NoteMove()
+
         /** Nothing was written, for [reason], the same reasons a delete is refused for. */
         data class Refused(val reason: DeleteRefusal) : NoteMove()
 
         /** A removal guard is checking this store or allowed a removal ([RemovalHold]); nothing was written. */
         object RemovalPending : NoteMove()
+    }
+
+    /**
+     * The end of a move whose copy a run fetched alive from the server, in a notebook found deleted, or gone for this account
+     * ([reason]): the original's delete, [noteUid] at [sentVersion] waiting for [copy], is dropped, and the copy's text is kept
+     * in holding first. The move put the original's text into the copy, changes not synced before it included, so the copy
+     * may hold the only such text, while the original falls back to its last synced copy. The text is held where a run holds
+     * text waiting for such a notebook ([hold]): under the copy's uid, in the copy's notebook, so Unsynced text shows it with
+     * its reason, Copy, Try again and a confirmed Discard. [revision] and [blob] are the copy as the server answered, in the
+     * encrypted form the cache uses.
+     *
+     * Decided under the store lock, against what is there now:
+     * - the original's entry is not that delete (another version, or no longer waiting for [copy]) or cannot be read:
+     *   nothing is written or removed ([MovedCopy.NotApplied]);
+     * - the copy has no entry: its text is held as a new entry under a new version, which starts from a landed record of
+     *   the copy as any new entry does ([fromLanded]);
+     * - the copy waits as an edit (saved after the run read it): that edit is held, as a notebook answer holds what is there;
+     * - the copy is held already: its text is on this device as it is;
+     * - the copy is a pending delete (deleted on this device): nothing is kept, and the original's delete is dropped all
+     *   the same;
+     * - the copy's file cannot be read: nothing is written or removed ([MovedCopy.CopyUnreadable]).
+     * The held text is written before the delete goes, so a failure between the two keeps both, and a later run drops the
+     * delete then. A new entry takes its version as any write of a run does ([nextRunVersion]): while a discard that has not
+     * finished holds new versions back it throws [HeldBack], with nothing written or removed. A drop whose removal is not
+     * synced throws [RemovalNotSynced] with whether the delete was sent and whether the text was kept.
+     */
+    fun keepMovedCopy(
+        noteUid: String,
+        sentVersion: Long,
+        copy: PendingEntry.Move,
+        reason: HeldReason,
+        revision: String,
+        blob: ByteArray,
+        now: Long,
+    ): MovedCopy = locked {
+        require(reason == HeldReason.NOTEBOOK_DELETED || reason == HeldReason.LOST_ACCESS) { "a notebook gone for this account" }
+        require(copy.noteUid != noteUid) { "a move's copy is another note" }
+        val original = (readEntry(noteUid) as? Read.Present)?.entry
+        if (original == null || original.state != PendingEntry.State.DELETE || original.version != sentVersion ||
+            original.move != copy) {
+            return@locked MovedCopy.NotApplied
+        }
+        val sent = original.revision in original.sent
+        var kept = false
+        var held = false
+        var unreadable = false
+        update(copy.noteUid) { read ->
+            when (read) {
+                is Read.Unreadable -> {
+                    unreadable = true
+                    Change.Keep
+                }
+                Read.Missing -> {
+                    if (blob.size > PendingCodec.MAX_BLOB) throw IOException("the moved copy is larger than the store keeps")
+                    kept = true
+                    held = true
+                    // The text is the server's copy at [revision]: a 409 that shows that copy is ours, as for a landed upload.
+                    Change.Write(fromLanded(PendingEntry(copy.noteUid, copy.notebookUid, PendingEntry.State.HELD, nextRunVersion(),
+                        revision, isCreate = false, blob = blob, held = PendingEntry.Held(reason, now))).withSent(revision))
+                }
+                is Read.Present -> when (read.entry.state) {
+                    PendingEntry.State.UPSERT -> {
+                        kept = true
+                        held = true
+                        Change.Write(read.entry.copy(state = PendingEntry.State.HELD, held = PendingEntry.Held(reason, now)))
+                    }
+                    PendingEntry.State.HELD -> {
+                        kept = true
+                        Change.Keep
+                    }
+                    PendingEntry.State.DELETE -> Change.Keep
+                }
+            }
+        }
+        if (unreadable) return@locked MovedCopy.CopyUnreadable
+        dropMove(noteUid, MovedCopy.Dropped(textKept = kept, held = held, deleteSent = sent))
+    }
+
+    /**
+     * Drops the move's delete [noteUid] at [sentVersion], whose copy is not on the server where this account can see it, as
+     * [dropDelete] does. The answer says, as found under the same lock, whether the copy's text is in holding for a notebook
+     * deleted or gone for this account (a run held it before it was sent), and whether the delete was sent before, so the
+     * notice never rests on an earlier read: the user can discard that held text while a run checks the copy. Nothing is
+     * removed ([MovedCopy.NotApplied]) when there is no move's delete at that version, or it cannot be read. A removal that
+     * is not synced throws [RemovalNotSynced] with the same answer.
+     */
+    fun dropMoveDelete(noteUid: String, sentVersion: Long): MovedCopy = locked {
+        val e = (readEntry(noteUid) as? Read.Present)?.entry
+        val move = e?.move
+        if (e == null || e.state != PendingEntry.State.DELETE || e.version != sentVersion || move == null) {
+            return@locked MovedCopy.NotApplied
+        }
+        val copyHeld = ((readEntry(move.noteUid) as? Read.Present)?.entry?.held?.reason)
+            .let { it == HeldReason.NOTEBOOK_DELETED || it == HeldReason.LOST_ACCESS }
+        dropMove(noteUid, MovedCopy.Dropped(textKept = copyHeld, held = false, deleteSent = e.revision in e.sent))
+    }
+
+    /** Removes the move's delete [noteUid] and answers [dropped], also through a [RemovalNotSynced] it throws. Under the lock. */
+    private fun dropMove(noteUid: String, dropped: MovedCopy.Dropped): MovedCopy.Dropped {
+        try {
+            remove(noteFile(noteUid))
+        } catch (unsynced: RemovalNotSynced) {
+            throw RemovalNotSynced(unsynced.cause as IOException, deleteSent = dropped.deleteSent, moveDelete = true, dropped = dropped)
+        }
+        return dropped
+    }
+
+    /** What [keepMovedCopy] or [dropMoveDelete] did. */
+    sealed class MovedCopy {
+        /**
+         * The original's delete was dropped. [textKept]: the copy's text is in holding on this device, false only for a copy
+         * deleted on this device. [held]: this call put it there (a new entry, or the copy's waiting edit). [deleteSent]: the
+         * delete was sent at least once, so the original may already be deleted on the server.
+         */
+        data class Dropped(val textKept: Boolean, val held: Boolean, val deleteSent: Boolean) : MovedCopy()
+
+        /** The original's entry is not that delete now, or cannot be read: nothing was written or removed. */
+        object NotApplied : MovedCopy()
+
+        /** The copy's file cannot be read: nothing was written or removed. */
+        object CopyUnreadable : MovedCopy()
     }
 
     /**
@@ -1614,6 +1761,16 @@ internal class PendingNotesStore private constructor(
 
     /** Whether an open editor is on [noteUid]. Closed handles do not count. */
     private fun hasEditor(noteUid: String): Boolean = editors.any { it.target == noteUid }
+
+    /**
+     * Whether the entry or the landed upload at [version] holds [editor]'s own text ([EditorHandle.owns]): the entry its
+     * load showed, a version it wrote, or one a run's rebase, a conflict copy or a release moved its text to. Another
+     * editor's save on the same note is none of these, so a note screen asks about a delete only over text it showed.
+     */
+    fun owns(editor: EditorHandle, version: Long): Boolean = locked {
+        require(editor.store === this) { "an editor of another store" }
+        editor.owns(version)
+    }
 
     /**
      * Points every handle on [from] at [to], open or closed: the text they edit lives in [to] now. A handle whose base
@@ -2723,6 +2880,22 @@ internal class PendingNotesStore private constructor(
     private fun fromLanded(entry: PendingEntry): PendingEntry {
         val landed = readLanded(entry.noteUid) ?: return entry
         return entry.copy(isCreate = false).withSent(landed.revision)
+    }
+
+    /**
+     * Whether the note's landed record is the one of [revision], or, for a null [revision], shown not to be there. A record
+     * there that does not decode is neither, since it may be a newer upload; a read that fails throws, as [readIfPresent].
+     */
+    private fun landedIs(noteUid: String, revision: String?): Boolean {
+        val bytes = readIfPresent(landedFile(noteUid)) ?: return revision == null
+        val landed = (PendingCodec.decodeLanded(bytes) as? PendingCodec.Decoded.Ok)?.value ?: return false
+        return landed.revision == revision
+    }
+
+    /** Whether the note has a landed record that does not decode; throws as [readIfPresent] does. */
+    private fun landedUnreadable(noteUid: String): Boolean {
+        val bytes = readIfPresent(landedFile(noteUid)) ?: return false
+        return PendingCodec.decodeLanded(bytes) !is PendingCodec.Decoded.Ok
     }
 
     /** Null when there is no landed record or it does not decode; throws as [readIfPresent] does. */

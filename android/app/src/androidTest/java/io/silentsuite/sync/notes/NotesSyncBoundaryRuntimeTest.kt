@@ -1951,8 +1951,10 @@ class NotesSyncBoundaryRuntimeTest {
     }
 
     /**
-     * A move whose original another device changed before the move reached the server keeps both: the copy lands in the
-     * new notebook, the original stays with that change, and the notebook list says why until it is dismissed.
+     * A move offers no notebook over text the editor did not show: a second editor's save that landed, or its pending
+     * entry, answers that the note changed, and the screen loads the note again. A move whose original another device
+     * changed before the move reached the server keeps both: the copy lands in the new notebook, the original stays with
+     * that change, and the notebook list says why until it is dismissed.
      */
     @Test fun aMoveOfANoteChangedElsewhereKeepsBothAndTheNotebookListSaysWhy() {
         val account = newAccount("gen-move-lost")
@@ -1961,25 +1963,83 @@ class NotesSyncBoundaryRuntimeTest {
         val home = uploadNotebook("Home")
         val note = uploadNote(work, "Plan", "First draft", mtime = 1_000L)
         syncNow(account, "gen-move-lost")
+        val store = pending(account, "gen-move-lost")
         pinNetwork(NotesNetworkPolicy.Connection.OTHER)
         val notices = NoteDeleteNotices.of(context)
         ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-move-lost")).use { scenario ->
             awaitSettled(identity)
             openEditor(scenario, "Work", note.uid)
+            // A save made in a second editor lands while this one, clean, still shows the older text: the save is made while
+            // a run is under way (held at its listing), and that run sends it and is then held at its fetch of the notes, so
+            // this editor, which loads again once a run ends, has not loaded it. Move offers no notebook over text this
+            // editor never showed: it says the note changed and loads the note again.
+            val secondEditor = store.editorOpened(note.uid)
+            try {
+                val listing = fake.hold("POST", LIST)
+                startManualRun(account, "gen-move-lost")
+                listing.awaitArrival()
+                val listedAt = SystemClock.uptimeMillis()
+                // The run's request made this clean editor load again; that load is over before the save below.
+                afterQueuedEditorStepsViaMove(scenario)
+                editLocally(account, "gen-move-lost", work, note.uid, "Plan", "Saved in a second editor", mtime = 1_800L)
+                fake.touchItems(work)
+                val fetch = fake.hold("GET", Regex("collection/$work/item/"))
+                release(listing, listedAt)
+                fetch.awaitArrival()
+                val heldAt = SystemClock.uptimeMillis()
+                assertEquals("the run sent the save", PendingNotesStore.Read.Missing, store.read(note.uid))
+                val landedSave = checkNotNull(store.landed(note.uid)) { "the save landed while editors are open" }
+                assertEquals("this editor still shows the older text", "First draft", onEditor(scenario) { it.editorModel.core.body })
+                chooseMoveFromMenu(scenario)
+                waitUntil("the move to answer") {
+                    moveDialog(scenario)?.isShowing == true ||
+                        onEditor(scenario) { it.renderedMoveMessage } == context.getString(R.string.notes_move_changed)
+                }
+                assertNull("Move offered notebooks over the landed save ${landedSave.revision} at version ${landedSave.version} " +
+                    "while this editor shows '${onEditor(scenario) { it.editorModel.core.body }}'", moveDialog(scenario))
+                assertEquals("nothing recorded", PendingNotesStore.Read.Missing, store.read(note.uid))
+                release(fetch, heldAt)
+                awaitSettled(identity)
+                waitUntil("the editor to show the save") { onEditor(scenario) { it.editorModel.core.body } == "Saved in a second editor" }
+
+                // The second editor saves again, and this one still shows the text before it: the pending entry is not this
+                // editor's text either, so Move offers nothing over it and loads it.
+                // The loads the answer above and the run's end asked for are over before the save.
+                afterQueuedEditorStepsViaMove(scenario)
+                editLocally(account, "gen-move-lost", work, note.uid, "Plan", "Saved again in a second editor", mtime = 1_900L)
+                val pendingThere = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+                assertEquals("Saved in a second editor", onEditor(scenario) { it.editorModel.core.body })
+                chooseMoveFromMenu(scenario)
+                // The message is the one above again, so the answer is told by the load that follows it.
+                waitUntil("the move to answer") {
+                    moveDialog(scenario)?.isShowing == true ||
+                        onEditor(scenario) { it.editorModel.core.body } == "Saved again in a second editor"
+                }
+                assertNull("Move offered notebooks over the pending save at version ${pendingThere.version} while this editor " +
+                    "showed 'Saved in a second editor'", moveDialog(scenario))
+                assertEquals(context.getString(R.string.notes_move_changed), onEditor(scenario) { it.renderedMoveMessage })
+                assertEquals("nothing recorded", pendingThere, (store.read(note.uid) as PendingNotesStore.Read.Present).entry)
+            } finally {
+                store.editorClosed(secondEditor)
+            }
+
+            // Asked again over the text the screen loaded, the move is recorded, with that text.
             chooseMove(scenario)
             answerMove(scenario)
             waitUntil("the moved note to open") { onEditor(scenario) { it.editing && it.editorModel.noteUid != note.uid } == true }
 
             // Another device edits the original before the move reaches the server.
-            note.setContent("Edited on the laptop")
-            itemManager(work).transaction(arrayOf(note))
-            val changed = note.etag
+            val onServer = itemManager(work).fetch(note.uid)
+            assertEquals("the second editor's first save", "Saved in a second editor", onServer.contentString)
+            onServer.setContent("Edited on the laptop")
+            itemManager(work).transaction(arrayOf(onServer))
+            val changed = onServer.etag
             syncNow(account, "gen-move-lost")
             val original = itemManager(work).fetch(note.uid)
             assertFalse("not deleted", original.isDeleted)
             assertEquals("the other device's change stays", changed to "Edited on the laptop", original.etag to original.contentString)
             val copy = itemManager(home).fetch(fake.itemUids(home).single())
-            assertEquals("the moved copy is in the new notebook", "First draft", copy.contentString)
+            assertEquals("the moved copy is in the new notebook", "Saved again in a second editor", copy.contentString)
             assertTrue("nothing is left waiting", pendingHeaders(account, "gen-move-lost").isEmpty())
 
             scenario.onActivity { it.onSupportNavigateUp() }
@@ -5702,6 +5762,29 @@ class NotesSyncBoundaryRuntimeTest {
             chosen
         }
         waitUntil("the move picker to show") { moveDialog(scenario)?.isShowing == true }
+    }
+
+    /** Chooses Move to notebook in the editor's toolbar, once it is offered, without waiting for the picker. */
+    private fun chooseMoveFromMenu(scenario: ActivityScenario<NotesActivity>) {
+        waitUntil("Move to notebook to be offered and chosen") {
+            var chosen = false
+            scenario.onActivity { chosen = actionBar(it).menu.performIdentifierAction(R.id.note_move, 0) }
+            chosen
+        }
+    }
+
+    /**
+     * Returns once every step the note editor queued before now has ended, a load included: its steps run one at a time,
+     * in order, so a Move chosen now shows its picker only after them. The picker is cancelled.
+     */
+    private fun afterQueuedEditorStepsViaMove(scenario: ActivityScenario<NotesActivity>) {
+        chooseMove(scenario)
+        scenario.onActivity { activity ->
+            val dialog = checkNotNull(noteScreen(activity).moveConfirmation?.dialog as? androidx.appcompat.app.AlertDialog)
+            dialog.getButton(DialogInterface.BUTTON_NEGATIVE).performClick()
+        }
+        // Gone from the screen, so the next Move shows a new picker.
+        waitUntil("the picker to close") { onEditor(scenario) { it.moveConfirmation } == null }
     }
 
     /** The Move picker while it is open; null otherwise. On the main thread. */

@@ -328,6 +328,8 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
                 NotePushPolicy.DeleteNotDone.MOVED_COPY_DELETED -> R.plurals.notes_moves_not_done_copy_deleted
                 NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_DELETE_SENT -> R.plurals.notes_moves_not_done_delete_sent
                 NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT_DELETE_SENT -> R.plurals.notes_moves_not_done_kept_delete_sent
+                NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD -> R.plurals.notes_moves_not_done_text_held
+                NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT -> R.plurals.notes_moves_not_done_text_held_delete_sent
             }, n, n)
         }
         view.findViewById<View>(R.id.notebooks_delete_notice).visibility = if (notice.isEmpty()) View.GONE else View.VISIBLE

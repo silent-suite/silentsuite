@@ -2395,9 +2395,11 @@ class PendingNotesStoreTest {
             start.groupValues[1] to code.substring(start.range.first, starts.getOrNull(i + 1)?.range?.first ?: code.length)
         }
         // Text comes in as a blob (a save, a rebase, a delete, whose blob is the deleted item, a move, whose blobs are the
-        // deleted item and its copy's) or as a whole entry (a conflict copy).
+        // deleted item and its copy's, and the hold of a move's copy that a run fetched, whose blob is that copy) or as a whole
+        // entry (a conflict copy).
         val writers = functions.filter { (_, body) -> Regex("""\bblob = |\bnewNote\b""").containsMatchIn(body) }
-        assertEquals(listOf("saveLocal", "rebase", "deleteNote", "moveNote", "replaceWithNewNote"), writers.map { it.first })
+        assertEquals(listOf("saveLocal", "rebase", "deleteNote", "moveNote", "keepMovedCopy", "replaceWithNewNote"),
+            writers.map { it.first })
         // A release from holding moves the sequence on as well (UnsyncedNotes). A step of a run, a rebase or a
         // conflict copy, takes its version through nextRunVersion, which can only hold it back first.
         assertTrue("nextRunVersion takes a new version",
