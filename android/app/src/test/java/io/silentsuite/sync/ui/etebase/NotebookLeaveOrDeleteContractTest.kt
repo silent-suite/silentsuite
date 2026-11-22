@@ -80,9 +80,10 @@ class NotebookLeaveOrDeleteContractTest {
         val other = leave.substringAfter("return@setOnClickListener\n                }\n")
         assertTrue(other.contains("membersManager.leave()") &&
             other.contains("requestSync(applicationContext, model.value!!.account)"))
-        assertFalse("a leave of another type still has no catch", other.contains("catch"))
+        // A failed leave of another type shows an error instead of crashing (ServerFailureContractTest).
+        assertTrue("a leave of another type catches a failed server call", other.contains("} catch (e: Exception) {"))
         assertFalse(other.contains("Notebook"))
-        assertTrue("the catch of a failed leave is the Notes one's alone",
+        assertTrue("the Notes leave keeps its own catch",
             body(members, LEAVE_NOTEBOOK).contains("} catch (e: EtebaseException) {"))
     }
 

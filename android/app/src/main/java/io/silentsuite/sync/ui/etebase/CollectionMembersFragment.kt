@@ -160,6 +160,11 @@ class CollectionMembersFragment : Fragment() {
                             return@launch
                         }
                         activity?.finish()
+                    } catch (e: Exception) {
+                        // Offline or a server error: the screen stays and says so, instead of crashing.
+                        if (e is CancellationException) throw e
+                        Logger.log.warning("Leave failed: ${e.javaClass.name}")
+                        Toast.makeText(applicationContext, R.string.collection_members_leave_error, Toast.LENGTH_LONG).show()
                     } finally {
                         loadingModel.setLoading(false)
                     }
@@ -255,7 +260,7 @@ class CollectionMembersFragment : Fragment() {
      * The leave of a Notes notebook once [shown] was confirmed, or at once with nothing unsynced, on IO in the order of
      * [NotebookLeaveOrDelete.remove]. The discard comes once the server removed the membership, and before the Notes
      * run that requestSync starts. The result is posted from inside the IO block, so it can show after the screen is
-     * gone too. A leave that fails shows its error, and the screen stays; for other types a leave has no such catch.
+     * gone too. A leave that fails shows its error, and the screen stays.
      */
     private fun leaveNotebook(identity: CollectionLifecycleIdentity, shown: UnsyncedNotes) {
         if (!identity.validate(requireContext())) {
@@ -310,7 +315,6 @@ class CollectionMembersFragment : Fragment() {
                 }
                 throw e
             } catch (e: EtebaseException) {
-                // For a Notes notebook only, until the maintainer decides on a catch for every type.
                 Logger.log.warning("Notebook leave failed: ${e.javaClass.name}")
                 NotebookLeaveOrDeleteDialogFragment.failed(this@CollectionMembersFragment, applicationContext,
                     identity, Kind.LEAVE, e.localizedMessage, kept = shown.anything, stopped = stoppedBefore)

@@ -8,6 +8,7 @@ import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.TextView
+import android.widget.Toast
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.ListFragment
 import androidx.fragment.app.activityViewModels
@@ -21,9 +22,12 @@ import com.etebase.client.CollectionMember
 import com.etebase.client.FetchOptions
 import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.R
+import io.silentsuite.sync.log.Logger
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.*
@@ -87,6 +91,13 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
         membersModel.observe(viewLifecycleOwner) {
             setListAdapterMembers(it)
         }
+        membersModel.observeLoadFailed(viewLifecycleOwner) { failed ->
+            if (!failed) return@observeLoadFailed
+            emptyTextView?.setText(R.string.collection_members_list_load_error)
+            // Rows from an earlier load hide the empty text, so the failure is said where it shows.
+            if ((listAdapter?.count ?: 0) > 0)
+                Toast.makeText(requireContext(), R.string.collection_members_list_load_error, Toast.LENGTH_LONG).show()
+        }
 
         listView.onItemClickListener = this
     }
@@ -125,13 +136,16 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
                         )
                         return@setPositiveButton
                     }
+                    val applicationContext = requireContext().applicationContext
                     membersModel.removeMember(
-                        requireContext().applicationContext,
+                        applicationContext,
                         identity,
                         model.value!!,
                         collectionModel.value!!,
                         member.username
-                    )
+                    ) {
+                        Toast.makeText(applicationContext, R.string.collection_members_remove_error, Toast.LENGTH_LONG).show()
+                    }
                 }
                 .setNegativeButton(android.R.string.no) { _, _ -> }.show()
     }
@@ -169,7 +183,10 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
 
 class CollectionMembersViewModel : ViewModel() {
     private val members = MutableLiveData<List<RuntimeMember>>()
+    private val loadFailed = MutableLiveData<Boolean>()
     private var asyncTask: Job? = null
+    /** Counts loads, so only the latest one reports its failure. */
+    private var loadGeneration = 0
 
     fun loadMembers(
         applicationContext: Context,
@@ -177,8 +194,11 @@ class CollectionMembersViewModel : ViewModel() {
         accountCollectionHolder: AccountHolder,
         cachedCollection: CachedCollection
     ) {
+        // Only the latest load's outcome counts: a failure before it is not shown again.
+        loadFailed.value = false
+        val generation = ++loadGeneration
         asyncTask = viewModelScope.launch {
-            val ret = withContext(Dispatchers.IO) {
+            val ret = try { withContext(Dispatchers.IO) {
                 if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account ||
                     identity.collectionUid != cachedCollection.col.uid || identity.collectionType != cachedCollection.collectionType)
                     return@withContext null
@@ -197,6 +217,14 @@ class CollectionMembersViewModel : ViewModel() {
                     result.addAll(chunk.data)
                 }
                 result.map { RuntimeMember(it.username, it.accessLevel) }
+            } } catch (e: Exception) {
+                // Offline or a server error: say so on the screen instead of crashing.
+                if (e is CancellationException) throw e
+                Logger.log.warning("Loading members failed: ${e.javaClass.name}")
+                // A load cancelled with its view, or replaced by a newer one, does not report its failure.
+                if (!isActive || generation != loadGeneration) return@launch
+                loadFailed.value = true
+                return@launch
             }
             if (ret != null && identity.validate(applicationContext) &&
                 identity.account == accountCollectionHolder.account && identity.collectionUid == cachedCollection.col.uid &&
@@ -210,10 +238,11 @@ class CollectionMembersViewModel : ViewModel() {
         identity: CollectionLifecycleIdentity,
         accountCollectionHolder: AccountHolder,
         cachedCollection: CachedCollection,
-        username: String
+        username: String,
+        onFailure: () -> Unit = {}
     ) {
         viewModelScope.launch {
-            val removed = withContext(Dispatchers.IO) {
+            val removed = try { withContext(Dispatchers.IO) {
                 if (!identity.validate(applicationContext) ||
                     identity.account != accountCollectionHolder.account ||
                     identity.collectionUid != cachedCollection.col.uid ||
@@ -229,6 +258,11 @@ class CollectionMembersViewModel : ViewModel() {
                     identity.validate(applicationContext) && identity.account == accountCollectionHolder.account &&
                         identity.collectionUid == cachedCollection.col.uid && identity.collectionType == cachedCollection.collectionType
                 }
+            } } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Logger.log.warning("Removing a member failed: ${e.javaClass.name}")
+                onFailure()
+                return@launch
             }
             if (removed && identity.validate(applicationContext) &&
                 identity.account == accountCollectionHolder.account && identity.collectionUid == cachedCollection.col.uid &&
@@ -260,6 +294,9 @@ class CollectionMembersViewModel : ViewModel() {
 
     internal fun observe(owner: LifecycleOwner, observer: (List<RuntimeMember>) -> Unit) =
             members.observe(owner, observer)
+
+    internal fun observeLoadFailed(owner: LifecycleOwner, observer: (Boolean) -> Unit) =
+            loadFailed.observe(owner, observer)
 }
 
 @Volatile
