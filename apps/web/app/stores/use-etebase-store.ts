@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import { normalizeServerUrl } from '@/app/lib/server-url'
+import { canDeleteCollection } from '@/app/lib/collection-access'
 import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { projectBirthdayMarkers, resetBirthdayMarkers } from '@/app/lib/birthday-calendar/markers'
 import type {
@@ -2884,6 +2885,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
     if (collections[type].length <= 1) {
       showErrorToast(`Create another ${collectionDisplayName(type)} before deleting this one.`)
+      return false
+    }
+    if (!canDeleteCollection(collection)) {
+      showErrorToast(`Only an admin of this shared ${collectionDisplayName(type)} can delete it.`)
       return false
     }
 

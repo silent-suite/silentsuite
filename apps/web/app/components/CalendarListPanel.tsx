@@ -14,6 +14,7 @@ import {
   useQualifyingBirthdayCalendarIds,
 } from '@/app/lib/birthday-calendar/session'
 import { CollectionListItem } from '@/app/components/CollectionListItem'
+import { canDeleteCollection } from '@/app/lib/collection-access'
 
 const TURN_OFF_CONFIRMATION =
   'Turn off the Birthdays calendar? Birthday events generated from your contacts will be removed. '
@@ -132,6 +133,7 @@ export function CalendarListPanel() {
             visible={cal.visible}
             isDefault={cal.id === defaultCalendarId}
             canDelete={calendars.length > 1 && !managedIds.includes(cal.id)}
+            isAdmin={canDeleteCollection(cal)}
             itemLabel="calendar"
             defaultLabel="Default calendar"
             deleteLabel="Delete calendar"

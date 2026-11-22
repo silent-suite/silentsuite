@@ -8,6 +8,7 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { isSnapshotApplied, useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 import { CollectionListItem } from '@/app/components/CollectionListItem'
+import { canDeleteCollection } from '@/app/lib/collection-access'
 
 export function ContactListPanel() {
   const { lists, activeListId, toggleVisibility, setActiveList, getNextColor } = useContactListStore()
@@ -88,6 +89,7 @@ export function ContactListPanel() {
             visible={list.visible}
             isDefault={list.id === activeListId}
             canDelete={lists.length > 1}
+            isAdmin={canDeleteCollection(list)}
             itemLabel="address book"
             defaultLabel="Default address book"
             deleteLabel="Delete address book"

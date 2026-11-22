@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createItem, listCollections, updateCollectionMeta, updateItem } from './collections.js';
+import { createItem, deleteCollection, listCollections, updateCollectionMeta, updateItem } from './collections.js';
 
 describe('listCollections', () => {
   it('filters deleted collection tombstones', async () => {
@@ -202,6 +202,33 @@ describe('updateCollectionMeta', () => {
     });
     expect(collectionManager.upload).toHaveBeenCalledWith(collection);
     expect(result).toBe(collection);
+  });
+});
+
+describe('deleteCollection', () => {
+  function fakeCollection(uid: string) {
+    return { uid, isDeleted: false, delete() { this.isDeleted = true; } };
+  }
+
+  it('uploads a deleted copy and leaves the caller\'s collection untouched when the upload is refused', async () => {
+    const original = fakeCollection('cal-shared');
+    const uploaded: Array<{ uid: string; isDeleted: boolean }> = [];
+    const collectionManager = {
+      cacheSave: vi.fn(() => new Uint8Array([1])),
+      cacheLoad: vi.fn(() => fakeCollection('cal-shared')),
+      upload: vi.fn(async (collection: { uid: string; isDeleted: boolean }) => {
+        uploaded.push({ uid: collection.uid, isDeleted: collection.isDeleted });
+        throw new Error('admin_access_required');
+      }),
+    };
+    const account = { getCollectionManager: () => collectionManager };
+
+    await expect(deleteCollection(account as any, original as any)).rejects.toThrow('admin_access_required');
+
+    expect(uploaded).toEqual([{ uid: 'cal-shared', isDeleted: true }]);
+    expect(collectionManager.upload.mock.calls[0][0]).not.toBe(original);
+    // A later rename or color change must not carry the refused delete.
+    expect(original.isDeleted).toBe(false);
   });
 });
 

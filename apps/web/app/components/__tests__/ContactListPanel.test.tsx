@@ -6,8 +6,8 @@ const updateCollectionMeta = vi.fn()
 
 const mockContactListState = {
   lists: [
-    { id: 'contacts-1', name: 'Work Contacts', color: '#8b5cf6', visible: true },
-    { id: 'contacts-2', name: 'Home Contacts', color: '#10b981', visible: false },
+    { id: 'contacts-1', name: 'Work Contacts', color: '#8b5cf6', visible: true, accessLevel: 1 },
+    { id: 'contacts-2', name: 'Home Contacts', color: '#10b981', visible: false, accessLevel: 2 },
   ],
   activeListId: 'contacts-1',
   toggleVisibility: vi.fn(),
@@ -125,5 +125,18 @@ describe('ContactListPanel', () => {
     expect(add.className).toContain('max-md:min-h-[44px]')
     expect(add.className).toContain('max-md:min-w-[44px]')
     expect(add.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+  })
+
+  it('offers Delete only on an address book this user administers', () => {
+
+    renderWithIntl(<ContactListPanel />)
+
+    fireEvent.click(screen.getByLabelText('Open Work Contacts actions'))
+    expect(screen.getByRole('menuitem', { name: 'Delete address book' })).toBeEnabled()
+    fireEvent.click(screen.getByLabelText('Open Work Contacts actions'))
+
+    fireEvent.click(screen.getByLabelText('Open Home Contacts actions'))
+    expect(screen.getByRole('menuitem', { name: 'Delete address book' })).toBeDisabled()
+    expect(screen.getByText('Only an admin of this shared address book can delete it.')).toBeInTheDocument()
   })
 })

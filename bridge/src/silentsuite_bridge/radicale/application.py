@@ -7,9 +7,12 @@ import sqlite3
 import peewee as pw
 
 from radicale.app import Application as RadicaleApplication
-from radicale import httputils
+from radicale import httputils, pathutils
 
+from ..local_cache import resolve_dav_collection_uid
 from ..privacy_logging import bounded_exception_class, bounded_identifier
+from .etesync_cache import etesync_for_user
+from .storage import CollectionDeleteNotAllowed
 
 _MAX_DIAGNOSTIC_LENGTH = 320
 
@@ -382,6 +385,24 @@ def _drain_unread_body(environ, body: _TrackedRequestBody) -> None:
         return
 
 
+def _collection_delete_denied(user, path):
+    """Whether a DELETE of path would delete a whole collection this account does not administer.
+
+    The sync server refuses such a delete, so it is answered with 403 before Radicale
+    enumerates the collection. A path that does not resolve is left to Radicale.
+    """
+    parts = pathutils.strip_path(path).split("/")
+    if not user or len(parts) != 2 or parts[0] != user or not parts[1]:
+        return False
+    try:
+        with etesync_for_user(user, exclusive=False) as (etesync, _):
+            return not etesync.get(resolve_dav_collection_uid(user, parts[1])).is_admin
+    except (pw.OperationalError, sqlite3.OperationalError):
+        raise
+    except Exception:
+        return False
+
+
 class Application(RadicaleApplication):
     """Radicale application with macOS's same-account principal alias support."""
 
@@ -405,8 +426,14 @@ class Application(RadicaleApplication):
             return super().do_PUT(environ, base_prefix, path, user)
 
     def do_DELETE(self, environ, base_prefix, path, user):  # noqa: N802
-        with self._storage.write_scope("DELETE", path):
-            response = super().do_DELETE(environ, base_prefix, path, user)
+        if _collection_delete_denied(user, path):
+            return httputils.NOT_ALLOWED
+        try:
+            with self._storage.write_scope("DELETE", path):
+                response = super().do_DELETE(environ, base_prefix, path, user)
+        except CollectionDeleteNotAllowed:
+            # The role changed to non-admin during this request's own sync.
+            return httputils.NOT_ALLOWED
         if response[0] == 404 and "HTTP_IF_MATCH" in environ:
             return httputils.PRECONDITION_FAILED
         return response

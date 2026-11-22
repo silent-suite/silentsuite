@@ -10,7 +10,8 @@ const updateCollectionMeta = vi.fn()
 const mockNotebookState = {
   lists: [
     { id: 'notes-1', name: 'Personal', color: '#f59e0b', visible: true, accessLevel: 1 },
-    { id: 'notes-2', name: 'Work', color: '#3b82f6', visible: false, accessLevel: 2 },
+    { id: 'notes-2', name: 'Work', color: '#3b82f6', visible: false, accessLevel: 1 },
+    { id: 'notes-3', name: 'Shared', color: '#10b981', visible: true, accessLevel: 2 },
   ],
   activeListId: 'notes-1',
   toggleVisibility: vi.fn(),
@@ -185,5 +186,18 @@ describe('NotebookListPanel', () => {
     expect(add.className).toContain('max-md:min-h-[44px]')
     expect(add.className).toContain('max-md:min-w-[44px]')
     expect(add.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+  })
+
+  it('offers Delete only on a notebook this user administers', () => {
+
+    renderWithIntl(<NotebookListPanel />)
+
+    fireEvent.click(screen.getByLabelText('Open Personal actions'))
+    expect(screen.getByRole('menuitem', { name: 'Delete notebook' })).toBeEnabled()
+    fireEvent.click(screen.getByLabelText('Open Personal actions'))
+
+    fireEvent.click(screen.getByLabelText('Open Shared actions'))
+    expect(screen.getByRole('menuitem', { name: 'Delete notebook' })).toBeDisabled()
+    expect(screen.getByText('Only an admin of this shared notebook can delete it.')).toBeInTheDocument()
   })
 })

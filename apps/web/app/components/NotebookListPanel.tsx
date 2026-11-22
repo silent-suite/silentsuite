@@ -9,6 +9,7 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { CollectionListItem } from '@/app/components/CollectionListItem'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { showErrorToast } from '@/app/stores/use-toast-store'
+import { canDeleteCollection } from '@/app/lib/collection-access'
 
 export function NotebookListPanel() {
   const t = useTranslations('Notes')
@@ -89,6 +90,7 @@ export function NotebookListPanel() {
             visible={list.visible}
             isDefault={list.id === activeListId}
             canDelete={lists.length > 1}
+            isAdmin={canDeleteCollection(list)}
             itemLabel={t('notebook')}
             defaultLabel={t('defaultNotebook')}
             deleteLabel={t('deleteNotebook')}

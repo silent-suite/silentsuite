@@ -775,6 +775,10 @@ class EteSyncItem(Item):
 # --- Radicale Collection ---
 
 
+class CollectionDeleteNotAllowed(PermissionError):
+    """A DAV client asked to delete a whole collection this account does not administer."""
+
+
 class Collection(BaseCollection):
     """Radicale collection backed by an Etebase collection via local cache."""
 
@@ -1220,6 +1224,10 @@ class Collection(BaseCollection):
             return
 
         if href is None:
+            if not self.collection.is_admin:
+                # The server refuses this delete, so marking it here would only leave
+                # a push that fails on every sync. Refuse it before anything changes.
+                raise CollectionDeleteNotAllowed("only a collection admin can delete the collection")
             self.collection.delete()
             log_sync_event("sync", "Deleted collection")
             return
