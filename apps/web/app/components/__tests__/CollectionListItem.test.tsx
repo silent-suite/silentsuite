@@ -10,7 +10,7 @@ function expectMobileSquare(element: HTMLElement) {
   expect(element.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
 }
 
-function renderItem(onDelete = vi.fn()) {
+function renderItem(onDelete = vi.fn(), isAdmin?: boolean) {
   render(
     <CollectionListItem
       name="Personal"
@@ -18,6 +18,7 @@ function renderItem(onDelete = vi.fn()) {
       visible
       isDefault={false}
       canDelete
+      isAdmin={isAdmin}
       itemLabel="notebook"
       defaultLabel="Default notebook"
       deleteLabel="Delete notebook"
@@ -55,5 +56,15 @@ describe('CollectionListItem mobile targets', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete notebook' }))
     expect(onDelete).toHaveBeenCalledTimes(1)
     expect(document.activeElement).toBe(actions)
+  })
+
+  it('disables Delete and says why when the user is not an admin of a shared collection', () => {
+    const onDelete = renderItem(vi.fn(), false)
+    fireEvent.click(screen.getByRole('button', { name: 'Open Personal actions' }))
+    const del = screen.getByRole('menuitem', { name: 'Delete notebook' })
+    expect(del).toBeDisabled()
+    expect(screen.getByText('Only an admin of this shared notebook can delete it.')).toBeInTheDocument()
+    fireEvent.click(del)
+    expect(onDelete).not.toHaveBeenCalled()
   })
 })

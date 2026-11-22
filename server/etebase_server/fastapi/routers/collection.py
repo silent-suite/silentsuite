@@ -537,6 +537,12 @@ def item_bulk_common(
         if stoken and stoken != collection_object.stoken:
             raise HttpError("stale_stoken", "Stoken is too old", status_code=status.HTTP_409_CONFLICT)
 
+        # A deleted revision of the main item deletes the whole collection for
+        # every member, so only an admin may send one.
+        deletes_collection = any(item.uid == collection_object.uid and item.content.deleted for item in data.items)
+        if deletes_collection and not is_collection_admin(collection_object, user):
+            raise PermissionDenied("admin_access_required", "Only collection admins can delete the collection.")
+
         data.validate_db(collection_object)
 
         errors: t.List[HttpError] = []

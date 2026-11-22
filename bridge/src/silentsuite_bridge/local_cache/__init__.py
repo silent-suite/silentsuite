@@ -2289,6 +2289,11 @@ class Collection:
         return self.col.access_level == CollectionAccessLevel.ReadOnly or birthdays.is_managed_collection(self.col)
 
     @property
+    def is_admin(self):
+        # Only an admin may delete the whole collection; the server refuses others.
+        return self.col.access_level == CollectionAccessLevel.Admin
+
+    @property
     def stoken(self):
         return self.cache_col.local_stoken
 

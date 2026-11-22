@@ -129,15 +129,18 @@ export async function updateCollectionMeta(
 }
 
 /**
- * Mark a collection deleted and upload the tombstone.
+ * Upload a tombstone for a collection. The delete is made on a copy, so a
+ * refused or failed upload leaves the caller's collection as it was and a
+ * later metadata edit can't carry the delete with it.
  */
 export async function deleteCollection(
   account: Etebase.Account,
   collection: Etebase.Collection,
 ): Promise<void> {
   const collectionManager = account.getCollectionManager();
-  (collection as any).delete();
-  await collectionManager.upload(collection);
+  const tombstone = collectionManager.cacheLoad(collectionManager.cacheSave(collection));
+  (tombstone as any).delete();
+  await collectionManager.upload(tombstone);
 }
 
 /**

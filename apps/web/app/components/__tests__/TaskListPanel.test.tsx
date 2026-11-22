@@ -5,8 +5,8 @@ const updateCollectionMeta = vi.fn()
 
 const mockTaskListState = {
   lists: [
-    { id: 'tasks-1', name: 'Work Tasks', color: '#3b82f6', visible: true },
-    { id: 'tasks-2', name: 'Home Tasks', color: '#10b981', visible: false },
+    { id: 'tasks-1', name: 'Work Tasks', color: '#3b82f6', visible: true, accessLevel: 1 },
+    { id: 'tasks-2', name: 'Home Tasks', color: '#10b981', visible: false, accessLevel: 2 },
   ],
   activeListId: 'tasks-1',
   toggleVisibility: vi.fn(),
@@ -78,5 +78,18 @@ describe('TaskListPanel', () => {
     expect(add.className).toContain('max-md:min-h-[44px]')
     expect(add.className).toContain('max-md:min-w-[44px]')
     expect(add.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+  })
+
+  it('offers Delete only on a task list this user administers', () => {
+
+    render(<TaskListPanel />)
+
+    fireEvent.click(screen.getByLabelText('Open Work Tasks actions'))
+    expect(screen.getByRole('menuitem', { name: 'Delete task list' })).toBeEnabled()
+    fireEvent.click(screen.getByLabelText('Open Work Tasks actions'))
+
+    fireEvent.click(screen.getByLabelText('Open Home Tasks actions'))
+    expect(screen.getByRole('menuitem', { name: 'Delete task list' })).toBeDisabled()
+    expect(screen.getByText('Only an admin of this shared task list can delete it.')).toBeInTheDocument()
   })
 })

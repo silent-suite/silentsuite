@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { CollectionListItem } from '@/app/components/CollectionListItem'
+import { canDeleteCollection } from '@/app/lib/collection-access'
 
 export function TaskListPanel() {
   const { lists, activeListId, toggleVisibility, setActiveList, getNextColor } = useTaskListStore()
@@ -72,6 +73,7 @@ export function TaskListPanel() {
             visible={list.visible}
             isDefault={list.id === activeListId}
             canDelete={lists.length > 1}
+            isAdmin={canDeleteCollection(list)}
             itemLabel="task list"
             defaultLabel="Default task list"
             deleteLabel="Delete task list"
