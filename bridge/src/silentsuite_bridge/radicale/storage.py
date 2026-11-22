@@ -599,6 +599,7 @@ vobject.base.registerBehavior(_VCardNicknameBehavior, "NICKNAME")
 vobject.vcard.VCard3_0.knownChildren.setdefault("NICKNAME", (0, None, None))
 
 _DATA_URI_REGEX = re.compile(r"data:([^,]*),(.*)\Z", re.IGNORECASE | re.DOTALL)
+_BASE64_REGEX = re.compile(r"[A-Za-z0-9+/]*={0,2}\Z")
 
 
 def _vcard4_media_line_to_3(name, params, value, group):
@@ -616,6 +617,8 @@ def _vcard4_media_line_to_3(name, params, value, group):
         if any(flag.strip().lower() == "base64" for flag in flags):
             # A data URI may percent-escape base64 characters (%3D for =).
             value = urllib.parse.unquote(match.group(2))
+            if value != match.group(2) and not _BASE64_REGEX.match(value):
+                return None  # never emit decoded line breaks or other text
         else:
             value = base64.b64encode(
                 urllib.parse.unquote_to_bytes(match.group(2))

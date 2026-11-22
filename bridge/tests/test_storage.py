@@ -975,6 +975,13 @@ class TestVCard4PhotoDowngrade:
             (None, b"M", {"ENCODING": ["b"], "TYPE": ["png"], "PREF": ["1"]})
         ], f"BEHAVIOR: percent-escaped base64 {name} served decoded"
 
+    @pytest.mark.parametrize("payload", ["TQ%3D%3D%0D%0ANOTE:injected", "TQ%0ANOTE:injected", "TQ%3D%3D%3B"])
+    def test_escaped_non_base64_payload_adds_no_property(self, mem_db, user, payload):
+        _, _, _, card = self._serve(mem_db, user, f"PHOTO:data:image/png;base64,{payload}")
+        assert "note" not in card.contents, "BEHAVIOR: decoded escapes must not add a property"
+        assert len(card.contents.get("photo", [])) == 1, "BEHAVIOR: one photo in, one photo out"
+        assert set(card.contents) == {"version", "uid", "fn", "photo"}, "BEHAVIOR: no other property"
+
     def test_percent_encoded_data_uri_photo_is_served(self, mem_db, user):
         _, _, _, card = self._serve(mem_db, user, "PHOTO:data:image/svg+xml,%3Csvg%2F%3E")
         assert self._media(card, "photo") == [
