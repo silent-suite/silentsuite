@@ -5,6 +5,7 @@ import { create } from 'zustand'
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
 import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, overridesBefore, overridesInForm, overridesWithout, recurrenceRuleFrom, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
+import { overriddenOccurrence } from '@/app/(app)/calendar/lib/calendar-grid-events'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
@@ -454,17 +455,21 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           updated: now,
         }
         const newTempId = crypto.randomUUID()
-        const standaloneBase = withOccurrenceWallClock({
-          ...master,
-          id: newTempId,
-          uid: newTempId,
-          ...WITHOUT_RETAINED_CONTENT,
-          recurrenceRule: null,
-          exceptions: [],
-          startDate: instanceDate,
-          // A day or week DURATION keeps its wall-clock length at this occurrence.
-          endDate: occurrenceEnd(master, instanceDate),
-        }, master, instanceDate)
+        // An occurrence another client moved or changed keeps that override's time and fields.
+        const overridden = overriddenOccurrence(master, instanceDate)
+        const standaloneBase = overridden
+          ? { ...overridden, id: newTempId, uid: newTempId, ...WITHOUT_RETAINED_CONTENT, recurrenceRule: null, exceptions: [] }
+          : withOccurrenceWallClock({
+            ...master,
+            id: newTempId,
+            uid: newTempId,
+            ...WITHOUT_RETAINED_CONTENT,
+            recurrenceRule: null,
+            exceptions: [],
+            startDate: instanceDate,
+            // A day or week DURATION keeps its wall-clock length at this occurrence.
+            endDate: occurrenceEnd(master, instanceDate),
+          }, master, instanceDate)
         const standaloneEvent: CalendarEvent = {
           ...mergeEventPatch(standaloneBase, patch),
           created: now,

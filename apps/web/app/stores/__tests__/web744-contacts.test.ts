@@ -277,6 +277,73 @@ describe('#744 the contact store saves through the captured record base', () => 
     expect(deserializeContact((await serverText(account, collection, item.uid))!).name.given).toBe(PEER_GIVEN)
   })
 
+  const saveStateOf = (id: string) => useContactStore.getState().contactSaveStates[id]
+
+  it('saves a later edit at the last server record after an offline save was refused', async () => {
+    const { account, collection, item } = await shownSavedContact()
+    server.offline = true
+    await useContactStore.getState().updateContact(item.uid, { organization: 'Offline org 744' })
+    expect(saveStateOf(item.uid)).toBe('refused')
+    server.offline = false
+
+    await useContactStore.getState().updateContact(item.uid, { notes: 'Later note 744' })
+
+    const onServer = deserializeContact((await serverText(account, collection, item.uid))!)
+    expect([onServer.organization, onServer.notes, onServer.name.given]).toEqual(['Offline org 744', 'Later note 744', BASE_GIVEN])
+    const serverItem = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+    expect([stored(item.uid).revision, saveStateOf(item.uid)]).toEqual([serverItem.etag, undefined])
+  })
+
+  it('chains two saves begun after a refusal so both reach the server', async () => {
+    const { account, collection, item } = await shownSavedContact()
+    server.offline = true
+    await useContactStore.getState().updateContact(item.uid, { organization: 'Offline org 744' })
+    server.offline = false
+    const firstWrite = server.holdNext(isItemWrite)
+
+    const first = useContactStore.getState().updateContact(item.uid, { notes: 'First note 744' })
+    await firstWrite.arrived
+    const second = useContactStore.getState().updateContact(item.uid, { title: 'Second title 744' })
+    firstWrite.release(false)
+    expect(await Promise.all([first, second])).toEqual([true, true])
+
+    const onServer = deserializeContact((await serverText(account, collection, item.uid))!)
+    expect([onServer.organization, onServer.notes, onServer.title]).toEqual(['Offline org 744', 'First note 744', 'Second title 744'])
+    expect(saveStateOf(item.uid)).toBeUndefined()
+  })
+
+  it('deletes a contact at the last server record after an offline save was refused', async () => {
+    const { account, collection, item } = await shownSavedContact()
+    server.offline = true
+    await useContactStore.getState().updateContact(item.uid, { organization: 'Offline org 744' })
+    expect(saveStateOf(item.uid)).toBe('refused')
+    server.offline = false
+
+    expect(await useContactStore.getState().deleteContact(item.uid)).toBe(true)
+
+    const serverItem = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+    expect(serverItem.isDeleted).toBe(true)
+    expect([stored(item.uid), saveStateOf(item.uid)]).toEqual([undefined, undefined])
+  })
+
+  it('still refuses a later save and delete after a refusal when another device changed the contact', async () => {
+    const { account, collection, item } = await shownSavedContact()
+    server.offline = true
+    await useContactStore.getState().updateContact(item.uid, { organization: 'Offline org 744' })
+    server.offline = false
+    await peerWrites(account, collection, item, PEER_GIVEN)
+    const peerText = await serverText(account, collection, item.uid)
+
+    await useContactStore.getState().updateContact(item.uid, { notes: 'Later note 744' })
+    expect(saveStateOf(item.uid)).toBe('refused')
+    expect(await useContactStore.getState().deleteContact(item.uid)).toBe(false)
+
+    // The newer remote record is neither overwritten nor deleted.
+    expect(await serverText(account, collection, item.uid)).toBe(peerText)
+    expect(deserializeContact(peerText!).name.given).toBe(PEER_GIVEN)
+    expect([stored(item.uid).organization, stored(item.uid).notes]).toEqual(['Offline org 744', 'Later note 744'])
+  })
+
   it('#744 never mutates or dispatches a contact save without an account fingerprint', async () => {
     const { account, collection, item, vcard } = await shownSavedContact()
     useEtebaseStore.setState({ accountFingerprint: null } as any)

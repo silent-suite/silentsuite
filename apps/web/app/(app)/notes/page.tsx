@@ -22,6 +22,7 @@ import {
   proveNoteBase,
   readNewerNoteVersion,
   registerNoteEditor,
+  noteEditorStateChanged,
   reopenHeldNoteText,
   releaseHeldNoteDraft,
   releaseNoteObligation,
@@ -403,6 +404,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
         closingRef.current = false
         endClosingNoteSave(note.id)
       }
+      noteEditorStateChanged()
       if (unmountedRef.current) return
       // A draft typed back to the saved text while this save ran leaves nothing unsaved or refused.
       const clean = !isDirty()
@@ -466,6 +468,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
     }
     setMoveFailed(false)
     if (inFlightRef.current === 0) setSaveState('pending')
+    noteEditorStateChanged()
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(flush, SAVE_DEBOUNCE_MS)
   }, [flush, note.id])
@@ -531,6 +534,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
       // The text now lives in the copy; closing this editor saves nothing more.
       handedOffRef.current = true
       draftRef.current = savedRef.current
+      noteEditorStateChanged()
       if (!unmountedRef.current) onCopiedRef.current(result.id)
       return
     }

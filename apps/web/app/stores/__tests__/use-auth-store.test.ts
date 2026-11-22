@@ -270,6 +270,47 @@ describe('useAuthStore', () => {
     expect(init?.body).not.toContain('savedSession')
   })
 
+  describe('login after a started signup in the same tab', () => {
+    const FLAG = 'silentsuite-signup-in-progress'
+
+    it('a successful hosted login clears the signup marker so a reload restores the session', async () => {
+      sessionStorage.setItem(FLAG, 'true')
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false }),
+      } as Response)
+
+      await useAuthStore.getState().login('test@example.com', 'password123')
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(true)
+      expect(sessionStorage.getItem(FLAG)).toBeNull()
+    })
+
+    it('a successful self-hosted login clears the signup marker', async () => {
+      selfHostedMode.enabled = true
+      try {
+        sessionStorage.setItem(FLAG, 'true')
+        await useAuthStore.getState().login('test@example.com', 'password123', undefined)
+        expect(useAuthStore.getState().isAuthenticated).toBe(true)
+        expect(sessionStorage.getItem(FLAG)).toBeNull()
+      } finally {
+        selfHostedMode.enabled = false
+      }
+    })
+
+    it('a failed login leaves the signup marker in place', async () => {
+      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('unauthorized'))
+      sessionStorage.setItem(FLAG, 'true')
+
+      await useAuthStore.getState().login('test@example.com', 'wrong')
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(sessionStorage.getItem(FLAG)).toBe('true')
+    })
+  })
+
   it('unlockEtebaseSession restores only the local session for the signed-in account', async () => {
     useAuthStore.setState({
       user: { id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false, onboardedAt: null },

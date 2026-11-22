@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import * as Sentry from '@sentry/nextjs'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { logger } from '@/app/lib/logger'
+import { parseRemoteItems } from '@/app/lib/parse-remote-items'
 import { keepPendingCacheRecords, useEtebaseStore, withoutPendingDeletes } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
@@ -227,7 +228,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (taskItems.length > 0) {
           try {
-            const tasks = taskItems.map((it) => {
+            const tasks = parseRemoteItems('tasks', taskItems, (it) => {
               const task = core.deserializeTask(it.content)
               return { ...task, id: it.itemUid, listId: it.collectionUid }
             })
@@ -254,7 +255,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (eventItems.length > 0) {
           try {
-            const events = eventItems.map((it) => {
+            const events = parseRemoteItems('calendar', eventItems, (it) => {
               const event = core.deserializeCalendarEvent(it.content)
               return { ...event, id: it.itemUid, calendarId: it.collectionUid }
             })
@@ -360,7 +361,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           const core = await import('@silentsuite/core')
           assertCurrentAccountEpoch(accountEpoch)
           if (type === 'tasks') {
-            const tasks = items.map((item) => {
+            const tasks = parseRemoteItems('tasks', items, (item) => {
               // Use the Etebase item UID only as the local id so updates/deletes
               // can address the item without changing the stable iCalendar UID.
               const task = core.deserializeTask(item.content)
@@ -390,7 +391,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             logger.log(`[sync-provider] Loaded ${notes.length} notes from server`)
             await mirrorNotesToCache(core, saved)
           } else {
-            const events = items.map((item) => {
+            const events = parseRemoteItems('calendar', items, (item) => {
               const event = core.deserializeCalendarEvent(item.content)
               return { ...event, id: item.uid, calendarId: item.collectionUid }
             })
@@ -436,7 +437,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             if (useEtebaseStore.getState().domainLoadState.tasks === 'loaded') {
               const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks', accountEpoch)
               assertCurrentAccountEpoch(accountEpoch)
-              const tasks = taskItems.map((item) => {
+              const tasks = parseRemoteItems('tasks', taskItems, (item) => {
                 const task = core.deserializeTask(item.content)
                 return { ...task, id: item.uid, listId: item.collectionUid }
               })
@@ -475,7 +476,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             if (useEtebaseStore.getState().domainLoadState.calendar === 'loaded') {
               const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar', accountEpoch)
               assertCurrentAccountEpoch(accountEpoch)
-              const events = eventItems.map((item) => {
+              const events = parseRemoteItems('calendar', eventItems, (item) => {
                 const event = core.deserializeCalendarEvent(item.content)
                 return { ...event, id: item.uid, calendarId: item.collectionUid }
               })

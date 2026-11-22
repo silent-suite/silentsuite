@@ -26,6 +26,7 @@ import {
   shortTimezoneLabel,
 } from '@/app/lib/tz'
 import { inclusiveAllDayEndDate } from '../lib/all-day'
+import { overriddenOccurrence } from '../lib/calendar-grid-events'
 
 // ---------------------------------------------------------------------------
 // Time formatting (respects user preference)
@@ -357,10 +358,14 @@ export function EventDialog({
   startDate: initialStartDate,
   endDate: initialEndDate,
   allDay: initialAllDay = false,
-  event,
+  event: openedEvent,
   instanceDate,
   onClose,
 }: EventDialogProps) {
+  // The event as the dialog opened it. A sync can replace the store's event while the dialog is
+  // open; the form and the changes it saves are read against what was opened, so a save sends only
+  // what was edited here and keeps another device's changes to the other fields.
+  const [event] = useState(openedEvent)
   // Store actions
   const createEvent = useCalendarStore((s) => s.createEvent)
   const updateEvent = useCalendarStore((s) => s.updateEvent)
@@ -387,14 +392,25 @@ export function EventDialog({
 
   const isEdit = mode === 'edit' && !!event
   const isRecurring = isEdit && !!event.recurrenceRule
-  const effectiveInstanceDate = instanceDate ?? event?.startDate ?? new Date()
+  // Delete and save go by whether the event is recurring now: another device may have made it
+  // recurring, or single, since the dialog opened.
+  const isRecurringNow = isEdit && !!openedEvent?.recurrenceRule
+  // Without a clicked occurrence (calendar search), "this" means the event's start as it is now.
+  const effectiveInstanceDate = instanceDate ?? openedEvent?.startDate ?? new Date()
 
   // A later occurrence of a series opens at its own date and time, so the form shows what was
   // clicked and "this" / "this and future" edits are made against that occurrence. A generated
   // birthday is read-only, so it also shows the clicked occurrence rather than the series start
   // (a fixed leap year that is neither the birth year nor this year).
+  // An occurrence another client moved or changed (a RECURRENCE-ID override) opens as it shows.
+  const overridden = useMemo(
+    () => (isRecurring && instanceDate ? overriddenOccurrence(event, instanceDate) : undefined),
+    [isRecurring, event, instanceDate],
+  )
   const occurrence = useMemo(() => {
-    if (!isEdit || !instanceDate || instanceDate.getTime() === event.startDate.getTime()) return undefined
+    if (!isEdit || !instanceDate) return undefined
+    if (overridden) return overridden
+    if (instanceDate.getTime() === event.startDate.getTime()) return undefined
     if (isRecurring) return occurrenceOf(event, instanceDate)
     if (!isManagedEvent) return undefined
     const shift = instanceDate.getTime() - event.startDate.getTime()
@@ -405,7 +421,7 @@ export function EventDialog({
     }
     delete shifted.startWallClock
     return shifted
-  }, [isEdit, isRecurring, isManagedEvent, event, instanceDate])
+  }, [isEdit, isRecurring, isManagedEvent, event, instanceDate, overridden])
   const formEvent = isEdit ? (occurrence ?? event) : undefined
 
   // Initial all-day flag — needed before form state so we can pick the right
@@ -421,9 +437,9 @@ export function EventDialog({
   // Form state
   // ---------------------------------------------------------------------------
 
-  const [title, setTitle] = useState(isEdit ? event.title : '')
-  const [location, setLocation] = useState(isEdit ? (event.location || '') : '')
-  const [description, setDescription] = useState(isEdit ? (event.description || '') : '')
+  const [title, setTitle] = useState(formEvent ? formEvent.title : '')
+  const [location, setLocation] = useState(formEvent ? (formEvent.location || '') : '')
+  const [description, setDescription] = useState(formEvent ? (formEvent.description || '') : '')
   const [allDay, setAllDay] = useState(initialIsAllDay)
   // For all-day events, `endDate` follows iCal DTEND;VALUE=DATE convention (exclusive — the day
   // *after* the last day of the event); the form shows the inclusive last day.
@@ -456,7 +472,7 @@ export function EventDialog({
     isEdit ? event.recurrenceRule : null,
   )
   const [categories, setCategories] = useState<string[]>(
-    isEdit ? (event.categories ?? []) : [],
+    formEvent ? (formEvent.categories ?? []) : [],
   )
   const [alarms, setAlarms] = useState<AlarmRow[]>(() => {
     if (isEdit) return (event.alarms ?? []).map(alarmRow)
@@ -539,6 +555,8 @@ export function EventDialog({
     pendingPatch?: Partial<CalendarEvent>
     /** The same changes applied to the series itself, for "all events". */
     seriesPatch?: Partial<CalendarEvent>
+    /** The same changes applied to the series' own slot of the occurrence, for "this and future". */
+    futurePatch?: Partial<CalendarEvent>
   } | null>(null)
 
   // Refs
@@ -629,20 +647,20 @@ export function EventDialog({
     const typed: WallInputs = { startDate, startTime, endDate, endTime }
 
     /**
-     * Start and end from `inputs`. For a DST-gap start, unchanged inputs keep the exact stored
-     * instants of `base`: the form rebuilds minutes only, which would drop seconds and the
-     * original wall clock.
+     * Start and end from `inputs`. An untouched start or end keeps the exact stored instant of
+     * `base`: the form rebuilds minutes only, which would drop seconds, a zero length or a DST-gap
+     * wall clock, and would overwrite a time another device saved since.
      */
     const resolveTimes = (base: CalendarEvent | undefined, initial: WallInputs, inputs: WallInputs) => {
       const gapStart = base ? validStartWallClock(base) : undefined
-      const keepExactStart = !!gapStart && kindAndZoneUnchanged
+      const keepExactStart = !!base && kindAndZoneUnchanged
         && inputs.startDate === initial.startDate && inputs.startTime === initial.startTime
-      const keepExactEnd = !!gapStart && kindAndZoneUnchanged
+      const keepExactEnd = !!base && kindAndZoneUnchanged
         && inputs.endDate === initial.endDate && inputs.endTime === initial.endTime
       const start = keepExactStart ? base!.startDate : startFromInputs(inputs.startDate, inputs.startTime)
       const end = keepExactEnd ? base!.endDate : endFromInputs(inputs.endDate, inputs.endTime)
-      // Ensure end is after start
-      const effectiveEnd = end > start ? end : new Date(start.getTime() + 30 * 60 * 1000)
+      // Ensure an edited end is after start; an untouched one (a zero-length event) stays.
+      const effectiveEnd = end > start || (keepExactStart && keepExactEnd) ? end : new Date(start.getTime() + 30 * 60 * 1000)
       return { start, effectiveEnd, gapStart, keepExactStart }
     }
 
@@ -668,14 +686,18 @@ export function EventDialog({
     try {
       if (isEdit) {
         const patch: Partial<CalendarEvent> = {}
+        // Text fields are compared with what the form opened with: a moved occurrence's own
+        // title and the like are not changes.
+        // A field is sent only when its input was edited, so untouched spaces are not trimmed away.
+        const shown = formEvent!
+        const edited = (input: string, opened: string) => input !== opened && input.trim() !== opened
 
-        if (title.trim() !== event.title) patch.title = title.trim()
-        if ((description.trim() || '') !== (event.description || ''))
-          patch.description = description.trim()
-        if ((location.trim() || '') !== (event.location || '')) patch.location = location.trim()
+        if (edited(title, shown.title)) patch.title = title.trim()
+        if (edited(description, shown.description || '')) patch.description = description.trim()
+        if (edited(location, shown.location || '')) patch.location = location.trim()
         if (allDay !== event.allDay) patch.allDay = allDay
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
-        if (JSON.stringify(categories) !== JSON.stringify(event.categories ?? [])) patch.categories = categories
+        if (JSON.stringify(categories) !== JSON.stringify(shown.categories ?? [])) patch.categories = categories
         if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
         // An all-day event without a zone that becomes timed is anchored in the dialog's zone,
         // rather than being saved as a UTC instant.
@@ -701,14 +723,22 @@ export function EventDialog({
           return
         }
 
-        if (isRecurring) {
+        if (isRecurringNow) {
           // "All events" applies the same change to the series start, by the same days and time.
           const seriesInitial = occurrence ? editWallInputs(event, initialFormTz) : initialInputs
           const seriesPatch = occurrence
             ? { ...patch, ...timePatch(event, seriesInitial, shiftWallInputs(seriesInitial, initialInputs, typed)) }
             : formPatch
+          // "This and future" starts the new series at the series' own slot of this occurrence, so a
+          // moved occurrence's time change is applied to that slot, by the same days and time.
+          let futurePatch = formPatch
+          if (overridden) {
+            const slot = occurrenceOf(event, instanceDate!)
+            const slotInitial = editWallInputs(slot, initialFormTz)
+            futurePatch = { ...patch, ...timePatch(slot, slotInitial, shiftWallInputs(slotInitial, initialInputs, typed)) }
+          }
           // Show scope dialog for recurring events
-          setScopeDialog({ mode: 'edit', pendingPatch: formPatch, seriesPatch })
+          setScopeDialog({ mode: 'edit', pendingPatch: formPatch, seriesPatch, futurePatch })
           setSaving(false)
           return
         }
@@ -762,9 +792,11 @@ export function EventDialog({
     startDateError,
     endDateError,
     isEdit,
-    isRecurring,
+    isRecurringNow,
     event,
     occurrence,
+    overridden,
+    instanceDate,
     formEvent,
     initialInputs,
     initialFormTz,
@@ -787,13 +819,13 @@ export function EventDialog({
   const handleDelete = useCallback(() => {
     if (!isEdit || !canWrite) return
 
-    if (isRecurring) {
+    if (isRecurringNow) {
       setScopeDialog({ mode: 'delete' })
     } else {
       void deleteEvent(event.id)
       onClose()
     }
-  }, [isEdit, canWrite, isRecurring, event, deleteEvent, onClose])
+  }, [isEdit, canWrite, isRecurringNow, event, deleteEvent, onClose])
 
   // ---------------------------------------------------------------------------
   // Scope dialog confirm / cancel
@@ -815,7 +847,11 @@ export function EventDialog({
       } else if (scopeDialog.mode === 'edit' && scopeDialog.pendingPatch) {
         void updateRecurringEvent(
           event.id,
-          scope === 'all' ? (scopeDialog.seriesPatch ?? scopeDialog.pendingPatch) : scopeDialog.pendingPatch,
+          scope === 'all'
+            ? (scopeDialog.seriesPatch ?? scopeDialog.pendingPatch)
+            : scope === 'this_and_future'
+              ? (scopeDialog.futurePatch ?? scopeDialog.pendingPatch)
+              : scopeDialog.pendingPatch,
           scope,
           effectiveInstanceDate,
         )
@@ -1250,7 +1286,17 @@ export function EventDialog({
                 <div className="flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-3">
                   <Repeat className={`${iconClass} mt-2`} />
                   <div className="min-w-0 flex-1">
-                    <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} disabled={!canWrite} />
+                    <RecurrencePicker
+                      value={recurrenceRule}
+                      onChange={setRecurrenceRule}
+                      disabled={!canWrite}
+                      allDay={allDay}
+                      // The zone the saved series expands in: the event's own (a floating or UTC
+                      // anchor included) unless the zone is changed or an all-day event turns timed.
+                      timeZone={isEdit && !event.allDay && timezone === (event.timezone ?? defaultTimezone)
+                        ? (event.timezone ?? (event.floating ? undefined : 'UTC'))
+                        : timezone}
+                    />
                   </div>
                 </div>
 

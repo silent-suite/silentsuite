@@ -30,9 +30,9 @@ describe('server-disclosed concise terms', () => {
   it('shows the card-trial sentence with the server first-charge date as DD.MM.YYYY and no time', () => {
     const cardTrial: AnnualDisclosure = { ...base, kind: 'card_trial', firstChargeAt: '2099-09-10T12:00:00Z', cancelBy: '2099-09-10T12:00:00Z' }
     render(<AnnualTermsSummary disclosure={cardTrial} />)
-    expect(screen.getByText(/Add your card information/)).toHaveTextContent('Add your card information. After that the 30 days free trial starts and you only get billed on 10.09.2099, if not cancelled before.')
+    expect(screen.getByText(/Add your card information/)).toHaveTextContent('Add your card information. After that the 30 days free trial starts and you only get billed on 10.09.2099, if not cancelled before. €36.00 per year after the trial, renews yearly until you cancel.')
     expect(screen.queryByText(/€0 today|Cancel before then|UTC|12:00/)).not.toBeInTheDocument()
-    // The card-trial terms are the single sentence above; the old auto-renew / cancel-anytime / refund-window line is gone.
+    // The card-trial terms are the single paragraph above; the old auto-renew / cancel-anytime / refund-window line is gone.
     expect(screen.queryByText(/Auto-renews|Cancel anytime|refund window|No automatic renewal/)).not.toBeInTheDocument()
     expect(annualCardSubmitLabel(cardTrial)).toBe('Start free trial — no charge today')
     expect(annualRetryAction(cardTrial)).toBe('Retry card setup')
@@ -50,10 +50,12 @@ describe('server-disclosed concise terms', () => {
     expect(screen.getByText(/Add your card information/)).toHaveTextContent('After that the 30 days free trial starts and you only get billed once the trial ends, if not cancelled before.')
     expect(screen.queryByText(/billed on \d|\d{2}\.\d{2}\.\d{4}/)).not.toBeInTheDocument()
   })
-  it('does not repeat renewal or refund terms beside the card-trial sentence', () => {
-    render(<AnnualTermsSummary disclosure={{ ...base, kind: 'card_trial', firstChargeAt: '2099-09-10T12:00:00Z', renewalAmountMinor: 4800 }} />)
-    expect(screen.getByText(/Add your card information/)).toHaveTextContent('billed on 10.09.2099')
-    expect(screen.queryByText(/Auto-renews|€48.00|Cancel anytime|refund window/)).not.toBeInTheDocument()
+  it('states the server first-charge amount and yearly renewal once, without refund or bonus terms', () => {
+    render(<AnnualTermsSummary disclosure={{ ...base, kind: 'card_trial', firstChargeAt: '2099-09-10T12:00:00Z', firstChargeAmountMinor: 4800, renewalAmountMinor: 4800, annualAmountMinor: 4800 }} />)
+    const terms = screen.getByText(/Add your card information/)
+    expect(terms).toHaveTextContent('billed on 10.09.2099, if not cancelled before. €48.00 per year after the trial, renews yearly until you cancel.')
+    expect(terms.textContent!.match(/€48\.00/g)).toHaveLength(1)
+    expect(screen.queryByText(/Auto-renews|€36.00|Cancel anytime|refund window|bonus/)).not.toBeInTheDocument()
   })
   it('does not promise a trial or a future billing date on immediate card payment', () => {
     render(<AnnualTermsSummary disclosure={base} />)

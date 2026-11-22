@@ -8,7 +8,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
-import { CheckoutReturnAnalytics } from '../commercial-funnel-analytics'
+import { CheckoutReturnAnalytics, createSignupStepRecorder } from '../commercial-funnel-analytics'
 import { SignupRecoveryWarning } from '../components/signup-recovery-warning'
 
 // ---------------------------------------------------------------------------
@@ -40,6 +40,11 @@ function SignupSuccessInner() {
   const [password, setPassword] = useState('')
   const recoveryInFlight = useRef(false)
   const restoredOnce = useRef(false)
+  const [recordSignupStep] = useState(createSignupStepRecorder)
+
+  useEffect(() => {
+    if (state === 'vault') recordSignupStep('account_created')
+  }, [recordSignupStep, state])
 
   const recoverSession = useCallback(async (credential?: string) => {
     if (recoveryInFlight.current) return
@@ -84,6 +89,7 @@ function SignupSuccessInner() {
       setState('recovery')
       return
     }
+    recordSignupStep('completed')
     completeSignup()
     if (returnTo) {
       setShowReturnFallback(false)
@@ -94,7 +100,7 @@ function SignupSuccessInner() {
       return
     }
     router.push('/')
-  }, [completeSignup, returnTo, router])
+  }, [completeSignup, recordSignupStep, returnTo, router])
 
   const handlePaidAccountComplete = useCallback(async (data: PaidAccountFormData) => {
     await createEtebaseAccount(restoredEmail, data.password, restoredServerUrl)

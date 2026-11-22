@@ -46,6 +46,12 @@ export type CanonicalReferrer = typeof CANONICAL_REFERRERS[number]
 // never carry an email, an identifier, an error or a form value.
 export const SIGNUP_STEPS = ['verification_requested', 'email_verified', 'plan_shown', 'account_created', 'completed'] as const
 export type SignupStep = typeof SIGNUP_STEPS[number]
+// A paid signup can finish on the page the payment provider returns to (card
+// after a 3DS redirect, every Bitcoin payment), so its last two milestones may
+// be recorded there too. Every other milestone happens only on /signup.
+export const SIGNUP_PAYMENT_RETURN_PATHS = ['/signup/success', '/signup/pending-payment'] as const
+export const SIGNUP_PAYMENT_RETURN_STEPS = ['account_created', 'completed'] as const satisfies readonly SignupStep[]
+export type SignupStepPath = '/signup' | typeof SIGNUP_PAYMENT_RETURN_PATHS[number]
 type PlanSelectedPayload = {
   domain: 'app.silentsuite.io'
   name: 'Plan Selected'
@@ -73,7 +79,7 @@ type SubscriptionManagementEntryPayload = {
 type SignupStepPayload = {
   domain: 'app.silentsuite.io'
   name: 'Signup Step'
-  url: 'https://app.silentsuite.io/signup'
+  url: `https://app.silentsuite.io${SignupStepPath}`
   props: { step: SignupStep }
 }
 export type CommercialEventPayload = PlanSelectedPayload | CheckoutInitiatedPayload | CheckoutReturnedPayload | SubscriptionManagementEntryPayload | SignupStepPayload
@@ -238,6 +244,6 @@ export function buildSubscriptionManagementEntryPayload(): SubscriptionManagemen
   return { domain: 'app.silentsuite.io', name: 'Subscription Management Entry', url: 'https://app.silentsuite.io/settings/subscription', props: { surface: 'subscription_settings' } }
 }
 
-export function buildSignupStepPayload(step: SignupStep): SignupStepPayload {
-  return { domain: 'app.silentsuite.io', name: 'Signup Step', url: 'https://app.silentsuite.io/signup', props: { step } }
+export function buildSignupStepPayload(step: SignupStep, path: SignupStepPath = '/signup'): SignupStepPayload {
+  return { domain: 'app.silentsuite.io', name: 'Signup Step', url: `https://app.silentsuite.io${path}`, props: { step } }
 }

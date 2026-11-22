@@ -965,7 +965,7 @@ function StepChoosePlan({
               type="button"
               onClick={handleSelectCard}
               disabled={provisioning}
-              aria-label={`Pay by card for ${annualOfferPlanLabel(annualOfferDetails)}, ${annualOfferAnnualLabel(annualOfferDetails)}, billed after the 30-day trial`}
+              aria-label={`Pay by card for ${annualOfferPlanLabel(annualOfferDetails)}, ${annualOfferAnnualLabel(annualOfferDetails)}, billed after the 30-day trial, renews yearly until you cancel`}
               className="group w-full rounded-xl border-2 border-slate-700/50 bg-[rgb(var(--surface))] p-4 text-left transition-all hover:border-emerald-500/70 hover:bg-emerald-500/5 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <div className="flex items-start gap-3">
@@ -976,6 +976,9 @@ function StepChoosePlan({
                   <h3 className="font-semibold text-[rgb(var(--foreground))]">Pay by Card (Powered by Stripe)</h3>
                   <p className="mt-1 text-sm text-[rgb(var(--muted))]">
                     Card gets billed after the 30-day trial. You can cancel anytime.
+                  </p>
+                  <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+                    {formatAnnualOfferAmount(annualOfferDetails)} per year after the trial, renews yearly until you cancel.
                   </p>
                 </div>
               </div>

@@ -1014,6 +1014,18 @@ async function resetInMemoryAccountState(
   }
 }
 
+// A signup started earlier in this tab sets this marker, and restoreSession
+// stays signed out while it is present. A verified login to an existing
+// account ends that signup, so the marker must not outlive it.
+function clearSignupInProgressMarker() {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.removeItem('silentsuite-signup-in-progress')
+  } catch {
+    // Unavailable tab storage cannot hold the marker either.
+  }
+}
+
 async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth', ownerCurrent?: (epoch: number) => boolean) {
   // The reset assigns this cleanup's own invalidation token before yielding;
   // later teardown may only replace it with the token that teardown produced.
@@ -1786,6 +1798,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
         else localStorage.removeItem('silentsuite-server-url')
         syncAdminCookie(true)
+        clearSignupInProgressMarker()
         set({
           user: { id: 'self-hosted', email, planId: 'self-hosted', isAdmin: true, onboardedAt: null },
           isAuthenticated: true,
@@ -1826,6 +1839,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const isAdmin = data.isAdmin === true
       syncAdminCookie(isAdmin, confirmedRememberDevice)
       markHostedValidation(data.id, confirmedRememberDevice)
+      clearSignupInProgressMarker()
       set({
         user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice: data.rememberDevice === true, onboardedAt: data.onboardedAt ?? null },
         isAuthenticated: true,
