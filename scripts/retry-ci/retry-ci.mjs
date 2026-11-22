@@ -202,8 +202,10 @@ export function checkTarget(now, selected) {
   return { ok: true }
 }
 
-// Returns { ok, reason?, sha?, runs?, retried: [run ids] }. Throws only on
-// API errors before any rerun was requested.
+// Returns { ok, reason?, sha?, runs?, retried: [run ids], unconfirmed?: [run
+// id] }. `retried` lists only reruns GitHub showed; `unconfirmed` the one
+// request whose outcome it never showed. Throws only on API errors before any
+// rerun was requested.
 export async function retryCi({ env, fetchImpl = fetch, sleep = ms => new Promise(done => setTimeout(done, ms)) }) {
   const comment = checkComment({ userId: env.COMMENT_USER_ID, body: env.COMMENT_BODY })
   if (!comment.ok) return { ...comment, retried: [] }
@@ -290,9 +292,11 @@ export async function retryCi({ env, fetchImpl = fetch, sleep = ms => new Promis
     // Hold the concurrency group until the new attempt shows. An error reply
     // whose rerun shows anyway counts as started.
     if (!(await rerunVisible(run))) {
-      if (postError) return stop(`rerun of run ${run.id} failed: ${postError.message}`)
-      retried.push(run.id)
-      return stop(`rerun of run ${run.id} was requested but GitHub does not show it yet; wait for it to start before commenting again`)
+      const answer = postError ? `answered with an error (${postError.message})` : 'was accepted'
+      return {
+        ...stop(`the rerun request for run ${run.id} ${answer}, but GitHub shows no new attempt yet; it may still start, so check the run before commenting again`),
+        unconfirmed: [run.id],
+      }
     }
     retried.push(run.id)
   }
@@ -319,6 +323,7 @@ async function main() {
   }
   summary(`/retry-ci refused on PR #${process.env.PR_NUMBER}: ${result.reason}`)
   if (result.retried.length) summary(`Reruns already started: ${result.retried.join(', ')}`)
+  if (result.unconfirmed?.length) summary(`Rerun requested, not confirmed yet: ${result.unconfirmed.join(', ')}`)
   console.log(`::error::/retry-ci refused: ${result.reason}`)
   process.exitCode = 1
 }

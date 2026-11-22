@@ -383,13 +383,14 @@ test('holds the lock until GitHub shows the rerun, so a later comment cannot rep
   const runs = () => [run('ci', { id: 71, conclusion: 'failure' }), run('build-android', { id: 72, conclusion: 'failure' })]
   const runGets = (github, id) => github.calls.filter(call => call === `GET /repos/silent-suite/silentsuite/actions/runs/${id}`).length
 
-  // Accepted but not shown in time: stop, report it as requested, and say to wait.
+  // Accepted but not shown in time: stop, report it as unconfirmed, and say to check.
   slept = 0
   const hidden = fakeGitHub({ runs: runs(), post: () => ({ accepted: true, status: 201, visible: false }) })
   const result = await comment(hidden)
   assert.equal(result.ok, false)
-  assert.match(result.reason, /does not show it yet/)
-  assert.deepEqual(result.retried, [71])
+  assert.match(result.reason, /was accepted, but GitHub shows no new attempt yet/)
+  assert.deepEqual(result.retried, [])
+  assert.deepEqual(result.unconfirmed, [71])
   assert.equal(posts(hidden).length, 1, 'no request for the next run')
   assert.equal(runGets(hidden, 71), 1 + 20, 'one check before, twenty polls after')
   assert.equal(slept, 19)
@@ -400,11 +401,12 @@ test('holds the lock until GitHub shows the rerun, so a later comment cannot rep
   assert.equal(started.ok, true)
   assert.deepEqual(started.retried, [71, 72])
 
-  // An error reply with nothing shown stops as a failed request.
+  // An error reply with nothing shown may still have been accepted: unconfirmed, not failed.
   const refused = fakeGitHub({ runs: runs(), post: () => ({ accepted: false, status: 502 }) })
   const failedRequest = await comment(refused)
-  assert.match(failedRequest.reason, /rerun of run 71 failed/)
+  assert.match(failedRequest.reason, /answered with an error \(.*502\), but GitHub shows no new attempt yet/)
   assert.deepEqual(failedRequest.retried, [])
+  assert.deepEqual(failedRequest.unconfirmed, [71])
   assert.equal(posts(refused).length, 1)
 })
 
@@ -441,7 +443,7 @@ test('re-checks the live pull request and its history before every rerun', async
   }
 })
 
-test('stops at the first refused rerun and reports what started', async () => {
+test('stops at the first unconfirmed rerun and reports what started', async () => {
   const github = fakeGitHub({
     runs: [21, 22, 23].map((id, i) => run(['ci', 'build-android', 'ci-server'][i], { id, conclusion: 'failure' })),
     post: id => (id === 22 ? { accepted: false, status: 403 } : { accepted: true, status: 201 }),
@@ -449,7 +451,8 @@ test('stops at the first refused rerun and reports what started', async () => {
   const result = await comment(github)
   assert.equal(result.ok, false)
   assert.deepEqual(result.retried, [21])
-  assert.match(result.reason, /run 22 failed/)
+  assert.match(result.reason, /run 22 answered with an error/)
+  assert.deepEqual(result.unconfirmed, [22])
   assert.equal(posts(github).length, 2)
 })
 
