@@ -403,6 +403,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
 
   // Phase 2C: Touch long-press timer
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Where the finger went down, so movement before the hold completes can cancel it (a scroll).
+  const touchStartPointRef = useRef<{ x: number; y: number } | null>(null)
 
   // Phase 3: Drag-to-resize state
   const isDragResizingRef = useRef(false)
@@ -1464,9 +1466,12 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
 
       const startX = touch.clientX
       const startY = touch.clientY
+      touchStartPointRef.current = { x: startX, y: startY }
 
       // Start long-press timer
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current)
       longPressTimerRef.current = setTimeout(() => {
+        longPressTimerRef.current = null
         // Activate drag
         dragMoveStartRef.current = {
           eventId: event.id,
@@ -1492,11 +1497,13 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       if (longPressTimerRef.current && !isDragMovingRef.current) {
         // Cancel long-press if finger moves before 500ms
         const touch = e.touches[0]
-        const dx = touch.clientX - (dragMoveStartRef.current?.startX ?? touch.clientX)
-        const dy = touch.clientY - (dragMoveStartRef.current?.startY ?? touch.clientY)
+        const origin = touchStartPointRef.current
+        const dx = origin ? touch.clientX - origin.x : 0
+        const dy = origin ? touch.clientY - origin.y : 0
         if (Math.sqrt(dx * dx + dy * dy) > 10) {
           clearTimeout(longPressTimerRef.current)
           longPressTimerRef.current = null
+          touchStartPointRef.current = null
           return
         }
       }
@@ -1546,6 +1553,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         clearTimeout(longPressTimerRef.current)
         longPressTimerRef.current = null
       }
+      touchStartPointRef.current = null
 
       if (!isDragMovingRef.current || !dragMoveStartRef.current) return
 
@@ -1555,6 +1563,25 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
     },
     [completeDragMove],
   )
+
+  // The browser cancels the touch when it takes the gesture over (a scroll, a system gesture):
+  // drop any pending or active drag without moving the event.
+  const handleTouchCancel = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    touchStartPointRef.current = null
+    if (!isDragMovingRef.current && !dragMoveStartRef.current) return
+    dragMoveStartRef.current = null
+    isDragMovingRef.current = false
+    setDragMovePreview(null)
+    document.body.classList.remove('is-drag-moving')
+    if (scrollAnimRef.current) {
+      cancelAnimationFrame(scrollAnimRef.current)
+      scrollAnimRef.current = null
+    }
+  }, [])
 
   // External drop (planning view): the 30-minute slot under the pointer, in the user's timezone.
   const [externalDropPreview, setExternalDropPreview] = useState<{
@@ -1651,6 +1678,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
         onDragOver={handleExternalDragOver}
         onDragLeave={handleExternalDragLeave}
         onDrop={handleExternalDrop}
