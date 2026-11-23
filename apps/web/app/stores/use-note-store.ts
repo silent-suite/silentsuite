@@ -29,6 +29,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { AccountBoundaryChangedError, getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { NoteNotCreatedError, type NoteNotCreatedReason } from '@/app/lib/note-not-created'
+import { clearNotePreviewVerdict } from '@/app/lib/note-preview-verdict'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { canWriteNotebook, newNoteNotebook, useNotebookStore } from '@/app/stores/use-notebook-store'
 
@@ -742,6 +743,9 @@ export function resetNoteLifecycle(): void {
   reopenedHeldRows.clear()
   ownNoteWrites.clear()
   heldTextReopen = null
+  // The preview keeps the last body it parsed in time, the last body the reader chose
+  // to format anyway and the last one whose forced parse failed: all decrypted text.
+  clearNotePreviewVerdict()
   useNoteStore.setState({ closingNoteIds: [], heldTextReopen: 'idle' })
   syncUnloadGuard()
 }
