@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
+import { tabScopedStateStorage } from '@/app/lib/session-scope'
 import { useAuthStore } from './use-auth-store'
 
 export interface TaskList {
@@ -112,6 +113,8 @@ export const useTaskListStore = create<TaskListState>()(
     }),
     {
       name: 'silentsuite-task-lists',
+      // Decrypted names stay in the tab when this device is not remembered.
+      storage: createJSONStorage(() => tabScopedStateStorage),
     },
   ),
 )

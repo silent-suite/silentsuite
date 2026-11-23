@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
+import { tabScopedStateStorage } from '@/app/lib/session-scope'
 
 export interface Notebook {
   id: string
@@ -118,6 +119,8 @@ export const useNotebookStore = create<NotebookState>()(
     }),
     {
       name: 'silentsuite-notebooks',
+      // Decrypted names stay in the tab when this device is not remembered.
+      storage: createJSONStorage(() => tabScopedStateStorage),
     },
   ),
 )

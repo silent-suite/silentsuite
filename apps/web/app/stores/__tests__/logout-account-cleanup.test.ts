@@ -75,7 +75,7 @@ vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
 vi.stubGlobal('BroadcastChannel', undefined)
 
 async function seed(session: string, fingerprint: string, itemUid: string) {
-  await secureSet('etebase_session', session)
+  await secureSet('etebase_session', session, { persist: true })
   // A delete mutation carries no plaintext content, so the real queue accepts it.
   await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'nb-1', itemUid }, { accountEpoch: getAccountEpoch(), accountFingerprint: fingerprint })
   await putMeta({ accountFingerprint: fingerprint, cacheSchemaVersion: 1, lastInvalidatedAt: null })
@@ -83,7 +83,7 @@ async function seed(session: string, fingerprint: string, itemUid: string) {
 
 async function persisted() {
   return {
-    session: await secureGet('etebase_session'),
+    session: await secureGet('etebase_session', { storedOnly: true }),
     queue: (await getAll()).map(entry => entry.itemUid),
     meta: (await getMeta())?.accountFingerprint ?? null,
   }

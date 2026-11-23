@@ -45,6 +45,21 @@ We strongly recommend:
 - Using a password manager to store your account password
 - Writing down your password and storing it in a secure physical location
 
+## What a Signed-In Browser Keeps
+
+To decrypt your data, the web app needs your account's encryption key, so a signed-in browser holds that key and a sync token. The browser stores them without a password of their own. Anyone who copies them can open your account without knowing your password: for example, malware on your computer, someone who reads your browser profile or a backup of it, or a script running inside the app.
+
+Where the key is kept depends on how you signed in:
+
+- **"Keep me signed in on this device" off** (the default): the key stays in that browser tab only. Closing the tab removes it, although a browser's "restore tabs" feature can keep it for longer. A new tab you open yourself asks for your password again.
+- **"Keep me signed in on this device" on**, or a **self-hosted server**: the key stays in the browser's storage until you log out.
+
+Some things to know:
+
+- **Logging out** removes the key and your calendar, address book, task list and notebook names from this browser. It can't make a copy that someone took earlier useless.
+- **Changing your password** is meant to sign out your other sessions. If the app shows a warning afterwards, they may still be signed in. Your account's encryption key doesn't change, so data someone already copied stays readable to them.
+- On a shared or untrusted computer, leave "Keep me signed in" off and log out when you're done.
+
 ## The Etebase Protocol
 
 SilentSuite is built on the [Etebase protocol](https://www.etebase.com/), an open and auditable end-to-end encryption protocol. You can review the protocol specification and cryptographic design at [docs.etebase.com](https://docs.etebase.com/).
