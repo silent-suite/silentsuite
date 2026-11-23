@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
+import { registerScopedStore, tabScopedStateStorage } from '@/app/lib/session-scope'
 import { useAuthStore } from './use-auth-store'
 
 export interface CalendarList {
@@ -111,6 +112,10 @@ export const useCalendarListStore = create<CalendarListState>()(
     }),
     {
       name: 'silentsuite-calendar-lists',
+      // Decrypted names stay in the tab when this device is not remembered.
+      storage: createJSONStorage(() => tabScopedStateStorage),
     },
   ),
 )
+
+registerScopedStore(() => useCalendarListStore.persist.rehydrate())

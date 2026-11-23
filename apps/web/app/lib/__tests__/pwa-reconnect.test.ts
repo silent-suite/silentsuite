@@ -2,37 +2,14 @@ import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import vm from 'node:vm'
+import { configPath, loadNextConfig } from './load-next-config'
 
 // #744: a refused draft lives only in memory, marked Not saved. Reconnecting must
 // not reload the document, or that draft and its notice vanish without a trace.
-const configPath = path.resolve(__dirname, '../../../next.config.js')
 
 /** The options the root Next config passes to next-pwa; only the config wrappers are stubbed. */
 function loadPwaOptions(): Record<string, unknown> {
-  let options: Record<string, unknown> | undefined
-  const wrappers: Record<string, unknown> = {
-    path,
-    'next-intl/plugin': () => (config: unknown) => config,
-    '@ducanh2912/next-pwa': { default: (opts: Record<string, unknown>) => { options = opts; return (config: unknown) => config } },
-    '@sentry/nextjs': { withSentryConfig: (config: unknown) => config },
-    './sentry-build-options': { glitchtipSourceMapUpload: () => ({}) },
-    './pwa-runtime-caching': createRequire(configPath)('./pwa-runtime-caching.js'),
-  }
-  const cjsModule = { exports: {} }
-  vm.runInNewContext(readFileSync(configPath, 'utf8'), {
-    module: cjsModule,
-    exports: cjsModule.exports,
-    require: (id: string) => {
-      if (!(id in wrappers)) throw new Error(`Unexpected config import: ${id}`)
-      return wrappers[id]
-    },
-    process: { env: { NODE_ENV: 'production' } },
-    __dirname: path.dirname(configPath),
-    __filename: configPath,
-  })
-  if (!options) throw new Error('next.config.js did not configure next-pwa')
-  return options
+  return loadNextConfig().options
 }
 
 /** The installed next-pwa client entry, with only its external Workbox import removed. */

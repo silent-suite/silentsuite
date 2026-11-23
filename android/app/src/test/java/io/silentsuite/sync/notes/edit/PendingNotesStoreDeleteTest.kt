@@ -99,6 +99,24 @@ class PendingNotesStoreDeleteTest {
         assertTrue("the landed revision counts as ours on a 409: ${e.sent}", "s1" in e.sent)
     }
 
+    @Test fun `an entry or upload is an editor's own only when that editor wrote it, its load showed it, or a step moved its text there`() {
+        val showing = store.editorOpened("n1")
+        val writing = store.editorOpened("n1")
+        val v1 = saved(store.saveLocal(writing, "n1", "b1", "r1", blob("typed in the second editor"), isCreate = false))
+        assertFalse("another editor's entry", store.owns(showing, v1))
+        assertTrue(store.owns(writing, v1))
+        // An editor whose load showed that entry showed its text.
+        val loaded = store.editorOpened("n1", base = v1)
+        assertTrue(store.owns(loaded, v1))
+        val sent = store.beginSend("n1")!!
+        assertEquals(SendOutcome.Done, store.completeSend("n1", sent.version, "s1", blob("landed")))
+        val landed = store.landed("n1")!!
+        assertEquals(v1, landed.version)
+        assertFalse("nor its upload", store.owns(showing, landed.version))
+        assertTrue(store.owns(writing, landed.version))
+        assertTrue(store.owns(loaded, landed.version))
+    }
+
     @Test fun `a delete that showed an entry finds none and writes nothing`() {
         saved(store.saveLocal("n1", "b1", "r1", blob("mine"), isCreate = false))
         val shown = entry("n1")

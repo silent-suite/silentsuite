@@ -309,7 +309,8 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
     }
 
     /**
-     * Notes the user deleted that a Notes run did not delete, one sentence per reason, until the user dismisses them.
+     * Notes the user deleted that a Notes run did not delete, and notes the user moved whose move a run did not finish,
+     * one sentence per reason, until the user dismisses them.
      * A load that could not read the list keeps the notice as it was.
      */
     private fun renderDeleteNotice(notice: Map<NotePushPolicy.DeleteNotDone, Int>) {
@@ -321,6 +322,14 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
                 NotePushPolicy.DeleteNotDone.READ_ONLY -> R.plurals.notes_deletes_not_done_read_only
                 NotePushPolicy.DeleteNotDone.REJECTED -> R.plurals.notes_deletes_not_done_rejected
                 NotePushPolicy.DeleteNotDone.NOT_BUILT -> R.plurals.notes_deletes_not_done_not_built
+                NotePushPolicy.DeleteNotDone.MOVED_CHANGED_ELSEWHERE -> R.plurals.notes_moves_not_done_changed
+                NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT -> R.plurals.notes_moves_not_done_kept
+                NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE -> R.plurals.notes_moves_not_done
+                NotePushPolicy.DeleteNotDone.MOVED_COPY_DELETED -> R.plurals.notes_moves_not_done_copy_deleted
+                NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_DELETE_SENT -> R.plurals.notes_moves_not_done_delete_sent
+                NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT_DELETE_SENT -> R.plurals.notes_moves_not_done_kept_delete_sent
+                NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD -> R.plurals.notes_moves_not_done_text_held
+                NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT -> R.plurals.notes_moves_not_done_text_held_delete_sent
             }, n, n)
         }
         view.findViewById<View>(R.id.notebooks_delete_notice).visibility = if (notice.isEmpty()) View.GONE else View.VISIBLE

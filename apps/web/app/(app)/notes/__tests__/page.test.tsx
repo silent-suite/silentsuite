@@ -13,6 +13,8 @@ import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { NoteNotCreatedError } from '@/app/lib/note-not-created'
 import { useToastStore } from '@/app/stores/use-toast-store'
+import { clearNotePreviewVerdict } from '@/app/lib/note-preview-verdict'
+import { OkWorker } from './probe-test-workers'
 
 vi.mock('@/app/stores/use-etebase-store', () => ({
   useEtebaseStore: (selector: (state: typeof storeMock.etebaseState) => unknown) => selector(storeMock.etebaseState),
@@ -216,6 +218,9 @@ describe('NotesPage loading skeleton (#747)', () => {
 
 describe('NotesPage', () => {
   beforeEach(() => {
+    // jsdom has no Worker: the preview's time-budget worker answers ok at once.
+    vi.stubGlobal('Worker', OkWorker)
+    clearNotePreviewVerdict()
     localStorage.clear()
     useExperimentalStore.setState({ hydrated: true, notesAccounts: ['notes-test-account'] })
     storeMock.noteState.isLoading = true
@@ -233,6 +238,7 @@ describe('NotesPage', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
   it('shows a loading skeleton and disables creation until notebooks are loaded', () => {

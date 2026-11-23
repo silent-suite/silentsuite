@@ -1,19 +1,27 @@
 /**
- * Secure storage module — moves sensitive data from localStorage to IndexedDB.
+ * Secure storage module — keeps sensitive data out of localStorage.
  *
- * IndexedDB is not accessible via simple `localStorage.getItem()` calls that
- * XSS payloads typically use. While it's still same-origin accessible, it
- * significantly raises the bar for data exfiltration.
+ * The Etebase session blob is NOT protected by encryption here: the SDK's
+ * `account.save()` is called without a key, so it uses its built-in all-zero
+ * key and anyone with a copy of the blob can open it. The blob holds the
+ * account's main key and sync token. Where it is stored therefore decides who
+ * can take over the account:
  *
- * The Etebase session blob is already encrypted by the SDK, so we don't add
- * another encryption layer — just move it out of the trivially-scriptable
- * localStorage API.
+ * - "Keep me signed in" off (hosted): only this tab's sessionStorage, never
+ *   IndexedDB (see session-scope.ts).
+ * - Remembered hosted devices and self-hosted servers: IndexedDB, until logout.
+ *
+ * IndexedDB and sessionStorage are both readable by any script in this origin.
  */
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
+import { getDeviceOwner, getSessionScope, readTabSession, removeTabSession, setSessionScope, writeTabSession } from '@/app/lib/session-scope'
 
 const DB_NAME = 'silentsuite-secure'
 const DB_VERSION = 1
 const STORE_NAME = 'keyval'
+const SESSION_KEY = 'etebase_session'
+/** The Billing user a durable hosted session was saved for (absent for self-hosted). */
+export const SESSION_OWNER_KEY = 'etebase_session_owner'
 
 /** Sensitive localStorage keys that were migrated — cleared on first load. */
 const LEGACY_KEYS = [
@@ -64,11 +72,63 @@ function withStore<T>(
   )
 }
 
+/** A readwrite change that settles only when its transaction has committed. */
+function withCommittedStore(fn: (store: IDBObjectStore) => void): Promise<void> {
+  return openDB().then(
+    (db) =>
+      new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite')
+        fn(tx.objectStore(STORE_NAME))
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      }),
+  )
+}
+
+export interface StoredOnlyOptions {
+  /** Etebase session only: act on the IndexedDB copy and ignore this tab's copy. */
+  storedOnly?: boolean
+}
+
 /**
- * Get a value from secure storage (IndexedDB).
- * Returns null if the key doesn't exist or IndexedDB is unavailable.
+ * The durable session, read in one transaction with its owner, and returned
+ * only when it belongs to `owner` (null: self-hosted, no owner to check). A
+ * copy saved for anyone else is never handed out, whether or not cleanup
+ * managed to delete it.
  */
-export async function secureGet(key: string): Promise<string | null> {
+async function readOwnedStoredSession(owner: string | null): Promise<string | null> {
+  try {
+    return await openDB().then((db) => new Promise<string | null>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly')
+      const store = tx.objectStore(STORE_NAME)
+      const session = store.get(SESSION_KEY)
+      const storedOwner = store.get(SESSION_OWNER_KEY)
+      tx.oncomplete = () => {
+        const value = typeof session.result === 'string' ? session.result : null
+        if (value === null) return resolve(null)
+        if (owner !== null && storedOwner.result !== owner) return resolve(null)
+        resolve(value)
+      }
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    }))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Get a value from secure storage. The Etebase session is read only from the
+ * place this tab's session scope allows (see session-scope.ts): IndexedDB for
+ * 'device'; otherwise this tab's valid copy, never IndexedDB. Returns null if
+ * the key doesn't exist or storage is unavailable.
+ */
+export async function secureGet(key: string, options: StoredOnlyOptions = {}): Promise<string | null> {
+  if (key === SESSION_KEY && !options.storedOnly) {
+    if (getSessionScope() !== 'device') return readTabSession()
+    return readOwnedStoredSession(getDeviceOwner())
+  }
   try {
     const value = await withStore('readonly', (store) => store.get(key))
     return (value as string) ?? null
@@ -77,10 +137,67 @@ export async function secureGet(key: string): Promise<string | null> {
   }
 }
 
+export interface SecureSetOptions {
+  /**
+   * Etebase session only. `true` stores it in IndexedDB; use it only when
+   * keeping the session is authorized (self-hosted, or a hosted device Billing
+   * confirmed as remembered). Anything else, including omitting it, keeps the
+   * session in this tab only. A tab-only write never touches IndexedDB; the
+   * auth store removes an old durable copy once Billing confirms the device is
+   * not remembered.
+   */
+  persist?: boolean
+  /**
+   * The Billing user the session was confirmed for, when known. Stored with a
+   * tab copy, and with a durable copy (in the same transaction) so a restore
+   * can refuse a copy saved for someone else.
+   */
+  owner?: string | null
+}
+
+async function setSession(value: string, persist: boolean, owner: string | null): Promise<void> {
+  if (persist) {
+    // Write before removing the tab copy, so a concurrent read always finds one.
+    // If the write fails, the tab copy and scope stay as they were: the session
+    // keeps working in this tab and is simply not remembered. An older durable
+    // copy that survives carries its own owner and is refused at restore.
+    const tabCopyBefore = readTabSession()
+    try {
+      await withCommittedStore((store) => {
+        store.put(value, SESSION_KEY)
+        if (owner) store.put(owner, SESSION_OWNER_KEY)
+        else store.delete(SESSION_OWNER_KEY)
+      })
+    } catch (err) {
+      console.error('[secure-storage] Failed to write to IndexedDB', getSafeErrorDetails(err))
+      return
+    }
+    if (readTabSession() !== tabCopyBefore) {
+      // A newer tab-only sign-in wrote this tab while this one was being saved:
+      // keep that one and take back this write.
+      await removeStoredSessionIfEqual(value)
+      return
+    }
+    setSessionScope('device', owner)
+    removeTabSession()
+    return
+  }
+  // Decide the scope first: reads now never reach IndexedDB, and a failed tab
+  // write leaves no readable session (unlock then asks again).
+  setSessionScope('tab')
+  try {
+    writeTabSession(value, owner)
+  } catch (err) {
+    console.error('[secure-storage] Failed to write the tab session', getSafeErrorDetails(err))
+  }
+}
+
 /**
- * Set a value in secure storage (IndexedDB).
+ * Set a value in secure storage (IndexedDB; for the Etebase session see
+ * SecureSetOptions).
  */
-export async function secureSet(key: string, value: string): Promise<void> {
+export async function secureSet(key: string, value: string, options: SecureSetOptions = {}): Promise<void> {
+  if (key === SESSION_KEY) return setSession(value, options.persist === true, options.owner ?? null)
   try {
     await withStore('readwrite', (store) => store.put(value, key))
   } catch (err) {
@@ -89,11 +206,34 @@ export async function secureSet(key: string, value: string): Promise<void> {
 }
 
 /**
- * Remove a value from secure storage (IndexedDB).
+ * Remove a value from secure storage (IndexedDB, and this tab for the session).
  */
 export async function secureRemove(key: string): Promise<void> {
+  if (key === SESSION_KEY) {
+    removeTabSession()
+    setSessionScope(null)
+  }
   try {
-    await withStore('readwrite', (store) => store.delete(key))
+    await withCommittedStore((store) => {
+      store.delete(key)
+      if (key === SESSION_KEY) store.delete(SESSION_OWNER_KEY)
+    })
+  } catch {
+    // Ignore errors on removal
+  }
+}
+
+/** Delete the durable session (and its owner) only while it still equals `expected`. */
+async function removeStoredSessionIfEqual(expected: string): Promise<void> {
+  try {
+    await withCommittedStore((store) => {
+      const req = store.get(SESSION_KEY)
+      req.onsuccess = () => {
+        if (req.result !== expected) return
+        store.delete(SESSION_KEY)
+        store.delete(SESSION_OWNER_KEY)
+      }
+    })
   } catch {
     // Ignore errors on removal
   }
@@ -101,33 +241,32 @@ export async function secureRemove(key: string): Promise<void> {
 
 /**
  * Remove a value only while it still equals `expected`. The read and the delete share one
- * readwrite transaction, so a value written by a later operation is never removed.
+ * readwrite transaction, so a value written by a later operation is never removed, and it
+ * settles after commit. For the session, this tab's copy is compared and removed the same way
+ * unless `storedOnly` is set.
  */
-export async function secureRemoveIfEqual(key: string, expected: string): Promise<void> {
+export async function secureRemoveIfEqual(key: string, expected: string, options: StoredOnlyOptions = {}): Promise<void> {
+  if (key === SESSION_KEY && !options.storedOnly && readTabSession() === expected) removeTabSession()
   try {
-    await openDB().then(
-      (db) =>
-        new Promise<void>((resolve, reject) => {
-          const tx = db.transaction(STORE_NAME, 'readwrite')
-          const store = tx.objectStore(STORE_NAME)
-          const req = store.get(key)
-          req.onsuccess = () => {
-            if (req.result === expected) store.delete(key)
-          }
-          tx.oncomplete = () => resolve()
-          tx.onerror = () => reject(tx.error)
-          tx.onabort = () => reject(tx.error)
-        }),
-    )
+    await withCommittedStore((store) => {
+      const req = store.get(key)
+      req.onsuccess = () => {
+        if (req.result !== expected) return
+        store.delete(key)
+        if (key === SESSION_KEY) store.delete(SESSION_OWNER_KEY)
+      }
+    })
   } catch {
     // Ignore errors on removal
   }
 }
 
 /**
- * Clear all data from secure storage.
+ * Clear all data from secure storage, including this tab's session copy.
  */
 export async function secureClear(): Promise<void> {
+  removeTabSession()
+  setSessionScope(null)
   try {
     await withStore('readwrite', (store) => store.clear())
   } catch {
@@ -136,8 +275,9 @@ export async function secureClear(): Promise<void> {
 }
 
 /**
- * One-time migration: move etebase_session from localStorage to IndexedDB,
- * and remove all sensitive keys from localStorage.
+ * One-time cleanup of very old installs that kept data in localStorage. A
+ * session found there is discarded rather than moved: whether it may be kept
+ * on this device is unknown, so the user signs in again.
  *
  * Call this early in the app lifecycle (e.g., in the root layout or auth restore).
  */
@@ -147,17 +287,6 @@ export async function migrateFromLocalStorage(): Promise<void> {
   // Check if migration already ran
   const migrated = localStorage.getItem('silentsuite-storage-migrated')
   if (migrated === '1') return
-
-  // Migrate etebase_session to IndexedDB if it exists in localStorage
-  const session = localStorage.getItem('etebase_session')
-  if (session) {
-    try {
-      await secureSet('etebase_session', session)
-    } catch {
-      // If IndexedDB write fails, don't remove from localStorage — data safety first
-      return
-    }
-  }
 
   // Clear all sensitive keys from localStorage
   for (const key of LEGACY_KEYS) {

@@ -1,8 +1,22 @@
 import { fireEvent, screen } from '@testing-library/react'
 import remarkGfm from 'remark-gfm'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
-import { NoteMarkdownPreview, remarkNotesProfile } from '../NoteMarkdownPreview'
+import { clearNotePreviewVerdict } from '@/app/lib/note-preview-verdict'
+import { NoteMarkdownPreview as RealNoteMarkdownPreview } from '../NoteMarkdownPreview'
+import { remarkNotesProfile } from '../note-markdown-profile'
+import { okWorkerFactory } from './probe-test-workers'
+
+// Every body goes through the real parser and renderer; the worker that times it
+// is replaced by one that answers ok at once, since jsdom has no Worker.
+function NoteMarkdownPreview(props: { content: string }) {
+  return <RealNoteMarkdownPreview {...props} createWorker={okWorkerFactory} />
+}
+
+beforeEach(() => {
+  clearNotePreviewVerdict()
+})
+
 
 const HOSTILE_NOTE = [
   '# Heading',

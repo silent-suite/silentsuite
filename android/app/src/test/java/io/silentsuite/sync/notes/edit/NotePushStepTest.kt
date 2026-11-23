@@ -8,6 +8,7 @@ import com.etebase.client.exceptions.PermissionDeniedException
 import com.etebase.client.exceptions.ServerErrorException
 import com.etebase.client.exceptions.TemporaryServerErrorException
 import com.etebase.client.exceptions.UnauthorizedException
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.notes.edit.NotePushPolicy.FailureKind
 import io.silentsuite.sync.notes.edit.NotePushPolicy.NotebookCheck
 import io.silentsuite.sync.notes.edit.NotePushStep.Ended
@@ -87,6 +88,9 @@ class NotePushStepTest {
         val uploads = mutableListOf<Item>()
         val fetches = mutableListOf<String>()
         val notebookFetches = mutableListOf<String>()
+
+        /** Every fetch of a move's copy (fetchMoved), by the copy's uid. */
+        val movedFetches = mutableListOf<String>()
 
         /** Answers every push with a 409 and changes nothing. */
         var refuseEveryPush = false
@@ -188,8 +192,15 @@ class NotePushStepTest {
     /** A notebook whose cached state cannot be read. */
     private var notebookLookupError: (String) -> Exception? = { null }
 
+    /** Runs while a notebook's cached state is looked up: after the step listed the store, before it holds anything. */
+    private var duringNotebookLookup: (String) -> Unit = {}
+
+    /** The item the server answers a fetch of a move's copy with, by the copy's uid: the copy itself, or another note. */
+    private var movedAnswer: (String) -> String = { it }
+
     private val remote = object : NotePushStep.Remote {
         override fun notebook(notebookUid: String): Notebook {
+            duringNotebookLookup(notebookUid)
             notebookLookupError(notebookUid)?.let { throw it }
             return notebooks[notebookUid] ?: Notebook.WRITABLE
         }
@@ -208,6 +219,17 @@ class NotePushStepTest {
         }
 
         override fun fetchNotebook(notebookUid: String) = server.fetchNotebook(notebookUid)
+
+        override fun fetchMoved(move: PendingEntry.Move): NotePushStep.ServerItem {
+            server.movedFetches += move.noteUid
+            duringFetch(move.noteUid)
+            server.fetchError(move.noteUid)?.let { throw it }
+            // The project server answers 404 for an item it does not hold.
+            val found = server.items[movedAnswer(move.noteUid)] ?: throw NotFoundException("Item does not exist")
+            // The real remote's check of the answer; every item here is one the server signed, so it verifies.
+            EtebasePushRemote.requireMovedCopy(move, found.uid) { true }
+            return NotePushStep.ServerItem(found.revision, found.deleted, found.blob())
+        }
 
         override fun cache(entry: PendingEntry, item: NotePushStep.ServerItem) {
             duringCache(entry.noteUid)
@@ -2546,5 +2568,866 @@ class NotePushStepTest {
         assertEquals(mapOf(NotePushPolicy.DeleteNotDone.NOT_BUILT to 1), result.deletesNotDone)
         assertEquals(Read.Missing, store.read("n1"))
         assertFalse("our edit stays on the server", server.items.getValue("n1").deleted)
+    }
+
+    // ---- moves: the copy first, the original's delete once the server shows the copy ----
+
+    /**
+     * The user's move of [uid] from b1 to [target]: the copy [copy], a new note there with the text the editor shows (its
+     * entry's, else the server copy it saw, [seen]), and the original marked deleted on the revision the user saw.
+     */
+    private fun moveLocally(uid: String, seen: String? = null, copy: String = "c1", target: String = "b2", from: String = "b1") {
+        val current = (store.read(uid) as? Read.Present)?.entry
+        val base = current?.let { item(it.blob).base } ?: seen
+        val text = current?.let { item(it.blob).text } ?: "theirs"
+        val deleted = Item(uid, base, revision(), true, "")
+        val made = Item(copy, null, revision(), false, text)
+        val outcome = store.moveNote(uid, from, current?.version, current?.let { PendingNotesStore.digestOf(it.blob) },
+            deleted.revision, deleted.blob(), PendingEntry(copy, target, PendingEntry.State.UPSERT, 0, made.revision, true, blob = made.blob()))
+        assertEquals(PendingNotesStore.NoteMove.Moved(copy), outcome)
+    }
+
+    @Test fun `a move sends the copy first, then deletes the original once a fetch shows the copy on the server`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        save("n1", "mine, not synced", seen = "srv-0")
+        moveLocally("n1")
+        val result = runCountingDeletes()
+        assertTrue(result.succeeded)
+        assertEquals("the copy, then the original's delete", listOf("c1", "n1"), uploaded())
+        assertEquals(listOf("c1"), server.movedFetches)
+        assertEquals("the unsynced text went across", "mine, not synced", server.items.getValue("c1").text)
+        assertTrue(server.items.getValue("n1").deleted)
+        assertEquals("on the revision the user saw", "srv-0", server.uploads.last().base)
+        assertTrue(waiting().isEmpty())
+        assertTrue(notDone.isEmpty())
+    }
+
+    @Test fun `a fetch of the copy answered with another note of its notebook, one that verifies, sends no delete of the original`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        server.items["other"] = Item("other", null, "srv-9", false, "another note in b2")
+        moveLocally("n1", seen = "srv-0")
+        movedAnswer = { if (it == "c1") "other" else it }
+        val result = runCountingDeletes()
+        assertEquals(listOf("c1"), server.movedFetches)
+        assertEquals("the copy only", listOf("c1"), uploaded())
+        assertFalse("the original stays on the server", server.items.getValue("n1").deleted)
+        assertEquals("its delete waits for the copy", PendingEntry.Move("c1", "b2"), entry("n1").move)
+        assertFalse(result.succeeded)
+        assertTrue(notDone.isEmpty())
+        // The real remote's fetch makes this check on the item the server answered with.
+        val remote = File("src/main/java/io/silentsuite/sync/notes/edit/EtebasePushRemote.kt").readText().replace("\r\n", "\n")
+        val marker = "override fun fetchMoved("
+        assertTrue("the marker is in the remote, so the pin reads fetchMoved and not the whole file", remote.contains(marker))
+        assertTrue(remote.substringAfter(marker, "").substringBefore("\n    }\n")
+            .contains("requireMovedCopy(move, item.uid, item::verify)"))
+    }
+
+    @Test fun `the check of a moved copy's answer passes only for the copy's uid and an item that verifies`() {
+        val move = PendingEntry.Move("c1", "b2")
+        EtebasePushRemote.requireMovedCopy(move, "c1") { true }
+        assertThrows(IllegalStateException::class.java) { EtebasePushRemote.requireMovedCopy(move, "c1") { false } }
+        assertThrows(IllegalStateException::class.java) { EtebasePushRemote.requireMovedCopy(move, "other") { true } }
+    }
+
+    @Test fun `the check of a fetched notebook passes only for that notebook, a notes notebook, that verifies`() {
+        val notes = { Constants.ETEBASE_TYPE_NOTES }
+        EtebasePushRemote.requireFetchedNotebook("b2", "b2", notes) { true }
+        assertThrows(IllegalStateException::class.java) { EtebasePushRemote.requireFetchedNotebook("b2", "b2", notes) { false } }
+        assertThrows(IllegalStateException::class.java) { EtebasePushRemote.requireFetchedNotebook("b2", "other", notes) { true } }
+        assertThrows(IllegalStateException::class.java) {
+            EtebasePushRemote.requireFetchedNotebook("b2", "b2", { Constants.ETEBASE_TYPE_ADDRESS_BOOK }) { true }
+        }
+        // The real remote's fetch makes this check on the collection the server answered with. Its answer releases a move's
+        // delete of the original, and a check that throws is no answer ([NotePushStep] takes it as NotebookCheck.Unknown).
+        val remote = File("src/main/java/io/silentsuite/sync/notes/edit/EtebasePushRemote.kt").readText().replace("\r\n", "\n")
+        val marker = "override fun fetchNotebook("
+        assertTrue("the marker is in the remote, so the pin reads fetchNotebook and not the whole file", remote.contains(marker))
+        assertTrue(remote.substringAfter(marker, "").substringBefore("\n    }\n")
+            .contains("requireFetchedNotebook(notebookUid, col.uid, { col.collectionType }, col::verify)"))
+    }
+
+    @Test fun `while the copy waits to be sent, the original's delete waits too, and nothing is fetched`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.uploadError = { if (it.uid == "c1") http(400) else null }
+        val result = runCountingDeletes()
+        assertEquals(FailureKind.REJECTED, result.failure)
+        assertEquals("only the copy was tried", listOf("c1"), uploaded())
+        assertTrue(server.movedFetches.isEmpty())
+        assertEquals("nothing recorded against the delete", 0, entry("n1").failureCount)
+        assertEquals(PendingEntry.Move("c1", "b2"), entry("n1").move)
+        assertFalse(server.items.getValue("n1").deleted)
+        // Once the copy lands, the next run finishes the move.
+        server.uploadError = { null }
+        assertTrue(runCountingDeletes().succeeded)
+        assertTrue(server.items.getValue("n1").deleted)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a copy held without reaching the server drops the original's delete, so the note shows in its old notebook`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        save("n1", "mine", seen = "srv-0")
+        moveLocally("n1")
+        notebooks["b2"] = Notebook.READ_ONLY
+        val result = runCountingDeletes()
+        assertEquals(1, result.held)
+        assertTrue("nothing uploaded", server.uploads.isEmpty())
+        assertEquals("the server was asked for the copy", listOf("c1"), server.movedFetches)
+        assertEquals("and its 404 was confirmed by one fetch of the notebook", listOf("b2"), server.notebookFetches)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE to 1), result.deletesNotDone)
+        assertEquals(listOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE), notDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals("the moved text is kept, held", PendingEntry.State.HELD, entry("c1").state)
+        assertEquals("the original stays as it was", Item("n1", null, "srv-0", false, "theirs"), server.items.getValue("n1"))
+    }
+
+    @Test fun `a copy whose notebook is gone for this account drops the original's delete without a fetch, and one in a deleted notebook is looked for there first`() {
+        for ((uid, state) in listOf("n1" to Notebook.DELETED, "n2" to Notebook.MISSING)) {
+            server.items[uid] = Item(uid, null, "srv-0", false, "theirs")
+            moveLocally(uid, seen = "srv-0", copy = "c-$uid", target = "b-$uid")
+            notebooks["b-$uid"] = state
+        }
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = false, deleted = true) }
+        val result = runCountingDeletes()
+        // A deleted notebook still hands out its notes by uid. This copy never reached it, so its 404 is confirmed by one
+        // fetch of the notebook; nothing is fetched from the notebook this account no longer sees.
+        assertEquals(listOf("c-n1"), server.movedFetches)
+        assertEquals(listOf("b-n1"), server.notebookFetches)
+        // Each copy was held before it was sent, for its notebook: the notice says where the moved text is.
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD to 2), result.deletesNotDone)
+        assertEquals(HeldReason.NOTEBOOK_DELETED, entry("c-n1").held?.reason)
+        assertEquals(HeldReason.LOST_ACCESS, entry("c-n2").held?.reason)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals(Read.Missing, store.read("n2"))
+        assertTrue(server.uploads.isEmpty())
+    }
+
+    @Test fun `a copy discarded after it was held and never on the server leaves the original in place`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        store.hold("c1", HeldReason.REJECTED, now)
+        store.discard("c1")
+        val result = runCountingDeletes()
+        assertEquals(listOf("c1"), server.movedFetches)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE to 1), result.deletesNotDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertFalse(server.items.getValue("n1").deleted)
+    }
+
+    @Test fun `a failed fetch of the copy is a passing failure of the delete, and a copy deleted elsewhere keeps the original`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.fetchError = { if (it == "c1") ServerErrorException("HTTP error 500! Code: ''. Detail: ''") else null }
+        val first = runCountingDeletes()
+        assertEquals(FailureKind.TRANSIENT, first.failure)
+        assertEquals("the copy landed", listOf("c1"), uploaded())
+        assertEquals(1, entry("n1").failureCount)
+        assertFalse(server.items.getValue("n1").deleted)
+        // A copy that does not check out (another note, or one that does not verify) sends nothing either.
+        server.fetchError = { if (it == "c1") IllegalStateException("the server answered with another note") else null }
+        assertEquals(FailureKind.TRANSIENT, runCountingDeletes().failure)
+        assertFalse(server.items.getValue("n1").deleted)
+        // Deleted on another device meanwhile, where both showed: the original is all that is left, so it stays.
+        server.fetchError = { null }
+        server.writeElsewhere("c1", "web-del", deleted = true)
+        val third = runCountingDeletes()
+        assertTrue("a dropped delete is not a failure", third.succeeded)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVED_COPY_DELETED to 1), third.deletesNotDone)
+        assertFalse("the original stays", server.items.getValue("n1").deleted)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a fetch of the copy that ends the step leaves the delete for the next run`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.fetchError = { if (it == "c1") ConnectionException("timeout") else null }
+        val result = runCountingDeletes()
+        assertEquals(Ended.STOPPED, result.ended)
+        assertEquals("n1", memory.endedLastStep)
+        assertEquals(PendingEntry.Move("c1", "b2"), entry("n1").move)
+        assertFalse(server.items.getValue("n1").deleted)
+    }
+
+    @Test fun `a 401 on the copy's fetch ends the step with nothing recorded on the delete`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.fetchError = { if (it == "c1") UnauthorizedException("Invalid token.") else null }
+        val result = runCountingDeletes()
+        assertEquals(Ended.NEEDS_AUTHENTICATION, result.ended)
+        assertEquals(0, entry("n1").failureCount)
+        assertFalse(server.items.getValue("n1").deleted)
+    }
+
+    /** n1, on the server as srv-0 ("theirs"), saved here with text not synced yet, then moved from b1 to b2 as the copy c1. */
+    private fun movedWithUnsyncedText() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        save("n1", "mine, not synced", seen = "srv-0")
+        moveLocally("n1")
+    }
+
+    /** A fetch of b2 finds it deleted (on another device, after this run's refresh showed it); any other notebook is there. */
+    private fun b2DeletedOnTheServer() {
+        server.notebookAnswer = { uid -> NotebookCheck.Found(readOnly = false, deleted = uid == "b2") }
+    }
+
+    /** The copy c1 is held in b2 for [reason], with [text], where Unsynced text shows it. */
+    private fun assertCopyHeld(reason: HeldReason, text: String = "mine, not synced", store: PendingNotesStore = this.store) {
+        val kept = (store.read("c1") as Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, kept.state)
+        assertEquals(reason, kept.held?.reason)
+        assertEquals("in the copy's own notebook", "b2", kept.notebookUid)
+        assertEquals(text, item(kept.blob).text)
+    }
+
+    @Test fun `a copy uploaded into a notebook another device deleted first keeps the original, and the copy's text is held on this device`() {
+        movedWithUnsyncedText()
+        // This run's refresh still showed b2. Another device deletes it just before the copy's upload, which the server takes
+        // all the same, and a fetch of the copy by uid still answers with it, alive.
+        var b2Deleted = false
+        server.beforeUpload = { if (it.uid == "c1") b2Deleted = true }
+        server.notebookAnswer = { uid ->
+            assertEquals("the notebook is fetched after the copy", listOf("c1"), server.movedFetches)
+            NotebookCheck.Found(readOnly = false, deleted = b2Deleted && uid == "b2")
+        }
+        val result = runCountingDeletes()
+        assertTrue("a dropped delete is not a failure", result.succeeded)
+        assertEquals("the copy only: the original's delete is held back", listOf("c1"), uploaded())
+        assertEquals(listOf("c1"), server.movedFetches)
+        assertEquals(listOf("b2"), server.notebookFetches)
+        assertEquals("the original stays on the server as last synced", Item("n1", null, "srv-0", false, "theirs"),
+            server.items.getValue("n1"))
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD to 1), result.deletesNotDone)
+        assertEquals(listOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD), notDone)
+        assertEquals("the delete is dropped, so the note shows in its old notebook again", Read.Missing, store.read("n1"))
+        // The text not synced before the move is only in the copy, in a notebook no client shows. It is kept on this device,
+        // as the server holds the copy, held in the copy's notebook, where text waiting for a deleted notebook is held.
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+        assertEquals(server.items.getValue("c1").revision, entry("c1").revision)
+        assertFalse("the copy is on the server", entry("c1").isCreate)
+        assertEquals(1, result.held)
+        assertEquals("nothing else is left", listOf("c1"), waiting())
+    }
+
+    @Test fun `a copy whose notebook answers 404 after the copy's fetch keeps the original, and the copy's text is held as lost access`() {
+        movedWithUnsyncedText()
+        server.notebookAnswer = { NotFoundException("Collection does not exist") }
+        val result = runCountingDeletes()
+        assertEquals(listOf("c1"), uploaded())
+        assertEquals(listOf("b2"), server.notebookFetches)
+        assertFalse(server.items.getValue("n1").deleted)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD to 1), result.deletesNotDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertCopyHeld(HeldReason.LOST_ACCESS)
+    }
+
+    @Test fun `a moved copy's held text stays through the next run, Try again holds it again with no upload, and a confirmed Discard removes it`() {
+        movedWithUnsyncedText()
+        b2DeletedOnTheServer()
+        runCountingDeletes()
+        val held = entry("c1")
+        // The next run's refresh shows b2 deleted: nothing is sent, and the held text stays as it is.
+        notebooks["b2"] = Notebook.DELETED
+        server.uploads.clear()
+        val next = runCountingDeletes()
+        assertTrue(next.succeeded)
+        assertTrue(server.uploads.isEmpty())
+        assertEquals(held, entry("c1"))
+        assertEquals(Read.Missing, store.read("n1"))
+        // Try again: the text waits again, and the run holds it again for its notebook, without an upload.
+        assertTrue(store.release("c1"))
+        val again = runCountingDeletes()
+        assertTrue(server.uploads.isEmpty())
+        assertEquals(1, again.held)
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+        // Discard, confirmed for the text shown, removes it.
+        val shown = entry("c1")
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("c1", shown.version, PendingNotesStore.digestOf(shown.blob)))
+        assertEquals(Read.Missing, store.read("c1"))
+        assertEquals("one notice, from the first run", listOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD), notDone)
+    }
+
+    @Test fun `Try again on a moved copy's held text, once its notebook takes notes again, is done as the same note with no conflicted copy`() {
+        movedWithUnsyncedText()
+        b2DeletedOnTheServer()
+        runCountingDeletes()
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+        // The notebook takes notes again (shared again, say). The unchanged upload can draw a 409 whose server copy is the one
+        // that was held: that copy is ours, so the entry is done.
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = false, deleted = false) }
+        assertTrue(store.release("c1"))
+        server.uploadError = { if (it.uid == "c1") ConflictException("wrong_etag") else null }
+        val result = runCountingDeletes()
+        assertTrue(result.succeeded)
+        assertTrue("no conflicted copy", built.isEmpty())
+        assertTrue(result.conflicts.isEmpty())
+        assertEquals(Read.Missing, store.read("c1"))
+    }
+
+    @Test fun `a save on the copy while its notebook is fetched is held as it is, never replaced by the server's copy`() {
+        movedWithUnsyncedText()
+        server.notebookAnswer = { uid ->
+            if (uid == "b2") save("c1", "typed in the new notebook", seen = server.items.getValue("c1").revision, notebook = "b2")
+            NotebookCheck.Found(readOnly = false, deleted = uid == "b2")
+        }
+        val result = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD to 1), result.deletesNotDone)
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED, text = "typed in the new notebook")
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals(listOf("c1"), uploaded())
+    }
+
+    @Test fun `a copy deleted on this device while its notebook is fetched gets nothing held, and the original's delete, made plain, goes next`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.notebookAnswer = { uid ->
+            if (uid == "b2") {
+                val landed = server.items.getValue("c1")
+                assertEquals(PendingNotesStore.NoteDelete.Recorded, store.deleteNote("c1", "b2", null, null, discardConfirmed = false,
+                    revision = "d-c1", deleted = Item("c1", landed.revision, "d-c1", true, "").blob()))
+            }
+            NotebookCheck.Found(readOnly = false, deleted = uid == "b2")
+        }
+        val first = runCountingDeletes()
+        assertTrue("nothing dropped, so nothing said", first.deletesNotDone.isEmpty())
+        assertEquals(PendingEntry.State.DELETE, entry("c1").state)
+        assertNull("the original's delete is a plain one now", entry("n1").move)
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = false, deleted = false) }
+        assertTrue(runCountingDeletes().succeeded)
+        assertTrue(server.items.getValue("c1").deleted)
+        assertTrue(server.items.getValue("n1").deleted)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a copy whose file stops reading while its notebook is fetched keeps the original's delete waiting, and the run fails`() {
+        movedWithUnsyncedText()
+        server.notebookAnswer = { uid ->
+            if (uid == "b2") damage("c1")
+            NotebookCheck.Found(readOnly = false, deleted = uid == "b2")
+        }
+        val result = runCountingDeletes()
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertTrue(result.deletesNotDone.isEmpty())
+        assertEquals(PendingEntry.Move("c1", "b2"), entry("n1").move)
+        assertFalse(server.items.getValue("n1").deleted)
+        assertTrue("the file is left as it is", File(dir, "c1.note").readBytes().contentEquals(byteArrayOf(0)))
+    }
+
+    @Test fun `a drop of the original's delete whose removal cannot be synced still says the copy's text is kept`() {
+        movedWithUnsyncedText()
+        b2DeletedOnTheServer()
+        // The held copy is written and synced first; the removal of the original's delete is the first sync that fails.
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "n1.note") failDirectorySync = true }
+        val result = runCountingDeletes()
+        failDirectorySync = false
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("gone until a power loss", Read.Missing, store.read("n1"))
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+        assertEquals("written now, since the next run finds nothing", listOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD), notDone)
+        assertEquals("the hold counts, though the drop after it threw", 1, result.held)
+    }
+
+    @Test fun `a held copy discarded while the original's delete looks for it gets the notice of a move not done, not that the text is kept`() {
+        movedWithUnsyncedText()
+        notebooks["b2"] = Notebook.DELETED
+        b2DeletedOnTheServer()
+        // The run holds the copy, never sent, for its deleted notebook. While the original's delete asks the server for the copy,
+        // the user discards that held text.
+        duringFetch = { uid ->
+            if (uid == "c1") {
+                val held = entry("c1")
+                assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("c1", held.version, PendingNotesStore.digestOf(held.blob)))
+            }
+        }
+        val result = runCountingDeletes()
+        assertEquals(listOf("c1"), server.movedFetches)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE to 1), result.deletesNotDone)
+        assertEquals(Read.Missing, store.read("c1"))
+        assertEquals(Read.Missing, store.read("n1"))
+        assertFalse(server.items.getValue("n1").deleted)
+    }
+
+    @Test fun `a held copy whose write may not last a power loss leaves the original's delete waiting, and the next run drops it saying the text is kept`() {
+        movedWithUnsyncedText()
+        b2DeletedOnTheServer()
+        // The copy's file is renamed once before its upload; only its write after the notebook fetch fails its directory sync.
+        PendingNotesStore.beforeRenameForTesting = { if (it.name == "c1.note" && server.notebookFetches.isNotEmpty()) failDirectorySync = true }
+        val first = runCountingDeletes()
+        failDirectorySync = false
+        PendingNotesStore.beforeRenameForTesting = null
+        assertEquals(FailureKind.LOCAL, first.failure)
+        assertTrue(first.deletesNotDone.isEmpty())
+        assertEquals("the original's delete waits", PendingEntry.Move("c1", "b2"), entry("n1").move)
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+        // The next run finds the text held, and drops the delete then.
+        val second = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD to 1), second.deletesNotDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+        assertEquals("the copy is never sent again", 1, server.uploads.count { it.uid == "c1" })
+    }
+
+    @Test fun `while a discard that has not finished holds new versions back, the copy's text is not held and the original's delete waits`() {
+        movedWithUnsyncedText()
+        save("n2", "confirmed for discard")
+        val s = restartedUnderPermit("n2.note")
+        val permit = permitBytes()
+        b2DeletedOnTheServer()
+        val result = NotePushStep(s, remote, NotePushStep.Memory(), true, { true }, { notDone += it }) { now }.pass()
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertTrue(notDone.isEmpty())
+        val original = (s.read("n1") as Read.Present).entry
+        assertEquals("the original's delete waits", PendingEntry.Move("c1", "b2"), original.move)
+        assertEquals("with a storage failure", FailureKind.LOCAL.name, original.lastFailureCategory)
+        assertEquals(Read.Missing, s.read("c1"))
+        assertTrue("the permit stays as it was", permit.contentEquals(permitBytes()))
+    }
+
+    @Test fun `a move's delete sent without an answer, then a copy whose notebook is found deleted after the copy's fetch, keeps the text and says the original may already be deleted`() {
+        movedWithUnsyncedText()
+        loseAnswer = { it.uid == "n1" }
+        assertEquals(Ended.STOPPED, runCountingDeletes().ended)
+        loseAnswer = { false }
+        assertTrue("the server deleted the original", server.items.getValue("n1").deleted)
+        // Another device deletes b2 after the next run's refresh still showed it.
+        b2DeletedOnTheServer()
+        val second = runCountingDeletes()
+        assertEquals("the copy was fetched again, then its notebook", listOf("c1", "c1") to listOf("b2", "b2"),
+            server.movedFetches to server.notebookFetches)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT to 1), second.deletesNotDone)
+        assertEquals(listOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT), notDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+        assertEquals("nothing sent again", 1, server.uploads.count { it.uid == "n1" })
+    }
+
+    @Test fun `each move's copy gets its own fresh fetch of its notebook, so a notebook deleted between two moves' checks in one run is seen`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        server.items["n2"] = Item("n2", null, "srv-0", false, "theirs, two")
+        moveLocally("n1", seen = "srv-0")
+        save("n2", "two, not synced", seen = "srv-0")
+        moveLocally("n2", copy = "c2")
+        // b2 is there at the first move's check, and deleted by the second's.
+        server.notebookAnswer = { uid -> NotebookCheck.Found(readOnly = false, deleted = uid == "b2" && server.notebookFetches.size > 1) }
+        val result = runCountingDeletes()
+        assertEquals(listOf("b2", "b2"), server.notebookFetches)
+        assertTrue("the first move finished", server.items.getValue("n1").deleted)
+        assertFalse("the second original stays", server.items.getValue("n2").deleted)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD to 1), result.deletesNotDone)
+        val kept = entry("c2")
+        assertEquals(PendingEntry.State.HELD, kept.state)
+        assertEquals("two, not synced", item(kept.blob).text)
+    }
+
+    @Test fun `a move's copy gets a fresh fetch of its notebook even after a refused push there had it fetched earlier in the run`() {
+        movedWithUnsyncedText()
+        server.items["x"] = Item("x", null, "srv-x", false, "theirs")
+        save("x", "an edit in b2", seen = "srv-x", notebook = "b2")
+        server.uploadError = { if (it.uid == "x") NotFoundException("Item does not exist") else null }
+        // There at the check that x's 404 asks for, and deleted by the move's own check.
+        server.notebookAnswer = { uid -> NotebookCheck.Found(readOnly = false, deleted = uid == "b2" && server.notebookFetches.size > 1) }
+        val result = runCountingDeletes()
+        assertEquals("one fetch for x's refusal, one fresh one for the move", listOf("b2", "b2"), server.notebookFetches)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD to 1), result.deletesNotDone)
+        assertFalse(server.items.getValue("n1").deleted)
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+    }
+
+    @Test fun `a run that stops being current during the fetch of a moved copy's notebook drops nothing and records nothing`() {
+        movedWithUnsyncedText()
+        var current = true
+        server.notebookAnswer = { uid ->
+            current = false
+            NotebookCheck.Found(readOnly = false, deleted = uid == "b2")
+        }
+        assertThrows(StaleSyncRunException::class.java) {
+            NotePushStep(store, remote, memory, true, { current }, { notDone += it }) { now }.pass()
+        }
+        assertEquals("the original's delete still waits", PendingEntry.Move("c1", "b2"), entry("n1").move)
+        assertEquals(0, entry("n1").failureCount)
+        assertTrue("no notice", notDone.isEmpty())
+        assertEquals("nothing held", Read.Missing, store.read("c1"))
+    }
+
+    @Test fun `a fetch of the copy's notebook that fails keeps the original's delete waiting, and it goes once the notebook answers`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        // Another collection, or one that does not check out: nothing is known, so the delete waits, with backoff.
+        server.notebookAnswer = { IllegalStateException("the server answered with another collection") }
+        val first = runCountingDeletes()
+        assertEquals(FailureKind.TRANSIENT, first.failure)
+        assertEquals("the copy only", listOf("c1"), uploaded())
+        assertEquals(1, entry("n1").failureCount)
+        assertEquals(PendingEntry.Move("c1", "b2"), entry("n1").move)
+        assertTrue(first.deletesNotDone.isEmpty())
+        assertFalse(server.items.getValue("n1").deleted)
+        // A connection error ends the step and leaves the delete for the next run.
+        server.notebookAnswer = { ConnectionException("timeout") }
+        val second = runCountingDeletes()
+        assertEquals(Ended.STOPPED, second.ended)
+        assertEquals("n1", memory.endedLastStep)
+        assertEquals(PendingEntry.State.DELETE, entry("n1").state)
+        assertFalse(server.items.getValue("n1").deleted)
+        // A 401 ends the step with nothing more recorded on the delete.
+        val failures = entry("n1").failureCount
+        server.notebookAnswer = { UnauthorizedException("Invalid token.") }
+        assertEquals(Ended.NEEDS_AUTHENTICATION, runCountingDeletes().ended)
+        assertEquals(failures, entry("n1").failureCount)
+        assertFalse(server.items.getValue("n1").deleted)
+        // A 403 on a read is about the whole account: the step ends, and the delete waits with one more failure.
+        server.notebookAnswer = { PermissionDeniedException("You do not have permission") }
+        assertEquals(Ended.STOPPED, runCountingDeletes().ended)
+        assertEquals(failures + 1, entry("n1").failureCount)
+        assertEquals(PendingEntry.Move("c1", "b2"), entry("n1").move)
+        assertFalse(server.items.getValue("n1").deleted)
+        // Still there, though read-only for this account now, which still shows the copy: the delete goes.
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = true, deleted = false) }
+        val last = runCountingDeletes()
+        assertTrue(last.succeeded)
+        assertTrue(server.items.getValue("n1").deleted)
+        assertTrue(waiting().isEmpty())
+        assertEquals("one fetch of the notebook per fetch of the copy", server.movedFetches.size, server.notebookFetches.size)
+    }
+
+    @Test fun `a copy whose file cannot be read keeps the delete waiting, and the run fails`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        File(dir, "c1.note").writeBytes("not an entry".toByteArray())
+        val result = runCountingDeletes()
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertTrue(server.movedFetches.isEmpty())
+        assertEquals(PendingEntry.State.DELETE, entry("n1").state)
+        assertFalse(server.items.getValue("n1").deleted)
+    }
+
+    @Test fun `an original changed elsewhere before its delete keeps both notes and says so for a move`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.writeElsewhere("n1", "web-1")
+        val result = runCountingDeletes()
+        assertTrue("a dropped delete is not a failure", result.succeeded)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVED_CHANGED_ELSEWHERE to 1), result.deletesNotDone)
+        assertEquals("the other client's change stays", "web-1", server.items.getValue("n1").revision)
+        assertFalse(server.items.getValue("n1").deleted)
+        assertEquals("the moved copy stays", "theirs", server.items.getValue("c1").text)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `an original's notebook now read-only drops the move's delete and says the original is kept, while the copy lands`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        notebooks["b1"] = Notebook.READ_ONLY
+        val result = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT to 1), result.deletesNotDone)
+        assertEquals(listOf("c1"), uploaded())
+        assertFalse(server.items.getValue("n1").deleted)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a move's delete sent without an answer, then an old notebook now read-only, says the original may already be deleted`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        loseAnswer = { it.uid == "n1" }
+        assertEquals(Ended.STOPPED, runCountingDeletes().ended)
+        loseAnswer = { false }
+        assertTrue("the server deleted the original", server.items.getValue("n1").deleted)
+        notebooks["b1"] = Notebook.READ_ONLY
+        val second = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT_DELETE_SENT to 1), second.deletesNotDone)
+        assertEquals(listOf(NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT_DELETE_SENT), notDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals("nothing sent again", 1, server.uploads.count { it.uid == "n1" })
+    }
+
+    @Test fun `a move's delete never sent, dropped for an old notebook now read-only, still says the original is kept`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        val edit = save("n1", "mine", seen = "srv-0")
+        loseAnswer = { true }
+        assertEquals(Ended.STOPPED, run().ended)
+        loseAnswer = { false }
+        moveLocally("n1")
+        assertEquals("the edit's revision is in the sent list, the delete's is not", listOf(edit.revision), entry("n1").sent)
+        notebooks["b1"] = Notebook.READ_ONLY
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT to 1), runCountingDeletes().deletesNotDone)
+        assertEquals("the edit stays on the server", edit.revision, server.items.getValue("n1").revision)
+    }
+
+    @Test fun `a sent move's delete dropped for a read-only notebook whose removal cannot be synced still says the original may already be deleted`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        loseAnswer = { it.uid == "n1" }
+        assertEquals(Ended.STOPPED, runCountingDeletes().ended)
+        loseAnswer = { false }
+        notebooks["b1"] = Notebook.READ_ONLY
+        // The drop's removal is the run's first directory sync.
+        failDirectorySync = true
+        val result = runCountingDeletes()
+        failDirectorySync = false
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals("written now, since the next run finds nothing", listOf(NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT_DELETE_SENT), notDone)
+    }
+
+    /** The user's delete of the copy [uid] in b2, which never reached the server: its original's delete goes as a plain one. */
+    private fun deleteUnsentCopy(uid: String = "c1") {
+        val copy = entry(uid)
+        assertEquals(PendingNotesStore.NoteDelete.Recorded, store.deleteNote(uid, "b2", copy.version,
+            PendingNotesStore.digestOf(copy.blob), discardConfirmed = true, revision = "d-$uid", deleted = Item(uid, null, "d-$uid", true, "").blob()))
+        assertNull("a plain delete now", entry("n1").move)
+    }
+
+    @Test fun `a move's delete made plain after the run listed the store gets the plain notice when a read-only notebook drops it`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        notebooks["b1"] = Notebook.READ_ONLY
+        // Between the listing and the hold, the user deletes the moved note.
+        duringNotebookLookup = { duringNotebookLookup = {}; deleteUnsentCopy() }
+        val result = runCountingDeletes()
+        assertEquals("the user's delete was not done, as for any delete there", mapOf(NotePushPolicy.DeleteNotDone.READ_ONLY to 1),
+            result.deletesNotDone)
+        assertEquals(listOf(NotePushPolicy.DeleteNotDone.READ_ONLY), notDone)
+        assertTrue("nothing sent", server.uploads.isEmpty())
+        assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `the same, with a removal that cannot be synced, still gets the plain notice`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        notebooks["b1"] = Notebook.READ_ONLY
+        // The drop's removal is the first directory sync after the copy's delete.
+        duringNotebookLookup = { duringNotebookLookup = {}; deleteUnsentCopy(); failDirectorySync = true }
+        val result = runCountingDeletes()
+        failDirectorySync = false
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals("written now, since the next run finds nothing", listOf(NotePushPolicy.DeleteNotDone.READ_ONLY), notDone)
+    }
+
+    @Test fun `a note moved after the run listed the store gets the move's notice when a read-only notebook drops the original's delete`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        save("n1", "mine", seen = "srv-0")
+        notebooks["b1"] = Notebook.READ_ONLY
+        // The run listed an edit; by the hold, the user has moved the note.
+        duringNotebookLookup = { duringNotebookLookup = {}; moveLocally("n1") }
+        val result = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT to 1), result.deletesNotDone)
+        assertEquals(0, result.held)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals("the copy waits for the next run", PendingEntry.State.UPSERT, entry("c1").state)
+    }
+
+    @Test fun `a move's delete the server refuses twice is dropped and says the original is kept`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.uploadError = { if (it.uid == "n1") http(400) else null }
+        assertEquals(FailureKind.REJECTED, runCountingDeletes().failure)
+        val second = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT to 1), second.deletesNotDone)
+        assertEquals("the copy was fetched before each send", listOf("c1", "c1"), server.movedFetches)
+        assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `a send of the original's delete that failed checks the copy again first, so a copy deleted since drops it and says the original may be deleted`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.uploadError = { if (it.uid == "n1") ConnectionException("timeout") else null }
+        assertEquals(Ended.STOPPED, runCountingDeletes().ended)
+        assertEquals("the copy landed and was seen, and the delete was tried once", listOf("c1", "n1") to listOf("c1"),
+            uploaded() to server.movedFetches)
+        // Both show on the web now, and the copy is deleted there as the duplicate.
+        server.uploadError = { null }
+        server.writeElsewhere("c1", "web-del", deleted = true)
+        val second = runCountingDeletes()
+        // The delete was sent once, and a send that fails may still have landed: the notice cannot say the original stays.
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_DELETE_SENT to 1), second.deletesNotDone)
+        assertFalse("the original, the only copy left, is not deleted", server.items.getValue("n1").deleted)
+        assertEquals("no second try of the delete", 1, server.uploads.count { it.uid == "n1" })
+        assertEquals("the copy was fetched again first", listOf("c1", "c1"), server.movedFetches)
+    }
+
+    @Test fun `a move's delete that landed without an answer, then a copy deleted elsewhere, says the original may already be deleted`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        loseAnswer = { it.uid == "n1" }
+        assertEquals(Ended.STOPPED, runCountingDeletes().ended)
+        loseAnswer = { false }
+        assertTrue("the server deleted the original", server.items.getValue("n1").deleted)
+        server.writeElsewhere("c1", "web-del", deleted = true)
+        val second = runCountingDeletes()
+        assertTrue("a dropped delete is not a failure", second.succeeded)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_DELETE_SENT to 1), second.deletesNotDone)
+        assertEquals(listOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_DELETE_SENT), notDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals("nothing sent again", 1, server.uploads.count { it.uid == "n1" })
+    }
+
+    @Test fun `a move's delete sent without an answer, then a copy whose notebook is deleted, keeps the copy's text and says the original may already be deleted`() {
+        movedWithUnsyncedText()
+        loseAnswer = { it.uid == "n1" }
+        assertEquals(Ended.STOPPED, runCountingDeletes().ended)
+        loseAnswer = { false }
+        assertEquals("the delete was sent once", 1, server.uploads.count { it.uid == "n1" })
+        assertTrue("and the server deleted the original", server.items.getValue("n1").deleted)
+        notebooks["b2"] = Notebook.DELETED
+        val second = runCountingDeletes()
+        assertEquals("the second run fetched the copy from the deleted notebook too", listOf("c1", "c1"), server.movedFetches)
+        assertEquals("and not that notebook, which its refresh showed deleted", listOf("b2"), server.notebookFetches)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT to 1), second.deletesNotDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+    }
+
+    @Test fun `a copy that landed before a run stopped, in a notebook deleted before the next run, keeps the original and its text is held`() {
+        movedWithUnsyncedText()
+        server.fetchError = { if (it == "c1") ConnectionException("timeout") else null }
+        assertEquals(Ended.STOPPED, runCountingDeletes().ended)
+        server.fetchError = { null }
+        assertEquals("the copy landed", listOf("c1"), uploaded())
+        // Another device deletes b2 before the next run, whose refresh shows it deleted.
+        notebooks["b2"] = Notebook.DELETED
+        val second = runCountingDeletes()
+        assertEquals("the copy is looked for in that notebook too", listOf("c1", "c1"), server.movedFetches)
+        assertTrue("and that notebook is not fetched: the refresh showed it deleted", server.notebookFetches.isEmpty())
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD to 1), second.deletesNotDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertFalse(server.items.getValue("n1").deleted)
+        assertCopyHeld(HeldReason.NOTEBOOK_DELETED)
+    }
+
+    @Test fun `a sent move's delete whose drop cannot be synced still says the original may already be deleted`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        loseAnswer = { it.uid == "n1" }
+        assertEquals(Ended.STOPPED, runCountingDeletes().ended)
+        loseAnswer = { false }
+        server.writeElsewhere("c1", "web-del", deleted = true)
+        // The drop's removal is the run's first directory sync.
+        failDirectorySync = true
+        val result = runCountingDeletes()
+        failDirectorySync = false
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("the file is gone until a power loss", Read.Missing, store.read("n1"))
+        assertEquals("written now, since the next run finds nothing", listOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_DELETE_SENT), notDone)
+    }
+
+    @Test fun `a move's delete never sent gets the notice of one never sent, though an earlier upload of the original is in its sent list`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        val edit = save("n1", "mine", seen = "srv-0")
+        loseAnswer = { true }
+        assertEquals(Ended.STOPPED, run().ended)
+        loseAnswer = { false }
+        moveLocally("n1")
+        assertEquals("the edit's revision is in the sent list, the delete's is not", listOf(edit.revision), entry("n1").sent)
+        notebooks["b2"] = Notebook.DELETED
+        // The copy is held for its deleted notebook before it is sent, so the notice says where the moved text is.
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD to 1), runCountingDeletes().deletesNotDone)
+        assertEquals("the edit stays on the server", edit.revision, server.items.getValue("n1").revision)
+        assertEquals(HeldReason.NOTEBOOK_DELETED, entry("c1").held?.reason)
+    }
+
+    @Test fun `a 4xx on the copy's fetch is a passing failure, so one later rejection of the delete does not drop it`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.fetchError = { if (it == "c1") http(400) else null }
+        assertEquals(FailureKind.TRANSIENT, runCountingDeletes().failure)
+        assertEquals("TRANSIENT", entry("n1").lastFailureCategory)
+        server.fetchError = { null }
+        server.uploadError = { if (it.uid == "n1") http(400) else null }
+        val second = runCountingDeletes()
+        assertEquals(FailureKind.REJECTED, second.failure)
+        assertTrue("one rejection backs off", second.deletesNotDone.isEmpty())
+        assertEquals(PendingEntry.State.DELETE, entry("n1").state)
+    }
+
+    @Test fun `a 404 on the copy whose notebook cannot be confirmed keeps the original's delete waiting`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        store.hold("c1", HeldReason.REJECTED, now)
+        server.notebookAnswer = { http(500) }
+        val result = runCountingDeletes()
+        assertEquals(FailureKind.TRANSIENT, result.failure)
+        assertTrue("nothing dropped on one 404", result.deletesNotDone.isEmpty())
+        assertEquals(PendingEntry.Move("c1", "b2"), entry("n1").move)
+        assertEquals(1, entry("n1").failureCount)
+        // Once the notebook answers, the 404 stands and the delete is dropped.
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = false, deleted = false) }
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE to 1), runCountingDeletes().deletesNotDone)
+        assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `a note moved twice before a run lands once, in the last notebook, and its original is deleted`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        moveLocally("c1", copy = "c2", target = "b3", from = "b2")
+        val result = runCountingDeletes()
+        assertTrue(result.succeeded)
+        assertEquals("the second copy, then the original's delete", listOf("c2", "n1"), uploaded())
+        assertTrue(server.items.getValue("n1").deleted)
+        assertFalse("the first copy never reached the server", "c1" in server.items)
+        assertTrue(waiting().isEmpty())
+        assertTrue(notDone.isEmpty())
+    }
+
+    @Test fun `a moved note deleted before a run is deleted, and nothing is created for it`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        val copy = entry("c1")
+        assertEquals(PendingNotesStore.NoteDelete.Recorded, store.deleteNote("c1", "b2", copy.version,
+            PendingNotesStore.digestOf(copy.blob), discardConfirmed = true, revision = "d-c1", deleted = Item("c1", null, "d-c1", true, "").blob()))
+        val result = runCountingDeletes()
+        assertTrue(result.succeeded)
+        assertEquals(listOf("n1"), uploaded())
+        assertTrue(server.items.getValue("n1").deleted)
+        assertTrue(server.movedFetches.isEmpty())
+        assertTrue(notDone.isEmpty())
+    }
+
+    @Test fun `a copy moved on while a run fetches it is neither confirmed nor dropped by that run, and the next run finishes`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        // Held before it was ever sent, so the original's delete asks the server for it.
+        store.hold("c1", HeldReason.REJECTED, now)
+        // While that fetch is out, the user sends the held copy again and moves it on.
+        duringFetch = { if (it == "c1") { store.release("c1"); moveLocally("c1", copy = "c2", target = "b3", from = "b2") } }
+        val first = runCountingDeletes()
+        assertEquals(listOf("c1"), server.movedFetches)
+        assertTrue("the old copy's absence drops nothing", first.deletesNotDone.isEmpty())
+        assertEquals(PendingEntry.Move("c2", "b3"), entry("n1").move)
+        duringFetch = {}
+        val second = runCountingDeletes()
+        assertTrue(second.succeeded)
+        assertEquals("the new copy, then the original's delete", listOf("c2", "n1"), uploaded())
+        assertTrue(server.items.getValue("n1").deleted)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `an original's delete that lands while the user moves the copy on is done, so a new copy that never lands brings back only that copy`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        // While the original's delete is out, the user moves the copy, which just landed, on to b3.
+        duringUpload = { if (it == "n1") { duringUpload = {}; moveLocally("c1", copy = "c2", target = "b3", from = "b2") } }
+        assertTrue(runCountingDeletes().succeeded)
+        assertTrue(server.items.getValue("n1").deleted)
+        assertEquals("the server deleted the original, so nothing waits for it", Read.Missing, store.read("n1"))
+        // The new notebook does not take the new copy, so the first copy stays where it is, and only it is named.
+        notebooks["b3"] = Notebook.READ_ONLY
+        val second = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE to 1), second.deletesNotDone)
+        assertFalse(server.items.getValue("c1").deleted)
+        assertTrue("the original stays deleted", server.items.getValue("n1").deleted)
+        assertEquals("the moved text is kept, held", PendingEntry.State.HELD, entry("c2").state)
+    }
+
+    @Test fun `an original's delete that finds it deleted elsewhere while the user moves the copy on is done, and waits for no copy`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        moveLocally("n1", seen = "srv-0")
+        server.writeElsewhere("n1", "web-del", deleted = true)
+        // The delete gets a 409, and while the server's deleted copy goes into the cache, the user moves the landed copy on.
+        duringCache = { if (it == "n1") { duringCache = {}; moveLocally("c1", copy = "c2", target = "b3", from = "b2") } }
+        assertTrue(runCountingDeletes().succeeded)
+        assertEquals("the server shows the original deleted, so nothing waits for it", Read.Missing, store.read("n1"))
+        // The new notebook does not take the new copy: only the first copy's move is undone, and only it is named.
+        notebooks["b3"] = Notebook.READ_ONLY
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.MOVE_NOT_DONE to 1), runCountingDeletes().deletesNotDone)
     }
 }

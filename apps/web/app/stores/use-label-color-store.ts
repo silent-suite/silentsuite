@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
+import { registerScopedStore, tabScopedStateStorage } from '@/app/lib/session-scope'
 
 export const LABEL_COLOR_PALETTE = [
   '#10b981', // emerald
@@ -79,6 +80,10 @@ export const useLabelColorStore = create<LabelColorState>()(
     }),
     {
       name: 'silentsuite-label-colors',
+      // Decrypted names stay in the tab when this device is not remembered.
+      storage: createJSONStorage(() => tabScopedStateStorage),
     },
   ),
 )
+
+registerScopedStore(() => useLabelColorStore.persist.rehydrate())

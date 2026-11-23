@@ -48,6 +48,12 @@ internal data class PendingEntry(
      */
     val fromConflict: Boolean = false,
     val blob: ByteArray,
+    /**
+     * Set only on a pending delete made by a move ([PendingNotesStore.moveNote]): the copy in the other notebook that
+     * carries the note's text. The delete is sent only by a run that has just fetched that copy, alive, from the server
+     * ([PendingNotesStore.startSend]), so the original is deleted only while the copy is there.
+     */
+    val move: Move? = null,
 ) {
     /**
      * UPSERT: text waiting to be sent. HELD: text kept in the holding area, never sent. DELETE: the user's confirmed
@@ -61,8 +67,12 @@ internal data class PendingEntry(
 
     data class Held(val reason: HeldReason, val at: Long)
 
+    /** The copy a move made: note [noteUid] in notebook [notebookUid]. */
+    data class Move(val noteUid: String, val notebookUid: String)
+
     init {
         require((state == State.HELD) == (held != null)) { "held details exist exactly in the HELD state" }
+        require(move == null || state == State.DELETE) { "only a pending delete carries a move" }
         require(sent.size <= MAX_SENT) { "sent list over its cap" }
     }
 
@@ -83,7 +93,7 @@ internal data class PendingEntry(
             isCreate == other.isCreate && sent == other.sent && failureCount == other.failureCount &&
             lastFailureAt == other.lastFailureAt && lastFailureCategory == other.lastFailureCategory &&
             origin == other.origin && held == other.held && fromConflict == other.fromConflict &&
-            blob.contentEquals(other.blob)
+            move == other.move && blob.contentEquals(other.blob)
 
     override fun hashCode(): Int = noteUid.hashCode() * 31 + version.hashCode()
 

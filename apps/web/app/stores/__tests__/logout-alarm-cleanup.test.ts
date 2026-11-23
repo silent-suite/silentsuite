@@ -123,7 +123,7 @@ describe('logout clears service-worker reminders', () => {
     await withAlarmStore('readwrite', store => { store.clear() })
     useAuthStore.setState({ user: userA, isAuthenticated: true, isLoading: false, error: null })
     useEtebaseStore.setState({ accountFingerprint: FP_A, syncEngine: null })
-    await secureSet('etebase_session', 'SYNTHETIC-SESSION-A')
+    await secureSet('etebase_session', 'SYNTHETIC-SESSION-A', { persist: true })
     await putMeta({ accountFingerprint: FP_A, cacheSchemaVersion: 1, lastInvalidatedAt: null })
   })
 
@@ -145,7 +145,7 @@ describe('logout clears service-worker reminders', () => {
 
     // The rest of the local cleanup ran too.
     expect(useAuthStore.getState().user).toBeNull()
-    expect(await secureGet('etebase_session')).toBeNull()
+    expect(await secureGet('etebase_session', { storedOnly: true })).toBeNull()
     expect(await getMeta()).toBeFalsy()
     expect(await readAlarmDb()).toEqual([])
   })
