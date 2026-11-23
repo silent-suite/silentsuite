@@ -1125,23 +1125,24 @@ describe('NotesPage', () => {
     })
   })
 
-  it('shows the compact Experimental · Web app only label next to the heading on every layout', () => {
+  it('shows the compact Experimental label next to the heading on every layout', () => {
     loaded([note('note-1', { title: 'Any' })])
     renderWithIntl(<NotesPage />)
 
     // One label, attached to the Notes heading, with no responsive hiding:
     // the same DOM serves desktop and mobile (only the panes below switch).
+    // Notes also runs in the Android app, so the label no longer says "Web app only".
     const label = screen.getByTestId('notes-experimental-label')
     expect(screen.getAllByTestId('notes-experimental-label')).toHaveLength(1)
-    expect(label).toHaveTextContent('Experimental · Web app only')
+    expect(label).toHaveTextContent(/^Experimental$/)
     expect(label.className).not.toMatch(/(^|\s)(hidden|md:hidden|lg:hidden|max-md:hidden)(\s|$)/)
     // Inside the heading, so screen readers announce it as part of the name.
-    const heading = screen.getByRole('heading', { level: 2, name: 'Notes Experimental · Web app only' })
+    const heading = screen.getByRole('heading', { level: 2, name: 'Notes Experimental' })
     expect(label.parentElement).toBe(heading)
 
     // Still present with a note open (mobile single-pane view).
     fireEvent.click(screen.getByRole('button', { name: /Any/ }))
-    expect(screen.getByTestId('notes-experimental-label')).toHaveTextContent('Experimental · Web app only')
+    expect(screen.getByTestId('notes-experimental-label')).toHaveTextContent(/^Experimental$/)
   })
 
   // #295: the mobile bottom nav sits outside the page's `main`, which is its own stacking context, so a
