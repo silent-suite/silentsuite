@@ -14,14 +14,15 @@
  *   is useless; the key's bytes cannot be exported. It does not protect against
  *   script running in this origin (it can ask the browser to decrypt) or a copy
  *   of the whole browser profile (the key travels with it). Without WebCrypto
- *   (an insecure http origin) the session is not remembered: it works in the
- *   tab until the page reloads.
+ *   (an insecure http origin) or when IndexedDB fails, the session is not
+ *   remembered: it works in the tab until the page reloads or the next session
+ *   check resets this tab's copy.
  *
  * IndexedDB and sessionStorage are both readable by any script in this origin.
  */
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { readLogoutGeneration } from '@/app/lib/account-epoch'
-import { getDeviceOwner, getSessionScope, readTabSession, removeTabSession, setSessionScope, writeTabSession } from '@/app/lib/session-scope'
+import { getDeviceOwner, getSessionScope, readTabSession, removeTabSession, setSessionScope, tabSessionChangeCount, writeTabSession } from '@/app/lib/session-scope'
 
 const DB_NAME = 'silentsuite-secure'
 const DB_VERSION = 1
@@ -312,11 +313,14 @@ export interface SecureSetOptions {
 
 /**
  * Store the session wrapped, with its key and owner, in one committed
- * transaction. Returns the stored record, or null if nothing was stored; then
- * the copy this save was meant to replace is deleted as well (best effort, and
- * only while it is still that copy). Never stores plaintext.
+ * transaction. Nothing is written once a logout happened anywhere since
+ * `generation` was read: that check runs inside the transaction, so a newer
+ * sign-in saved by another tab after its logout is never overwritten. Returns
+ * the stored record, or null if nothing was stored. When the save fails, the
+ * copy it was meant to replace is deleted as well (best effort, and only while
+ * it is still that copy). Never stores plaintext.
  */
-function writeWrappedSession(value: string, owner: string | null): Promise<WrappedSession | null> {
+function writeWrappedSession(value: string, owner: string | null, generation: string | null | undefined): Promise<WrappedSession | null> {
   return serialized(async () => {
     let replaced: unknown
     try {
@@ -326,13 +330,16 @@ function writeWrappedSession(value: string, owner: string | null): Promise<Wrapp
     }
     try {
       const { record, key } = await wrapSession(value)
+      let written = false
       await withCommittedStore((store) => {
+        if (readLogoutGeneration() !== generation) return
         store.put(record, SESSION_KEY)
         store.put(key, SESSION_WRAP_KEY)
         if (owner) store.put(owner, SESSION_OWNER_KEY)
         else store.delete(SESSION_OWNER_KEY)
+        written = true
       })
-      return record
+      return written ? record : null
     } catch (err) {
       console.error('[secure-storage] Failed to write to IndexedDB', getSafeErrorDetails(err))
       // Only the copy this save meant to replace: a save another tab made
@@ -354,27 +361,48 @@ function writeTabOnlySession(value: string, owner: string | null): void {
   }
 }
 
+/**
+ * Changes a durable save makes to this tab's copy when it completes. They are
+ * not "later operations" for the saves queued after it.
+ */
+let ownTabSessionChanges = 0
+
+/** Changes to this tab's copy made by anything other than a durable save completing. */
+function laterTabSessionChanges(): number {
+  return tabSessionChangeCount() - ownTabSessionChanges
+}
+
+function asOwnTabSessionChange(change: () => void): void {
+  const before = tabSessionChangeCount()
+  try {
+    change()
+  } finally {
+    ownTabSessionChanges += tabSessionChangeCount() - before
+  }
+}
+
 async function setSession(value: string, persist: boolean, owner: string | null): Promise<void> {
   if (!persist) return writeTabOnlySession(value, owner)
   // Write before removing the tab copy, so a concurrent read always finds one.
-  const tabCopyBefore = readTabSession()
+  const changesBefore = laterTabSessionChanges()
   const generationBefore = readLogoutGeneration()
-  const record = await writeWrappedSession(value, owner)
-  // A newer tab-only sign-in in this tab, or a logout in another tab, while
-  // this one was being saved: that one wins, and this save is taken back.
-  const superseded = readTabSession() !== tabCopyBefore || readLogoutGeneration() !== generationBefore
-  if (superseded) {
+  const record = await writeWrappedSession(value, owner, generationBefore)
+  // A later operation on this tab's session (a tab-only sign-in, a clear or
+  // removal), or a logout anywhere, while this one was being saved: that one
+  // wins, and this save is taken back.
+  if (laterTabSessionChanges() !== changesBefore || readLogoutGeneration() !== generationBefore) {
     if (record) await serialized(() => removeStoredSessionIfSame(record))
     return
   }
   if (!record) {
     // Not remembered (no WebCrypto, or IndexedDB failed): the session still
-    // works in this tab, and the previous durable copy is gone.
-    writeTabOnlySession(value, owner)
+    // works in this tab until the page reloads. The copy this save was meant
+    // to replace was deleted if that was possible.
+    asOwnTabSessionChange(() => writeTabOnlySession(value, owner))
     return
   }
   setSessionScope('device', owner)
-  removeTabSession()
+  asOwnTabSessionChange(removeTabSession)
 }
 
 /**

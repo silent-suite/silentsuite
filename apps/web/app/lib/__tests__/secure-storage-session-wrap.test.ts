@@ -89,6 +89,39 @@ describe('wrapped durable session', () => {
     expect(await rawGet(WRAP_KEY)).toBeUndefined()
     expect(await secureGet(KEY, { storedOnly: true })).toBeNull()
     expect(await secureGet(KEY)).toBeNull()
+    expect(getSessionScope()).toBeNull()
+  })
+
+  it('a clear issued during a pending save that then fails leaves no tab copy either', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let started!: () => void
+    const entered = new Promise<void>((resolve) => { started = resolve })
+    vi.spyOn(globalThis.crypto.subtle, 'encrypt').mockImplementationOnce(async () => {
+      started()
+      await gate
+      throw new Error('synthetic encrypt failure')
+    })
+    const save = secureSet(KEY, SESSION, { persist: true, owner: 'user-1' })
+    await entered
+    const clear = secureClear()
+    release()
+    await Promise.all([save, clear])
+    expect(getSessionScope()).toBeNull()
+    expect(sessionStorage.getItem(TAB_SESSION_KEY)).toBeNull()
+    expect(await secureGet(KEY)).toBeNull()
+  })
+
+  it('a session removal issued during a pending save wins', async () => {
+    const { release, entered } = pauseNextEncrypt()
+    const save = secureSet(KEY, SESSION, { persist: true, owner: 'user-1' })
+    await entered
+    const removal = secureRemove(KEY)
+    release()
+    await Promise.all([save, removal])
+    expect(getSessionScope()).toBeNull()
+    expect(await rawGet(KEY)).toBeUndefined()
   })
 
   it('a later save always wins over a pending earlier one', async () => {
@@ -100,21 +133,48 @@ describe('wrapped durable session', () => {
     await Promise.all([earlier, later])
     expect(await rawGet(OWNER_KEY)).toBe('user-2')
     expect(getSessionScope()).toBe('device')
-    setSessionScope('device', 'user-2')
     expect(await secureGet(KEY)).toBe('SYNTHETIC-LATER')
   })
 
-  it('takes back a save when another tab logged out while it was being wrapped', async () => {
+  it('an earlier save completing never makes a later save in the same tab discard itself', async () => {
+    await secureSet(KEY, 'SYNTHETIC-TAB', { persist: false, owner: 'user-1' })
+    const earlier = secureSet(KEY, 'SYNTHETIC-EARLIER', { persist: true, owner: 'user-1' })
+    const later = secureSet(KEY, 'SYNTHETIC-LATER', { persist: true, owner: 'user-1' })
+    await Promise.all([earlier, later])
+    expect(getSessionScope()).toBe('device')
+    expect(sessionStorage.getItem(TAB_SESSION_KEY)).toBeNull()
+    expect(await secureGet(KEY)).toBe('SYNTHETIC-LATER')
+  })
+
+  it('an earlier save falling back to the tab never overrides a later successful save', async () => {
+    await secureSet(KEY, 'SYNTHETIC-TAB', { persist: false, owner: 'user-1' })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(globalThis.crypto.subtle, 'encrypt').mockRejectedValueOnce(new Error('synthetic encrypt failure'))
+    const earlier = secureSet(KEY, 'SYNTHETIC-EARLIER', { persist: true, owner: 'user-1' })
+    const later = secureSet(KEY, 'SYNTHETIC-LATER', { persist: true, owner: 'user-1' })
+    await Promise.all([earlier, later])
+    expect(getSessionScope()).toBe('device')
+    expect(sessionStorage.getItem(TAB_SESSION_KEY)).toBeNull()
+    expect(await secureGet(KEY)).toBe('SYNTHETIC-LATER')
+  })
+
+  it('a save that started before a logout elsewhere never overwrites the sign-in that followed it', async () => {
     localStorage.setItem(LOGOUT_GENERATION_KEY, 'generation-1')
+    const encrypt = globalThis.crypto.subtle.encrypt.bind(globalThis.crypto.subtle)
     const { release, entered } = pauseNextEncrypt()
     const save = secureSet(KEY, SESSION, { persist: true, owner: 'user-1' })
     await entered
+    // Another tab logs out, then signs in and saves its own wrapped session.
     localStorage.setItem(LOGOUT_GENERATION_KEY, 'generation-2')
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+    const iv = crypto.getRandomValues(new Uint8Array(new ArrayBuffer(12)))
+    const ct = await encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode('SYNTHETIC-SUCCESSOR'))
+    await rawStore('readwrite', (s) => { s.put({ v: 1, iv, ct }, KEY); s.put(key, WRAP_KEY); s.put('user-2', OWNER_KEY) })
     release()
     await save
-    expect(await rawGet(KEY)).toBeUndefined()
-    expect(await rawGet(WRAP_KEY)).toBeUndefined()
     expect(getSessionScope()).not.toBe('device')
+    expect(await rawGet(OWNER_KEY)).toBe('user-2')
+    expect(await secureGet(KEY, { storedOnly: true })).toBe('SYNTHETIC-SUCCESSOR')
   })
 
   it('a key that cannot be stored commits nothing: the previous copy still restores', async () => {
