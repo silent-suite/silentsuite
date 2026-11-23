@@ -1,9 +1,22 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import messages from '../../../../messages/en.json'
-import { NoteMarkdownPreview } from '../NoteMarkdownPreview'
+import { clearNotePreviewVerdict } from '@/app/lib/note-preview-verdict'
+import { NoteMarkdownPreview as RealNoteMarkdownPreview } from '../NoteMarkdownPreview'
+import { okWorkerFactory } from './probe-test-workers'
+
+// Every body goes through the real parser and renderer; the worker that times it
+// is replaced by one that answers ok at once, since jsdom has no Worker.
+function NoteMarkdownPreview(props: { content: string }) {
+  return <RealNoteMarkdownPreview {...props} createWorker={okWorkerFactory} />
+}
+
+beforeEach(() => {
+  clearNotePreviewVerdict()
+})
+
 
 // The shared vectors for the Notes Markdown profile (docs/contributing/notes-markdown.md).
 // Android reads the same file; this test runs the web renderer over it.
