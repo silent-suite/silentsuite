@@ -173,9 +173,22 @@ function Install-BridgeBinary([string]$Source, [string]$Target, [string]$Expecte
     }
 }
 
+function Get-OSArchitecture {
+    # RuntimeInformation can come back empty in Windows PowerShell 5.1, so fall
+    # back to the variables Windows sets for every process. A 32-bit PowerShell
+    # on 64-bit Windows reports the OS architecture in PROCESSOR_ARCHITEW6432.
+    $Arch = ""
+    try { $Arch = "$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)" } catch { $Arch = "" }
+    if (-not $Arch) {
+        $Arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    }
+    if ($Arch -eq "AMD64") { $Arch = "X64" }
+    return $Arch
+}
+
 function Invoke-SilentSuiteBridgeInstall {
     # --- Detect architecture ---
-    $Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    $Arch = Get-OSArchitecture
     if ($Arch -ne "X64") {
         Write-Err "Unsupported architecture: $Arch. Only x86_64 is supported."
     }
