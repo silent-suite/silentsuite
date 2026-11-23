@@ -173,7 +173,19 @@ export function bindTabSession(owner: string, expectedSession: string): void {
   }
 }
 
+let tabSessionChanges = 0
+
+/**
+ * How many times this tab's session copy has been written or removed since the
+ * page loaded (every call counts, even when nothing was stored). Lets a
+ * pending durable save see that a later operation in this tab took over.
+ */
+export function tabSessionChangeCount(): number {
+  return tabSessionChanges
+}
+
 export function removeTabSession(): void {
+  tabSessionChanges += 1
   try {
     tabStorage()?.removeItem(TAB_SESSION_KEY)
   } catch {
