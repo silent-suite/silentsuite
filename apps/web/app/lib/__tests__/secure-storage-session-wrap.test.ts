@@ -177,6 +177,29 @@ describe('wrapped durable session', () => {
     expect(await secureGet(KEY, { storedOnly: true })).toBe('SYNTHETIC-SUCCESSOR')
   })
 
+  it('a failed save never removes a sign-in another tab saved after logging out, even one already there', async () => {
+    localStorage.setItem(LOGOUT_GENERATION_KEY, 'generation-1')
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const encrypt = globalThis.crypto.subtle.encrypt.bind(globalThis.crypto.subtle)
+    // An earlier save holds the queue, so the failing save takes its snapshot later.
+    const { release, entered } = pauseNextEncrypt()
+    const earlier = secureSet(KEY, 'SYNTHETIC-EARLIER', { persist: true, owner: 'user-0' })
+    await entered
+    const failing = secureSet(KEY, SESSION, { persist: true, owner: 'user-1' })
+    vi.mocked(globalThis.crypto.subtle.encrypt).mockRejectedValueOnce(new Error('synthetic encrypt failure'))
+    // Meanwhile another tab logs out, signs in and saves.
+    localStorage.setItem(LOGOUT_GENERATION_KEY, 'generation-2')
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+    const iv = crypto.getRandomValues(new Uint8Array(new ArrayBuffer(12)))
+    const ct = await encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode('SYNTHETIC-SUCCESSOR'))
+    await rawStore('readwrite', (s) => { s.put({ v: 1, iv, ct }, KEY); s.put(key, WRAP_KEY); s.put('user-2', OWNER_KEY) })
+    release()
+    await Promise.all([earlier, failing])
+    expect(await rawGet(OWNER_KEY)).toBe('user-2')
+    expect(await secureGet(KEY, { storedOnly: true })).toBe('SYNTHETIC-SUCCESSOR')
+    expect(getSessionScope()).not.toBe('device')
+  })
+
   it('a key that cannot be stored commits nothing: the previous copy still restores', async () => {
     await secureSet(KEY, 'SYNTHETIC-PREVIOUS', { persist: true, owner: 'user-1' })
     vi.spyOn(console, 'error').mockImplementation(() => {})

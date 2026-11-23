@@ -203,10 +203,15 @@ function deleteStoredSession(store: IDBObjectStore): void {
   store.delete(SESSION_WRAP_KEY)
 }
 
-/** Delete the durable session (with owner and key) only while it is still the write `seen`. */
-async function removeStoredSessionIfSame(seen: WrappedSession | string): Promise<void> {
+/**
+ * Delete the durable session (with owner and key) only while it is still the
+ * write `seen` and, when `generation` is given, no logout happened anywhere
+ * since it was read (checked inside the transaction).
+ */
+async function removeStoredSessionIfSame(seen: WrappedSession | string, generation?: { value: string | null | undefined }): Promise<void> {
   try {
     await withCommittedStore((store) => {
+      if (generation && readLogoutGeneration() !== generation.value) return
       const req = store.get(SESSION_KEY)
       req.onsuccess = () => {
         if (isSameWrite(req.result, seen)) deleteStoredSession(store)
@@ -342,9 +347,10 @@ function writeWrappedSession(value: string, owner: string | null, generation: st
       return written ? record : null
     } catch (err) {
       console.error('[secure-storage] Failed to write to IndexedDB', getSafeErrorDetails(err))
-      // Only the copy this save meant to replace: a save another tab made
-      // meanwhile is kept.
-      if (typeof replaced === 'string' || isWrappedSession(replaced)) await removeStoredSessionIfSame(replaced)
+      // Only the copy this save meant to replace, and only while no logout
+      // happened since the save was submitted: a save another tab made
+      // meanwhile, or after its logout, is kept.
+      if (typeof replaced === 'string' || isWrappedSession(replaced)) await removeStoredSessionIfSame(replaced, { value: generation })
       return null
     }
   })
