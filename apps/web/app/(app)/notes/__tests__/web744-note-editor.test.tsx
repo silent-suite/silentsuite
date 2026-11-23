@@ -395,6 +395,31 @@ describe('#744 the rendered note editor saves only through its captured base', (
     expect(await serverTitle(account, collection, item.uid)).toBe('Unmount title 744')
   })
 
+  it('asks before the tab closes while typing waits for its autosave or its save runs, and not once it is saved', async () => {
+    const leavePrevented = () => {
+      const event = new harness.window.Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    const { account, collection, item } = await openSavedNote()
+    expect(leavePrevented()).toBe(false)
+
+    // Typed, autosave not yet run: the text exists only in this page.
+    fireEvent.change(titleBox(), { target: { value: 'Typed before close' } })
+    expect(leavePrevented()).toBe(true)
+
+    // Its save is running.
+    const write = server.holdNext(isTransaction)
+    hideTab()
+    await write.arrived
+    expect(leavePrevented()).toBe(true)
+
+    write.release(false)
+    await settle()
+    expect(await serverTitle(account, collection, item.uid)).toBe('Typed before close')
+    expect(leavePrevented()).toBe(false)
+  })
+
   it('#744 obliges a note whose editor mounts while custody is outstanding', async () => {
     const { account, collection, item } = await makeSavedNote(BASE_TITLE, BASE_BODY)
     server.seed(collection, [item])
@@ -557,13 +582,13 @@ describe('#744 the rendered note editor saves only through its captured base', (
     // While that save waits, the editor turns clean and the refresh carries the server's R1
     // text over this context's optimistic record. R1 is older than the save, which lands on it.
     fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
-    const refreshed = refreshFromServer(item.uid, peerItem, { title: BASE_TITLE, content: BASE_BODY })
+    refreshFromServer(item.uid, peerItem, { title: BASE_TITLE, content: BASE_BODY })
     rebindRead.release(false)
     await settle()
     const late = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
     expect([late.getMeta().name, titleBox().value, saveStatus().textContent]).toEqual(['Late own title 744', BASE_TITLE, 'Unsaved changes'])
-    // The late save's accepted record replaces only its own optimistic one, so the refresh stays.
-    expect(storedNote(item.uid)).toBe(refreshed)
+    // The late save replaced R1, so its accepted record takes the place of the older refresh.
+    expect(storedNote(item.uid)).toMatchObject({ title: 'Late own title 744', revision: late.etag })
     const before = server.transactions.length
 
     hideTab()
@@ -1623,7 +1648,7 @@ describe('#744 the rendered note editor saves only through its captured base', (
     })
 
     it('keeps its accepted save over a refresh read before that save landed', async () => {
-      const { account, collection, item } = await openSavedNote()
+      const { account, collection, item, view } = await openSavedNote()
       // The server holds identical text at R1, so the R0 save rebinds through a fresh read.
       const peerItem = await peerWrites(account, collection, item, BASE_BODY)
       const rebindRead = server.holdNext(isItemGet(item.uid))
@@ -1636,9 +1661,21 @@ describe('#744 the rendered note editor saves only through its captured base', (
       rebindRead.release(false)
       await settle()
 
-      // The store still holds the older R1, so taking it would turn the title back.
-      expect([await serverTitle(account, collection, item.uid), storedNote(item.uid)?.title]).toEqual(['Late own title 1113', BASE_TITLE])
+      // The save replaced R1, so the row read at R1 gives way to the save's own record.
+      const landed = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+      expect([landed.getMeta().name, storedNote(item.uid)?.title, storedNote(item.uid)?.revision]).toEqual(['Late own title 1113', 'Late own title 1113', landed.etag])
       expect([titleBox().value, saveStatus().textContent]).toEqual(['Late own title 1113', 'Saved'])
+      // Opened again, the note starts from the saved version, so the next edit saves.
+      view.unmount()
+      await settle()
+      renderNotesPage()
+      fireEvent.click(ui().getByRole('button', { name: /Late own title 1113/ }))
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: 'Edited after reopening 1113' } })
+      hideTab()
+      await settle()
+
+      expect([await serverTitle(account, collection, item.uid), saveStatus().textContent]).toEqual(['Edited after reopening 1113', 'Saved'])
     })
 
     it('does not move the row for a read that ends after the draft was typed back to the saved text', async () => {
@@ -1758,6 +1795,151 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(within(newerPanel()!).getByText('The newer version could not be read in this browser.')).toBeTruthy()
       fireEvent.change(bodyBox(), { target: { value: 'STILL TYPING 1113' } })
       expect(bodyBox().value).toBe('STILL TYPING 1113')
+    })
+  })
+
+  describe('a sync that read the note before this page saved it', () => {
+    const SAVED_TITLE = 'Saved after the read 1147'
+
+    /**
+     * Runs one sync of the notebook as the sync handler does for a collection event: it
+     * lists the notebook from the server and hands the rows to the note store. The server
+     * answers the listing at once; the answer reaches this page only on `release`.
+     */
+    function startSync(collection: any) {
+      const transport = EtebaseRequest.default
+      let listed = () => {}
+      const read = new Promise<void>((resolve) => { listed = resolve })
+      let release = () => {}
+      const delivered = new Promise<void>((resolve) => { release = resolve })
+      EtebaseRequest.default = async (url: string, options: any) => {
+        const response = await transport(url, options)
+        const method = String(options?.method ?? 'get').toLowerCase()
+        if (method !== 'get' || !new URL(url).pathname.replace(/\/$/, '').endsWith(`collection/${collection.uid}/item`)) return response
+        EtebaseRequest.default = transport
+        listed()
+        await delivered
+        return response
+      }
+      const done = (async () => {
+        const core = await import('@silentsuite/core')
+        await useEtebaseStore.getState().refreshCollection('notes', collection.uid)
+        const items = await useEtebaseStore.getState().fetchAllItems('notes')
+        const rows = items.map((item) => ({ ...core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid), revision: item.revision }))
+        act(() => useNoteStore.getState().syncFromRemote(rows))
+      })()
+      return { read, release, done }
+    }
+
+    /** Holds the next transaction, then answers it with a server error; the server never sees it. */
+    function failNextTransaction() {
+      const transport = EtebaseRequest.default
+      let arrived = () => {}
+      const arrival = new Promise<void>((resolve) => { arrived = resolve })
+      let release = () => {}
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      EtebaseRequest.default = async (url: string, options: any) => {
+        const method = String(options?.method ?? 'get').toLowerCase()
+        if (method !== 'post' || !new URL(url).pathname.replace(/\/$/, '').endsWith('item/transaction')) return transport(url, options)
+        EtebaseRequest.default = transport
+        arrived()
+        await gate
+        return respond(500, { detail: 'Server error 1147' })
+      }
+      return { arrived: arrival, release }
+    }
+
+    it('keeps the saved title when the sync is delivered after the save ends, and the next edit saves', async () => {
+      const { account, collection, item } = await openSavedNote()
+      const sync = startSync(collection)
+      await sync.read
+      fireEvent.change(titleBox(), { target: { value: SAVED_TITLE } })
+      hideTab()
+      await settle()
+      expect([await serverTitle(account, collection, item.uid), saveStatus().textContent]).toEqual([SAVED_TITLE, 'Saved'])
+
+      sync.release()
+      await sync.done
+      await settle()
+
+      expect([titleBox().value, saveStatus().textContent, storedNote(item.uid)?.title]).toEqual([SAVED_TITLE, 'Saved', SAVED_TITLE])
+      fireEvent.change(titleBox(), { target: { value: 'Next edit 1147' } })
+      hideTab()
+      await settle()
+      expect([await serverTitle(account, collection, item.uid), saveStatus().textContent]).toEqual(['Next edit 1147', 'Saved'])
+    })
+
+    it('keeps a field another app wrote when the next edit saves after the sync is delivered', async () => {
+      const { account, collection, item } = await openSavedNote()
+      const sync = startSync(collection)
+      await sync.read
+      // Another app adds its own field before this page saves, so the save goes over that version.
+      const other = item._clone()
+      await other.setMeta({ ...other.getMeta(), otherApp: 'kept 1147' })
+      await account.getCollectionManager().getItemManager(collection).transaction([other])
+      fireEvent.change(titleBox(), { target: { value: SAVED_TITLE } })
+      hideTab()
+      await settle()
+      const saved = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+      expect([saved.getMeta().name, saved.getMeta().otherApp]).toEqual([SAVED_TITLE, 'kept 1147'])
+      // The sync read the note before that field existed, and leaves that older item in the item cache.
+      // The store then reads the item at the saved revision again; that read is held here, so the
+      // older item stays cached, as when the read fails.
+      const recache = server.holdNext((method, path) => method === 'get' && path.endsWith(`item/${item.uid}`))
+      sync.release()
+      await sync.done
+      await recache.arrived
+      await settle()
+      expect(useEtebaseStore.getState().itemCache.get(item.uid).etag).toBe(item.etag)
+
+      fireEvent.change(titleBox(), { target: { value: 'Next edit 1147' } })
+      hideTab()
+      await settle()
+
+      const next = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+      expect([next.getMeta().name, next.getMeta().otherApp, saveStatus().textContent]).toEqual(['Next edit 1147', 'kept 1147', 'Saved'])
+      recache.release(true)
+      await settle()
+    })
+
+    it('keeps the saved title when a repeat of the save fails after the sync is delivered', async () => {
+      const { account, collection, item } = await openSavedNote()
+      const sync = startSync(collection)
+      await sync.read
+      const first = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: SAVED_TITLE } })
+      hideTab()
+      await first.arrived
+      // The tab hides again while the first save runs, so the same text is queued again.
+      hideTab()
+      const second = failNextTransaction()
+      first.release(false)
+      await second.arrived
+      sync.release()
+      await sync.done
+      second.release()
+      await settle()
+
+      // The repeat was not accepted, so the editor checks the row again.
+      expect(await serverTitle(account, collection, item.uid)).toBe(SAVED_TITLE)
+      expect([titleBox().value, storedNote(item.uid)?.title]).toEqual([SAVED_TITLE, SAVED_TITLE])
+    })
+
+    it('still takes a version another device saved over this page\'s save', async () => {
+      const { account, collection, item } = await openSavedNote()
+      fireEvent.change(titleBox(), { target: { value: SAVED_TITLE } })
+      hideTab()
+      await settle()
+      const landed = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+      const peerItem = await peerWrites(account, collection, landed, PEER_BODY)
+
+      const sync = startSync(collection)
+      sync.release()
+      await sync.done
+      await settle()
+
+      expect([titleBox().value, bodyBox().value]).toEqual([SAVED_TITLE, PEER_BODY])
+      expect(storedNote(item.uid)).toMatchObject({ content: PEER_BODY, revision: peerItem.etag })
     })
   })
 })

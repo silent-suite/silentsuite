@@ -10,6 +10,8 @@ import {
   type CommercialEventPayload,
   type PaymentMethod,
   SIGNUP_ANALYTICS_PATHS,
+  SIGNUP_PAYMENT_RETURN_PATHS,
+  SIGNUP_PAYMENT_RETURN_STEPS,
   SIGNUP_STEPS,
   type SignupPageviewPayload,
 } from './public-analytics'
@@ -126,6 +128,9 @@ function buildInventory(): ReadonlyMap<string, InventoryEntry> {
   }
   add(buildSubscriptionManagementEntryPayload(), true)
   for (const step of SIGNUP_STEPS) add(buildSignupStepPayload(step), true)
+  for (const path of SIGNUP_PAYMENT_RETURN_PATHS) {
+    for (const step of SIGNUP_PAYMENT_RETURN_STEPS) add(buildSignupStepPayload(step, path), true)
+  }
   for (const page of WEB_VITALS_PAGES) {
     for (const metric of WEB_VITAL_METRICS) {
       for (const rating of WEB_VITAL_RATINGS) {

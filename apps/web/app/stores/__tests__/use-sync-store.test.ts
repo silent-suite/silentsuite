@@ -259,6 +259,53 @@ describe('useSyncStore', () => {
     vi.mocked(core.deserializeContact).mockReset()
   })
 
+  it('skips an event or task that does not parse instead of failing the whole sync cycle', async () => {
+    // The core parsers throw these for an item without DTSTART or without a VTODO.
+    const core = await import('@silentsuite/core')
+    vi.mocked(core.deserializeCalendarEvent).mockImplementation(((content: string) => {
+      if (content.includes('Secret title')) throw new Error('VEVENT missing required DTSTART property')
+      return { title: 'Kept' }
+    }) as never)
+    vi.mocked(core.deserializeTask).mockImplementation(((content: string) => {
+      if (!content.includes('VTODO')) throw new Error('VCALENDAR contains no VTODO component')
+      return { title: 'Kept task' }
+    }) as never)
+    const goodEvent = 'BEGIN:VEVENT DTSTART SUMMARY:Kept'
+    const noDtstart = 'BEGIN:VEVENT UID:bad-event SUMMARY:Secret title'
+    const goodTask = 'BEGIN:VTODO SUMMARY:Kept task'
+    const noVtodo = 'BEGIN:VCALENDAR END:VCALENDAR'
+    etebaseMock.state.refreshCollection.mockImplementation(async (type: string) => {
+      if (type === 'calendar') return [
+        { uid: 'item-bad', collectionUid: 'cal-1', content: noDtstart },
+        { uid: 'item-good', collectionUid: 'cal-1', content: goodEvent },
+      ]
+      if (type === 'tasks') return [
+        { uid: 'task-bad', collectionUid: 'list-1', content: noVtodo },
+        { uid: 'task-good', collectionUid: 'list-1', content: goodTask },
+      ]
+      return []
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      useSyncStore.getState().simulateSyncCycle()
+      await vi.waitFor(() => expect(useSyncStore.getState().syncStatus).toBe('synced'))
+
+      expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+      expect(calendarStoreMock.events.map((event) => event.id)).toEqual(['item-good'])
+      expect(preferencesSyncMock.loadFromRemote).toHaveBeenCalledTimes(1)
+      // Only a count is reported: no uid, title or content of the bad item.
+      const logged = JSON.stringify(warn.mock.calls)
+      expect(logged).toMatch(/1 calendar/)
+      expect(logged).toMatch(/1 tasks?/)
+      expect(logged).not.toMatch(/bad-event|item-bad|task-bad|Secret title/)
+    } finally {
+      warn.mockRestore()
+      vi.mocked(core.deserializeCalendarEvent).mockReset()
+      vi.mocked(core.deserializeTask).mockReset()
+    }
+  })
+
   it('does not replace a domain store when that domain refresh failed', async () => {
     etebaseMock.state.refreshCollection.mockImplementation(async (type: string) => {
       if (type === 'calendar') {

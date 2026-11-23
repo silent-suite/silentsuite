@@ -8,14 +8,17 @@ Forked and adapted from etesync-dav (AGPL-3.0).
 Original: https://github.com/etesync/etesync-dav
 """
 
+import base64
 import email.utils
 import hashlib
+import io
 import logging
 import posixpath
 import re
 import secrets
 import threading
 import time
+import urllib.parse
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 
@@ -595,12 +598,73 @@ class _VCardNicknameBehavior(vobject.icalendar.MultiTextBehavior):
 vobject.base.registerBehavior(_VCardNicknameBehavior, "NICKNAME")
 vobject.vcard.VCard3_0.knownChildren.setdefault("NICKNAME", (0, None, None))
 
-VCARD_4_TO_3_PHOTO_URI_REGEX = re.compile(
-    r"^(PHOTO|LOGO):http", re.MULTILINE
-)
-VCARD_4_TO_3_PHOTO_INLINE_REGEX = re.compile(
-    r"^(PHOTO|LOGO):data:image/([^;]*);base64,", re.MULTILINE
-)
+_DATA_URI_REGEX = re.compile(r"data:([^,]*),(.*)\Z", re.IGNORECASE | re.DOTALL)
+_BASE64_REGEX = re.compile(r"[A-Za-z0-9+/]*={0,2}\Z")
+
+
+def _vcard4_media_line_to_3(name, params, value, group):
+    """Return the vCard 3.0 text of one vCard 4 PHOTO/LOGO line, or None to keep it.
+
+    A data: URI becomes ENCODING=b with the image subtype as TYPE; any other URI
+    gets VALUE=uri. Other parameters and the group prefix are kept.
+    """
+    keys = {param[0].upper() for param in params}
+    if "ENCODING" in keys:
+        return None  # already the vCard 3.0 inline form
+    match = _DATA_URI_REGEX.match(value)
+    if match:
+        mediatype, *flags = match.group(1).split(";")
+        if any(flag.strip().lower() == "base64" for flag in flags):
+            # A data URI may percent-escape base64 characters (%3D for =).
+            value = urllib.parse.unquote(match.group(2))
+            if value != match.group(2) and not _BASE64_REGEX.match(value):
+                return None  # never emit decoded line breaks or other text
+        else:
+            value = base64.b64encode(
+                urllib.parse.unquote_to_bytes(match.group(2))
+            ).decode("ascii")
+        params = [
+            param for param in params
+            if param[0].upper() not in ("VALUE", "MEDIATYPE", "TYPE")
+        ] + [["ENCODING", "b"]]
+        subtype = mediatype.partition("/")[2]
+        if subtype:
+            params.append(["TYPE", subtype])
+    elif "VALUE" in keys:
+        return None
+    else:
+        params = params + [["VALUE", "uri"]]
+    param_text = "".join(
+        ";" + param[0]
+        + ("=" + ",".join(vobject.base.dquoteEscape(v) for v in param[1:]) if len(param) > 1 else "")
+        for param in params
+    )
+    return f"{group + '.' if group else ''}{name}{param_text}:{value}"
+
+
+def _vcard4_media_to_3(content):
+    """Rewrite vCard 4 PHOTO/LOGO lines into the vCard 3.0 forms clients read.
+
+    Works on unfolded content lines, so parameters and group prefixes are kept.
+    A line that is already in a 3.0 form, or that cannot be converted, is left
+    unchanged: dropping it would let a client edit delete the photo everywhere.
+    """
+    lines = []
+    changed = False
+    for line, _number in vobject.base.getLogicalLines(io.StringIO(content), allowQP=False):
+        try:
+            name, params, value, group = vobject.base.parseLine(line)
+        except vobject.base.ParseError:
+            name = None
+        if name is not None and name.upper() in ("PHOTO", "LOGO"):
+            converted = _vcard4_media_line_to_3(name, params, value, group)
+            if converted is not None:
+                line = converted
+                changed = True
+        lines.append(line)
+    return "\r\n".join(lines) + "\r\n" if changed else content
+
+
 # vCard 3.0 has no year-less date. A vCard 4 --MMDD / --MM-DD birthday is served
 # with the marked sentinel year that Apple clients and vcard4android read back
 # without a year; 1604 is a leap year, so --02-29 survives. ASCII digits only,
@@ -709,6 +773,10 @@ class EteSyncItem(Item):
 
 
 # --- Radicale Collection ---
+
+
+class CollectionDeleteNotAllowed(PermissionError):
+    """A DAV client asked to delete a whole collection this account does not administer."""
 
 
 class Collection(BaseCollection):
@@ -1019,17 +1087,9 @@ class Collection(BaseCollection):
                 if hasattr(item, "kind") and item.kind.value.lower() == "group":
                     pass
                 else:
-                    if "photo" in item.contents:
-                        content = etesync_item.content
-                        content = VCARD_4_TO_3_PHOTO_URI_REGEX.sub(
-                            r"\1;VALUE=uri:", content
-                        )
-                        content = VCARD_4_TO_3_PHOTO_INLINE_REGEX.sub(
-                            r"\1;ENCODING=b;TYPE=\2:", content
-                        )
+                    content = _vcard4_media_to_3(etesync_item.content)
+                    if content != etesync_item.content:
                         item = vobject.readOne(content)
-                        if content == etesync_item.content:
-                            del item.contents["photo"]
 
                     item.contents["version"][0].value = "3.0"
                     _mark_yearless_birthdays(item)
@@ -1164,6 +1224,10 @@ class Collection(BaseCollection):
             return
 
         if href is None:
+            if not self.collection.is_admin:
+                # The server refuses this delete, so marking it here would only leave
+                # a push that fails on every sync. Refuse it before anything changes.
+                raise CollectionDeleteNotAllowed("only a collection admin can delete the collection")
             self.collection.delete()
             log_sync_event("sync", "Deleted collection")
             return

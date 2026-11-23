@@ -1222,6 +1222,11 @@ class Etebase:
                         previous_state_hash = dav_collection_state_hash(
                             collection
                         )
+                    revived = collection.deleted and not col.deleted
+                    if revived:
+                        # Shared again after a removed membership purged its
+                        # items: pull every item, not only those changed since.
+                        collection.local_stoken = None
                     collection.eb_col = col_mgr.cache_save(col)
                     collection.stoken = col.stoken
                     collection.deleted = col.deleted
@@ -1236,6 +1241,7 @@ class Etebase:
                             models.CollectionEntity.deleted,
                             models.CollectionEntity.dav_href,
                         ]
+                        + ([models.CollectionEntity.local_stoken] if revived else [])
                     )
                     if previous_state_hash is not None:
                         reanchor_dav_state(collection, previous_state_hash)
@@ -2281,6 +2287,11 @@ class Collection:
         # generated from contacts, so DAV clients must not write it. The marker is read
         # from the collection content kept by the existing with-content cache envelope.
         return self.col.access_level == CollectionAccessLevel.ReadOnly or birthdays.is_managed_collection(self.col)
+
+    @property
+    def is_admin(self):
+        # Only an admin may delete the whole collection; the server refuses others.
+        return self.col.access_level == CollectionAccessLevel.Admin
 
     @property
     def stoken(self):

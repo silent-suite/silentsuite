@@ -9,6 +9,8 @@ interface CollectionListItemProps {
   visible: boolean
   isDefault: boolean
   canDelete: boolean
+  /** False on a shared collection this user does not administer: only an admin may delete it. */
+  isAdmin?: boolean
   itemLabel: string
   defaultLabel: string
   deleteLabel: string
@@ -28,7 +30,8 @@ export function CollectionListItem({
   color,
   visible,
   isDefault,
-  canDelete,
+  canDelete: canDeleteList,
+  isAdmin = true,
   itemLabel,
   defaultLabel,
   deleteLabel,
@@ -40,6 +43,7 @@ export function CollectionListItem({
   onColorChange,
   onDelete,
 }: CollectionListItemProps) {
+  const canDelete = canDeleteList && isAdmin
   const [menuOpen, setMenuOpen] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
   const [draftName, setDraftName] = useState(name)
@@ -271,7 +275,9 @@ export function CollectionListItem({
             {deleteLabel}
           </button>
           {!canDelete && (
-            <p className="px-3 pt-0.5 text-[10px] text-[rgb(var(--muted))]">Create another {itemLabel} before deleting.</p>
+            <p className="px-3 pt-0.5 text-[10px] text-[rgb(var(--muted))]">
+              {isAdmin ? `Create another ${itemLabel} before deleting.` : `Only an admin of this shared ${itemLabel} can delete it.`}
+            </p>
           )}
         </div>
       )}

@@ -86,7 +86,11 @@ const calendarStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn(() => order.
 // setState is observed only to prove the provider no longer toggles a notes
 // loading flag: list skeletons derive from domainLoadState (#747).
 const noteStoreMock = vi.hoisted(() => ({
-  syncFromRemote: vi.fn((_notes: unknown[] = []) => order.push('syncNotes')),
+  // Hands back the rows as the real store does when none was read before its own writes.
+  syncFromRemote: vi.fn((notes: unknown[] = []) => {
+    order.push('syncNotes')
+    return notes
+  }),
   setState: vi.fn(),
 }))
 const preferencesSyncMock = vi.hoisted(() => ({
@@ -391,6 +395,47 @@ describe('SyncProvider timing instrumentation', () => {
     expect(order).not.toContain('syncTasks')
   })
 
+  it('loads the parseable events and tasks when one item does not parse', async () => {
+    const core = await import('@silentsuite/core')
+    const parseOrThrow = (title: string) => (content: string) => {
+      if (content === 'BROKEN') throw new Error('VEVENT missing required DTSTART property')
+      return { title }
+    }
+    vi.mocked(core.deserializeCalendarEvent).mockImplementation(parseOrThrow('event') as never)
+    vi.mocked(core.deserializeTask).mockImplementation(parseOrThrow('task') as never)
+    const items = (prefix: string, collectionUid: string) => [
+      { uid: `${prefix}-bad`, content: 'BROKEN', collectionUid },
+      { uid: `${prefix}-good`, content: 'OK', collectionUid },
+    ]
+    etebaseMock.state.fetchAllItems.mockImplementation(async (type: DomainKey) => {
+      order.push(`fetchAllItems:${type}`)
+      if (type === 'calendar') return items('evt', 'cal-1')
+      if (type === 'tasks') return items('task', 'list-1')
+      return []
+    })
+
+    try {
+      renderProvider()
+
+      await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+      expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledWith([{ title: 'event', id: 'evt-good', calendarId: 'cal-1' }])
+      expect(taskStoreMock.syncFromRemote).toHaveBeenCalledWith([{ title: 'task', id: 'task-good', listId: 'list-1' }])
+      expect(useDomainSnapshotStore.getState().appliedEpoch.calendar).toBe(getAccountEpoch())
+
+      // A change event for the same domains also keeps the parseable items.
+      calendarStoreMock.syncFromRemote.mockClear()
+      taskStoreMock.syncFromRemote.mockClear()
+      const handler = etebaseMock.getSyncChangeHandler()!
+      await handler({ collectionType: 'etebase.vevent', collectionUid: 'cal-1', itemUids: ['evt-bad'], changeType: 'change' })
+      await handler({ collectionType: 'etebase.vtodo', collectionUid: 'list-1', itemUids: ['task-bad'], changeType: 'change' })
+      expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledWith([{ title: 'event', id: 'evt-good', calendarId: 'cal-1' }])
+      expect(taskStoreMock.syncFromRemote).toHaveBeenCalledWith([{ title: 'task', id: 'task-good', listId: 'list-1' }])
+    } finally {
+      vi.mocked(core.deserializeCalendarEvent).mockImplementation((() => ({ title: 'event' })) as never)
+      vi.mocked(core.deserializeTask).mockImplementation((() => ({ title: 'task' })) as never)
+    }
+  })
+
   it('replaces the calendar store only once during initial load', async () => {
     renderProvider()
 
@@ -429,6 +474,46 @@ describe('SyncProvider timing instrumentation', () => {
     expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('tasks', [], expect.any(Number))
     expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('contacts', [], expect.any(Number))
     expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('notes', [], expect.any(Number))
+  })
+
+  it('hydrates the parseable cached events and tasks when one cached item does not parse', async () => {
+    const core = await import('@silentsuite/core')
+    const parseOrThrow = (title: string) => (content: string) => {
+      if (content === 'BROKEN') throw new Error('VEVENT missing required DTSTART property')
+      return { title }
+    }
+    vi.mocked(core.deserializeCalendarEvent).mockImplementation(parseOrThrow('event') as never)
+    vi.mocked(core.deserializeTask).mockImplementation(parseOrThrow('task') as never)
+    cacheMock.isCacheEnabled.mockReturnValue(true)
+    cacheMock.getItemsByType.mockImplementation(async (type: string) => {
+      order.push(`cacheGet:${type}`)
+      const collectionUid = type === 'calendar' ? 'cal-1' : 'list-1'
+      if (type !== 'calendar' && type !== 'tasks') return []
+      return [
+        { itemUid: `${type}-bad`, collectionUid, content: 'BROKEN' },
+        { itemUid: `${type}-good`, collectionUid, content: 'OK' },
+      ]
+    })
+    etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate }) => {
+      order.push('etebaseInitialize')
+      await options?.onCacheHydrate?.()
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      renderProvider()
+
+      await waitFor(() => expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledTimes(1))
+      expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledWith([{ title: 'event', id: 'calendar-good', calendarId: 'cal-1' }])
+      await waitFor(() => expect(taskStoreMock.syncFromRemote).toHaveBeenCalledTimes(1))
+      expect(taskStoreMock.syncFromRemote).toHaveBeenCalledWith([{ title: 'task', id: 'tasks-good', listId: 'list-1' }])
+      // Only a count is reported, never the item's uid.
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/-bad/)
+    } finally {
+      warn.mockRestore()
+      vi.mocked(core.deserializeCalendarEvent).mockImplementation((() => ({ title: 'event' })) as never)
+      vi.mocked(core.deserializeTask).mockImplementation((() => ({ title: 'task' })) as never)
+    }
   })
 
   it('lets cache hydrate first and then overwrites calendar with server truth', async () => {

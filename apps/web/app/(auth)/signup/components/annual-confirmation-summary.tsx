@@ -41,6 +41,7 @@ export function AnnualTermsSummary({ disclosure }: { disclosure: AnnualDisclosur
       <p className="text-sm text-[rgb(var(--muted))]">
         Add your card information. After that the 30 days free trial starts and you only get billed
         {chargeDay(disclosure.firstChargeAt) ? ` on ${chargeDay(disclosure.firstChargeAt)}` : ' once the trial ends'}, if not cancelled before.
+        {' '}{money(disclosure.firstChargeAmountMinor)} per year after the trial, renews yearly until you cancel.
       </p>
     )
   }

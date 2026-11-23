@@ -827,6 +827,140 @@ describe('EventDialog in a calendar shared read-only', () => {
   })
 })
 
+describe('EventDialog saved after a sync refreshed the event', () => {
+  beforeEach(() => {
+    mocks.updateEvent.mockReset().mockResolvedValue(undefined)
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  it('sends only the field changed here, not the other device\'s values back', async () => {
+    const opened = makeEvent({ location: 'Room 1' })
+    const view = renderWithIntl(<EventDialog mode="edit" event={opened} onClose={mocks.onClose} />)
+
+    // Another device renamed and moved the event; the poll replaces the store's object.
+    view.rerender(<EventDialog mode="edit" event={{
+      ...opened,
+      title: 'Renamed elsewhere',
+      location: 'Room 9',
+      startDate: new Date('2026-06-01T11:00:00Z'),
+      endDate: new Date('2026-06-01T12:00:00Z'),
+    }} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event description'), { target: { value: 'Agenda' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1))
+    expect(mocks.updateEvent).toHaveBeenCalledWith(opened.id, { description: 'Agenda' })
+  })
+
+  it.each([
+    ['a start with seconds', makeEvent({ startDate: new Date('2026-06-01T09:00:30Z'), endDate: new Date('2026-06-01T10:00:30Z') })],
+    ['a zero-length event', makeEvent({ endDate: new Date('2026-06-01T09:00:00Z') })],
+    ['text with surrounding spaces', makeEvent({ title: ' Standup ', location: ' Room 1 ' })],
+  ])('sends no untouched time or text for %s', async (_name, opened) => {
+    const view = renderWithIntl(<EventDialog mode="edit" event={opened} onClose={mocks.onClose} />)
+    view.rerender(<EventDialog mode="edit" event={{
+      ...opened,
+      title: 'Renamed elsewhere',
+      startDate: new Date('2026-06-01T11:00:00Z'),
+      endDate: new Date('2026-06-01T12:00:00Z'),
+    }} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event description'), { target: { value: 'Agenda' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1))
+    expect(mocks.updateEvent).toHaveBeenCalledWith(opened.id, { description: 'Agenda' })
+  })
+
+  it('sends only the end after an end-only edit, keeping a start another device moved', async () => {
+    const opened = makeEvent({ startDate: new Date('2026-06-01T09:00:30Z'), endDate: new Date('2026-06-01T10:00:00Z') })
+    const view = renderWithIntl(<EventDialog mode="edit" event={opened} onClose={mocks.onClose} />)
+    view.rerender(<EventDialog mode="edit" event={{ ...opened, startDate: new Date('2026-06-01T08:00:00Z') }} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('End time'), { target: { value: '10:30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1))
+    expect(mocks.updateEvent).toHaveBeenCalledWith(opened.id, { endDate: new Date('2026-06-01T10:30:00Z') })
+  })
+
+  it.each(['delete', 'edit'] as const)(
+    'a search-opened "This event" %s acts on the occurrence another device moved and made recurring',
+    async (action) => {
+      mocks.deleteRecurringEvent.mockReset()
+      mocks.updateRecurringEvent.mockReset()
+      // Calendar search opens the dialog without an occurrence date.
+      const opened = makeEvent()
+      const view = renderWithIntl(<EventDialog mode="edit" event={opened} onClose={mocks.onClose} />)
+      const movedStart = new Date('2026-06-01T11:00:00Z')
+      view.rerender(<EventDialog mode="edit" event={{
+        ...opened,
+        startDate: movedStart,
+        endDate: new Date('2026-06-01T12:00:00Z'),
+        recurrenceRule: 'FREQ=DAILY',
+      }} onClose={mocks.onClose} />)
+
+      if (action === 'delete') {
+        fireEvent.click(screen.getByRole('button', { name: /Delete event/ }))
+        fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete recurring event' })).getByRole('button', { name: /This event/ }))
+        expect(mocks.deleteRecurringEvent).toHaveBeenCalledWith(opened.id, 'this', movedStart)
+      } else {
+        fireEvent.change(screen.getByLabelText('Event description'), { target: { value: 'Agenda' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+        const scopeDialog = await screen.findByRole('dialog', { name: 'Edit recurring event' })
+        fireEvent.click(within(scopeDialog).getByRole('button', { name: /This event/ }))
+        expect(mocks.updateRecurringEvent).toHaveBeenCalledWith(opened.id, { description: 'Agenda' }, 'this', movedStart)
+      }
+    },
+  )
+
+  it('asks for the scope before deleting an event another device made recurring', () => {
+    mocks.deleteEvent.mockReset()
+    const opened = makeEvent()
+    const view = renderWithIntl(<EventDialog mode="edit" event={opened} onClose={mocks.onClose} />)
+    view.rerender(<EventDialog mode="edit" event={{ ...opened, recurrenceRule: 'FREQ=DAILY;COUNT=5' }} onClose={mocks.onClose} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Delete event/ }))
+
+    expect(mocks.deleteEvent).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Delete recurring event' })).toBeVisible()
+  })
+
+  it('asks for the scope before saving an event another device made recurring', async () => {
+    const opened = makeEvent()
+    const view = renderWithIntl(<EventDialog mode="edit" event={opened} onClose={mocks.onClose} />)
+    view.rerender(<EventDialog mode="edit" event={{ ...opened, recurrenceRule: 'FREQ=DAILY;COUNT=5' }} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event description'), { target: { value: 'Agenda' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Edit recurring event' })).toBeVisible()
+    expect(mocks.updateEvent).not.toHaveBeenCalled()
+  })
+
+  it('deletes and saves an occurrence of a series another device made single as that single event', async () => {
+    mocks.deleteEvent.mockReset()
+    mocks.deleteRecurringEvent.mockReset()
+    mocks.updateRecurringEvent.mockReset()
+    const opened = makeEvent({ recurrenceRule: 'FREQ=DAILY;COUNT=5' })
+    const instanceDate = new Date('2026-06-03T09:00:00Z')
+    const view = renderWithIntl(<EventDialog mode="edit" event={opened} instanceDate={instanceDate} onClose={mocks.onClose} />)
+    view.rerender(<EventDialog mode="edit" event={{ ...opened, recurrenceRule: null }} instanceDate={instanceDate} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event description'), { target: { value: 'Agenda' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledWith(opened.id, { description: 'Agenda' }))
+    expect(screen.queryByRole('dialog', { name: 'Edit recurring event' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Delete event/ }))
+    expect(mocks.deleteEvent).toHaveBeenCalledWith(opened.id)
+    expect(mocks.deleteRecurringEvent).not.toHaveBeenCalled()
+    expect(mocks.updateRecurringEvent).not.toHaveBeenCalled()
+  })
+})
+
 // WEB-01: an occurrence opened from the grid is edited at its own date and time.
 describe('EventDialog edits a later occurrence at its own date (WEB-01)', () => {
   beforeEach(() => {
@@ -926,6 +1060,90 @@ describe('EventDialog edits a later occurrence at its own date (WEB-01)', () => 
     const [, patch] = await saveWithScope(/All events/)
 
     expect(patch).toEqual({ title: 'Renamed' })
+  })
+})
+
+describe('EventDialog opens a moved occurrence as it was moved', () => {
+  beforeEach(() => {
+    mocks.updateRecurringEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  // Another client moved the 15 March occurrence from 10:00 to 15:00 and renamed it.
+  const series = () => ({
+    ...deserializeCalendarEvent([
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+      'BEGIN:VEVENT', 'UID:override-series',
+      'DTSTART;TZID=Europe/Berlin:20270301T100000', 'DTEND;TZID=Europe/Berlin:20270301T110000',
+      'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:Weekly', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:override-series',
+      'RECURRENCE-ID;TZID=Europe/Berlin:20270315T100000',
+      'DTSTART;TZID=Europe/Berlin:20270315T150000', 'DTEND;TZID=Europe/Berlin:20270315T160000',
+      'SUMMARY:Moved', 'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n')),
+    calendarId: 'cal-a',
+  })
+  const moved = new Date('2027-03-15T09:00:00Z')
+
+  async function saveWithScope(scope: RegExp) {
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    const scopeDialog = await screen.findByRole('dialog', { name: 'Edit recurring event' })
+    fireEvent.click(within(scopeDialog).getByRole('button', { name: scope }))
+    await waitFor(() => expect(mocks.updateRecurringEvent).toHaveBeenCalledTimes(1))
+    return mocks.updateRecurringEvent.mock.calls[0]! as [string, Partial<CalendarEvent>, string, Date]
+  }
+
+  it('shows the override\'s time and title', () => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={moved} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Event title')).toHaveValue('Moved')
+    expect(screen.getByLabelText('Start date')).toHaveValue('2027-03-15')
+    expect(screen.getByLabelText('Start time')).toHaveValue('15:00')
+    expect(screen.getByLabelText('End time')).toHaveValue('16:00')
+  })
+
+  it.each([
+    [/This event/],
+    [/All events/],
+  ] as const)('a location-only save for %s sends only the location', async (scopeName) => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={moved} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event location'), { target: { value: 'Room 2' } })
+
+    const [, patch, , instance] = await saveWithScope(scopeName)
+
+    expect(patch).toEqual({ location: 'Room 2' })
+    expect(instance).toEqual(moved)
+  })
+
+  it('a "this and future" end change moves the series\' own slot by the same amount', async () => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={moved} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('End time'), { target: { value: '15:30' } })
+
+    const [, patch, scope, instance] = await saveWithScope(/This and all future/)
+
+    // The series' 10:00-11:00 slot on 15 March (Berlin) ends 30 minutes earlier, as the moved one did.
+    expect([scope, instance]).toEqual(['this_and_future', moved])
+    expect(patch).toEqual({ endDate: new Date('2027-03-15T09:30:00Z') })
+  })
+
+  it('control: a "this event" end change keeps the moved slot', async () => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={moved} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('End time'), { target: { value: '15:30' } })
+
+    const [, patch] = await saveWithScope(/This event/)
+
+    expect(patch).toEqual({ endDate: new Date('2027-03-15T14:30:00Z') })
+  })
+
+  it('control: another occurrence opens with the series\' time and title', () => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={new Date('2027-03-08T09:00:00Z')} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Event title')).toHaveValue('Weekly')
+    expect(screen.getByLabelText('Start time')).toHaveValue('10:00')
   })
 })
 

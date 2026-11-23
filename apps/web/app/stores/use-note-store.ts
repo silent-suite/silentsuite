@@ -154,6 +154,105 @@ const heldRecordWrites = new Map<string, Promise<HeldTextDurability>>()
 const reopenedHeldRows = new Map<string, { row: StoredNote; accountEpoch: number }>()
 
 /**
+ * Per note, what this page's own accepted writes of it left behind. Etebase revisions
+ * are random and never come back, and a note's history is one line, so a revision that
+ * existed before one of this page's writes of the note was sent is older than the
+ * revision that write was accepted at: a row at it can only come from a sync that read
+ * the note before the write landed. The same holds for the live version Show newer version
+ * reads. Revisions only, never note text.
+ */
+const ownNoteWrites = new Map<string, {
+  /** Revisions this page's accepted writes moved past, oldest first. */
+  superseded: string[]
+  /**
+   * The revision this page's last accepted save of the note was accepted at, or the version
+   * Show newer version last put in its row; null after its delete.
+   */
+  committed: string | null
+  accountEpoch: number
+}>()
+// A sync snapshot is seconds old; the oldest revisions of a note saved all session are dropped.
+const MAX_SUPERSEDED_REVISIONS = 64
+
+function getOwnNoteWrites(id: string) {
+  const entry = ownNoteWrites.get(id)
+  if (!entry) return undefined
+  if (!isCurrentAccountEpoch(entry.accountEpoch)) {
+    ownNoteWrites.delete(id)
+    return undefined
+  }
+  return entry
+}
+
+/**
+ * This page's own write of the note was accepted at `committed` (null for a delete), and
+ * every revision in `older` existed before that write was sent. So did the revision of
+ * this page's previous accepted save of the note, even when the write went over another
+ * device's version (Show newer version). Show newer version also records the live version
+ * it put in the row as `committed`, over the row's revision. Returns every revision this
+ * page has moved past for the note.
+ */
+function noteWriteAccepted(id: string, committed: string | null, older: (string | null | undefined)[]): ReadonlySet<string> {
+  const previous = getOwnNoteWrites(id)
+  const superseded = previous?.superseded.filter((revision) => revision !== committed) ?? []
+  for (const revision of [previous?.committed, ...older]) {
+    if (revision && revision !== committed && !superseded.includes(revision)) superseded.push(revision)
+  }
+  superseded.splice(0, Math.max(0, superseded.length - MAX_SUPERSEDED_REVISIONS))
+  ownNoteWrites.set(id, { superseded, committed, accountEpoch: getAccountEpoch() })
+  return new Set(superseded)
+}
+
+/**
+ * The record a save made here shows in place of the row it started from, while it runs and,
+ * once queued offline, after; mapped to that row (what the save's rollback restores). Held
+ * only as long as the record itself.
+ */
+const optimisticNoteRecords = new WeakMap<StoredNote, StoredNote>()
+
+/** For the record of a save made here, the row the first such save started from; any other row as it is. */
+function rowBeforeRunningSaves(row: StoredNote): StoredNote {
+  let current = row
+  // Each record maps to a row that existed before it, so the walk ends.
+  for (let earlier = optimisticNoteRecords.get(current); earlier; earlier = optimisticNoteRecords.get(current)) current = earlier
+  return current
+}
+
+/** Whether a sync read the row before one of this page's own writes of the note landed. */
+function readBeforeOwnWrite(row: StoredNote, shown: StoredNote | undefined): boolean {
+  // A row from the display cache has no revision. It never replaces the record of a save
+  // made here (running, or queued offline), which only that save replaces or rolls back.
+  if (row.revision === null && shown && optimisticNoteRecords.has(shown)) return true
+  const entry = getOwnNoteWrites(row.id)
+  if (!entry) return false
+  // Nor does it replace the row of this page's own accepted save, or bring back a note this
+  // page deleted (`committed` is null only then).
+  if (row.revision === null) return entry.committed === null || shown?.revision === entry.committed
+  return entry.superseded.includes(row.revision)
+}
+
+/**
+ * A sync that read the note at `staleRevision`, before this page's own save at `revision`
+ * landed, also cached the SDK item it read (refreshCollection replaces cached items), while
+ * the row and the editor's base stay at `revision`. A save checks the cached item's revision,
+ * offline too, and Move takes its metadata, so the item at `revision` is read afresh and
+ * cached in place of that older item, only while the cache still holds it. An edit typed
+ * meanwhile saves from `revision` too, so its running record does not stop this. Online
+ * only; any failed or different read changes nothing.
+ */
+async function recacheOwnNoteItem(id: string, notebookId: string | undefined, staleRevision: string, revision: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+  const accountEpoch = getAccountEpoch()
+  const cached = useEtebaseStore.getState().itemCache.get(id)
+  if (cached === undefined) return
+  const { savedRevisionOf } = await import('@silentsuite/core')
+  if (!isCurrentAccountEpoch(accountEpoch) || savedRevisionOf(cached) !== staleRevision) return
+  const read = await readLiveNote(id, notebookId)
+  if (!isCurrentAccountEpoch(accountEpoch) || read.kind !== 'note' || read.revision !== revision) return
+  publishFetchedNoteItem(id, cached, read.item)
+}
+
+/**
  * Where a note's held text is: in its sealed record; only in this page; or 'blocked',
  * when a record of it exists that this page could not update.
  */
@@ -242,11 +341,10 @@ function recordHolds(id: string, text: NoteText): boolean {
 
 /**
  * Notes with text that exists only in this page: held text its record does not hold,
- * an open editor's typing its record does not hold, a closing save. With `heldOnly`,
- * an open editor counts only while its note has held text or a record, as the leave
- * prompt has always asked only for held text.
+ * an open editor's typing its record does not hold (waiting for its autosave or with
+ * its save running), a closing save.
  */
-function noteTextOnlyInPage(heldOnly = false): Set<string> {
+function noteTextOnlyInPage(): Set<string> {
   const ids = new Set<string>()
   for (const id of [...heldNoteDrafts.keys()]) {
     const held = getHeldNoteDraft(id)
@@ -256,7 +354,6 @@ function noteTextOnlyInPage(heldOnly = false): Set<string> {
     const editor = getMountedNoteEditor(id)
     if (!editor || editor.isClean()) continue
     const record = getHeldNoteRecord(id)
-    if (heldOnly && !record && !getHeldNoteDraft(id)) continue
     const typed = editor.draft?.()
     if (!record || !typed || !recordHolds(id, typed)) ids.add(id)
   }
@@ -264,17 +361,28 @@ function noteTextOnlyInPage(heldOnly = false): Set<string> {
   return ids
 }
 
+/** Whether an open editor has typing not yet saved, or a save still running. */
+function editorHasUnsavedWork(): boolean {
+  for (const id of [...mountedEditors.keys()]) {
+    const editor = getMountedNoteEditor(id)
+    if (editor && (!editor.isClean() || !editor.chainIdle())) return true
+  }
+  return false
+}
+
 /**
- * While held text, a held record, a closing save or a running copy exists, a leave
- * listener is installed; it asks only when, at that moment, some text exists only in
- * this page (held text or typing its record does not hold, a closing save, a copy).
+ * While held text, a held record, a closing save, a running copy, or an open editor's
+ * unsaved typing or running save exists, a leave listener is installed; it asks only
+ * when, at that moment, some text exists only in this page (held text or typing its
+ * record does not hold, a closing save, a copy).
  */
 function syncUnloadGuard(): void {
   if (typeof window === 'undefined') return
   const needed = heldNoteDrafts.size > 0 || heldNoteRecords.size > 0 || closingNoteSaves.size > 0 || noteCopiesInFlight.size > 0
+    || editorHasUnsavedWork()
   if (needed && !unloadGuard) {
     unloadGuard = (event) => {
-      if (noteCopiesInFlight.size === 0 && noteTextOnlyInPage(true).size === 0) return
+      if (noteCopiesInFlight.size === 0 && noteTextOnlyInPage().size === 0) return
       event.preventDefault()
       // Older browsers show the prompt only when returnValue is set.
       event.returnValue = ''
@@ -380,6 +488,9 @@ export async function readNewerNoteVersion(id: string): Promise<NewerNoteVersion
     && publishFetchedNoteItem(id, cached, read.item)
   ) {
     const { title, content, revision, updatedAt } = read
+    // The version read is the live one, read after the row's revision and after this page's
+    // writes, so it descends from them: a sync row at one of them is older, as after a write.
+    noteWriteAccepted(id, revision, [shown.revision])
     useNoteStore.setState((state) => ({
       notes: state.notes.map((n) => (n === shown ? { ...n, title, content, revision, updated_at: updatedAt } : n)),
     }))
@@ -569,7 +680,13 @@ export function registerNoteEditor(id: string, editor: MountedNoteEditor): () =>
   mountedEditors.set(id, entry)
   return () => {
     if (mountedEditors.get(id) === entry) mountedEditors.delete(id)
+    syncUnloadGuard()
   }
+}
+
+/** An open editor's typing or save state changed: the leave prompt follows it. */
+export function noteEditorStateChanged(): void {
+  syncUnloadGuard()
 }
 
 /** The note's mounted editor in this account, if any. */
@@ -623,6 +740,7 @@ export function resetNoteLifecycle(): void {
   heldNoteRecords.clear()
   heldRecordWrites.clear()
   reopenedHeldRows.clear()
+  ownNoteWrites.clear()
   heldTextReopen = null
   useNoteStore.setState({ closingNoteIds: [], heldTextReopen: 'idle' })
   syncUnloadGuard()
@@ -894,7 +1012,12 @@ interface NoteActions {
    */
   saveNoteCopy: (id: string, held: HeldNoteDraft) => Promise<NoteCopyResult>
   canWriteNote: (note: Note) => boolean
-  syncFromRemote: (notes: StoredNote[]) => void
+  /**
+   * Replaces the list with a sync's rows. Returns, for the display cache, the listed rows
+   * as saved: a row read before this page's own write of the note landed is replaced by
+   * this page's saved row, or left out for a note this page deleted.
+   */
+  syncFromRemote: (notes: StoredNote[]) => StoredNote[]
 }
 
 /** The starred notebook when it is shown and writable, else the first such notebook by name. */
@@ -976,6 +1099,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       if (capture) {
         // The optimistic record has no known revision until its own save is accepted.
         const pending: StoredNote = { ...existing, ...patch, updated_at: new Date(), revision: null }
+        optimisticNoteRecords.set(pending, existing)
         set((state) => ({ notes: state.notes.map((n) => (n.id === id ? pending : n)) }))
         // Only this save's own record is ever rolled back; a newer published one stays.
         const rollback = () => {
@@ -1005,9 +1129,15 @@ export const useNoteStore = create<NoteState & NoteActions>()(
             onRefused: (reason) => {
               if (isCurrentAccountEpoch(accountEpoch)) capture.onRefused?.(reason)
             },
-            onSaved: (etag) => {
+            onSaved: (etag, replaced) => {
               if (!isCurrentAccountEpoch(accountEpoch)) return
-              set((state) => ({ notes: state.notes.map((n) => (n === pending ? { ...pending, revision: etag } : n)) }))
+              // The base, the row the save started from and the revision it replaced are all
+              // older than this save: a row at one of them, read by a sync while the save ran,
+              // gives way to the save's own record.
+              const older = noteWriteAccepted(id, etag, [capture.base.revision, existing.revision, replaced])
+              const saved: StoredNote = { ...pending, revision: etag }
+              const givesWay = (n: StoredNote) => n === pending || (n.id === id && n.revision !== null && older.has(n.revision))
+              set((state) => ({ notes: state.notes.map((n) => (givesWay(n) ? saved : n)) }))
               capture.onSaved?.(etag)
             },
           })
@@ -1096,6 +1226,9 @@ export const useNoteStore = create<NoteState & NoteActions>()(
           },
         })
         if (!isCurrentAccountEpoch(accountEpoch) || outcome === false) return false
+        // Deleted on the server at that revision: a sync that read the note before stays without it.
+        // A queued delete has not reached the server, which still lists the note.
+        if (outcome === 'remote') noteWriteAccepted(id, null, [revision, shown.revision])
         // Typing begun on the open editor while the delete was in flight stays shown, and can only be refused.
         if (typedSince(id, editor, period)) return true
         set((state) => ({ notes: state.notes.filter((n) => n.id !== id) }))
@@ -1201,9 +1334,30 @@ export const useNoteStore = create<NoteState & NoteActions>()(
     },
 
     syncFromRemote: (remoteNotes) => {
+      const shown = new Map(get().notes.map((n) => [n.id, n]))
+      const rows: StoredNote[] = []
+      const saved: StoredNote[] = []
+      for (const row of remoteNotes) {
+        if (!readBeforeOwnWrite(row, shown.get(row.id))) {
+          rows.push(row)
+          saved.push(row)
+          continue
+        }
+        // A row read before this page's own write of the note landed gives way to the row
+        // this page holds, and a note this page deleted stays away.
+        const own = shown.get(row.id)
+        if (!own) continue
+        rows.push(own)
+        if (row.revision !== null && own.revision !== null) {
+          void recacheOwnNoteItem(row.id, own.notebookId, row.revision, own.revision).catch(() => {})
+        }
+        // The display cache gets saved text only: not the text of a save still running, which
+        // may yet be refused, and not a note this page deleted that typing keeps shown.
+        if (getOwnNoteWrites(row.id)?.committed !== null) saved.push(rowBeforeRunningSaves(own))
+      }
       // A note the server no longer lists stays shown while its open editor holds unsaved typing (#744),
       // or while its text is held after a failed save (#1113 D1).
-      const remoteIds = new Set(remoteNotes.map((n) => n.id))
+      const remoteIds = new Set(rows.map((n) => n.id))
       const kept = get().notes.filter((n) => !remoteIds.has(n.id) && hasUnsavedNoteText(n.id))
       // Held text reopened from its record before the list loaded, for a note the list does not show.
       const listed = new Set([...remoteIds, ...kept.map((n) => n.id)])
@@ -1212,7 +1366,8 @@ export const useNoteStore = create<NoteState & NoteActions>()(
         if (!isCurrentAccountEpoch(entry.accountEpoch)) reopenedHeldRows.delete(id)
         else if (!listed.has(id) && getHeldNoteDraft(id)) reopened.push(entry.row)
       }
-      set({ notes: [...remoteNotes, ...kept, ...reopened], syncStatus: 'synced' })
+      set({ notes: [...rows, ...kept, ...reopened], syncStatus: 'synced' })
+      return saved
     },
   }),
 )

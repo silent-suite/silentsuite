@@ -1,17 +1,12 @@
 // /retry-ci: lets one named contributor rerun the failed jobs of his own fork
-// pull request's build/test runs, once per head commit. Run by
-// .github/workflows/retry-ci.yml from the default branch; nothing here comes
-// from the pull request. Every check fails closed: nothing is rerun unless
-// all of them pass, and a failed rerun request stops the command.
-//
-// Two phases, one job, one global concurrency group:
-//   admit  decide, and refuse if this commit already has an admission marker
-//   (the workflow then uploads the marker artifact `retry-ci-<sha>`)
-//   rerun  decide again, require exactly this job's marker to be visible,
-//          then rerun, re-reading the pull request and its history before
-//          every request.
-// The marker is written before any rerun and only maintainers can delete it,
-// so a commit gets one admission even if GitHub is slow to show the rerun.
+// pull request's build/test runs, as often as he likes, once every run on the
+// head commit has finished. Run by .github/workflows/retry-ci.yml from the
+// default branch; nothing here comes from the pull request. Every check fails
+// closed: nothing is rerun unless all of them pass, and a failed rerun request
+// stops the command. The pull request, its history and each target run are
+// re-read before every rerun request, and after each request the job waits
+// until GitHub shows the new attempt, so the next comment (held by the
+// concurrency group until then) cannot ask for the same rerun twice.
 //
 // Why this is safe: it only reruns existing `pull_request` runs from a fork.
 // GitHub reruns them in their original event context (read-only token, no
@@ -102,8 +97,8 @@ function wellFormedRun(run) {
 // this pull request only when event, commit, fork and branch all match it, and
 // (checked by the caller) this is the only pull request ever opened from that
 // branch and its base never changed. Every listed workflow filters
-// pull_request to main. The retry is counted per commit across every branch
-// of the fork, and only runs created before the comment count.
+// pull_request to main. The same commit running CI from another branch of the
+// fork refuses, and only runs created before the comment count.
 export function selectRuns(pr, listing, commentCreatedAt) {
   if (!listing || !Array.isArray(listing.workflow_runs) || !Number.isSafeInteger(listing.total_count)) {
     return refuse('the workflow runs could not be read')
@@ -132,9 +127,6 @@ export function selectRuns(pr, listing, commentCreatedAt) {
   const duplicated = [...perWorkflow].filter(([, count]) => count > 1).map(([path]) => path)
   if (duplicated.length) {
     return refuse(`more than one run of ${duplicated.join(', ')} on this commit (reopened?); ask a maintainer`)
-  }
-  if (runs.some(run => run.run_attempt !== 1)) {
-    return refuse('this commit has already been retried; push a new commit or ask a maintainer')
   }
   // Strictly earlier: a run created in the same second as the comment may
   // belong to a push the contributor had not seen.
@@ -184,39 +176,14 @@ function client({ token, fetchImpl, api }) {
 }
 
 const TIMELINE_PAGES = 10
-export const markerName = sha => `retry-ci-${sha}`
+const VISIBLE_TRIES = 20
+const VISIBLE_WAIT_MS = 2000
 const samePull = (a, b) =>
   a.number === b.number && a.head.sha === b.head.sha && a.head.ref === b.head.ref && a.head.repo.id === b.head.repo.id
 
-// The admission markers for one commit: refuse unless the listing is complete
-// and every entry carries the exact name and its run's repositories. Only
-// markers uploaded by a run of this repository on itself count; fork CI can
-// upload an artifact of the same name, and that one is ignored.
-export function readMarkers(listing, sha) {
-  const wellFormed = artifact =>
-    artifact?.name === markerName(sha) &&
-    Number.isSafeInteger(artifact.workflow_run?.id) &&
-    Number.isSafeInteger(artifact.workflow_run.repository_id) &&
-    Number.isSafeInteger(artifact.workflow_run.head_repository_id)
-  if (
-    !listing ||
-    !Array.isArray(listing.artifacts) ||
-    !Number.isSafeInteger(listing.total_count) ||
-    listing.artifacts.length !== listing.total_count ||
-    !listing.artifacts.every(wellFormed)
-  ) {
-    return refuse('the admission record could not be read')
-  }
-  const trusted = listing.artifacts.filter(
-    artifact =>
-      artifact.workflow_run.repository_id === REPOSITORY_ID && artifact.workflow_run.head_repository_id === REPOSITORY_ID,
-  )
-  return { ok: true, artifacts: trusted }
-}
-
 // The target run as it is right before its rerun request: still the selected
-// run, still attempt 1, still a finished failure. A maintainer's rerun in
-// between makes it refuse instead of asking for a third attempt.
+// run, still a finished failure. A rerun started by someone else in between
+// makes it refuse instead of stacking a second one.
 export function checkTarget(now, selected) {
   if (
     !wellFormedRun(now) ||
@@ -229,21 +196,21 @@ export function checkTarget(now, selected) {
   ) {
     return refuse(`run ${selected.id} could not be re-read`)
   }
-  if (now.run_attempt !== 1 || now.status !== 'completed' || !RETRYABLE_CONCLUSIONS.has(now.conclusion)) {
+  if (now.run_attempt !== selected.run_attempt || now.status !== 'completed' || !RETRYABLE_CONCLUSIONS.has(now.conclusion)) {
     return refuse(`run ${selected.id} changed since the check (rerun by someone else?)`)
   }
   return { ok: true }
 }
 
-// Returns { ok, reason?, sha?, runs?, retried: [run ids] }. Throws only on
-// API errors before any rerun was requested.
-export async function retryCi({ env, phase, fetchImpl = fetch }) {
-  if (phase !== 'admit' && phase !== 'rerun') return { ...refuse('unknown phase'), retried: [] }
+// Returns { ok, reason?, sha?, runs?, retried: [run ids], unconfirmed?: [run
+// id] }. `retried` lists only reruns GitHub showed; `unconfirmed` the one
+// request whose outcome it never showed. Throws only on API errors before any
+// rerun was requested.
+export async function retryCi({ env, fetchImpl = fetch, sleep = ms => new Promise(done => setTimeout(done, ms)) }) {
   const comment = checkComment({ userId: env.COMMENT_USER_ID, body: env.COMMENT_BODY })
   if (!comment.ok) return { ...comment, retried: [] }
   if (!/^[1-9][0-9]*$/.test(env.PR_NUMBER ?? '')) return { ...refuse('no pull request number'), retried: [] }
   if (env.REPO !== REPOSITORY) return { ...refuse(`only ${REPOSITORY} is supported`), retried: [] }
-  if (phase === 'rerun' && !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? '')) return { ...refuse('no run id'), retried: [] }
 
   const call = client({ token: env.GH_TOKEN, fetchImpl, api: env.GITHUB_API_URL || 'https://api.github.com' })
   const repo = `/repos/${env.REPO}`
@@ -268,6 +235,19 @@ export async function retryCi({ env, phase, fetchImpl = fetch }) {
     return checkTimeline(events, since)
   }
 
+  const rerunVisible = async selected => {
+    for (let tries = 0; tries < VISIBLE_TRIES; tries++) {
+      if (tries) await sleep(VISIBLE_WAIT_MS)
+      try {
+        const now = await call('GET', `${repo}/actions/runs/${selected.id}`)
+        if (now?.id === selected.id && Number.isSafeInteger(now.run_attempt) && now.run_attempt > selected.run_attempt) return true
+      } catch {
+        // keep waiting; an unreadable answer is not a visible rerun
+      }
+    }
+    return false
+  }
+
   const first = await readPull()
   if (!first.ok) return { ...first, retried: [] }
   const pull = first.pull
@@ -289,25 +269,6 @@ export async function retryCi({ env, phase, fetchImpl = fetch }) {
   const history = await readHistory(selection.since)
   if (!history.ok) return { ...history, retried: [] }
 
-  const markers = readMarkers(
-    await call('GET', `${repo}/actions/artifacts?name=${markerName(pull.head.sha)}&per_page=${MAX_RUNS}`),
-    pull.head.sha,
-  )
-  if (!markers.ok) return { ...markers, retried: [] }
-
-  if (phase === 'admit') {
-    if (markers.artifacts.length) {
-      return { ...refuse('this commit has already been retried; push a new commit or ask a maintainer'), retried: [] }
-    }
-    return { ok: true, sha: pull.head.sha, runs: selection.runs, retried: [] }
-  }
-
-  if (env.ADMITTED_SHA !== pull.head.sha) return { ...refuse('the pull request head changed; try again'), retried: [] }
-  const own = markers.artifacts
-  if (own.length !== 1 || own[0].workflow_run?.id !== Number(env.GITHUB_RUN_ID)) {
-    return { ...refuse('the admission record for this commit is missing or not from this run'), retried: [] }
-  }
-
   const retried = []
   const stop = reason => ({ ok: false, reason, retried })
   for (const run of selection.runs) {
@@ -322,40 +283,39 @@ export async function retryCi({ env, phase, fetchImpl = fetch }) {
     } catch (error) {
       return stop(`the pull request or run could not be re-read: ${error.message}`)
     }
+    let postError = null
     try {
       await call('POST', `${repo}/actions/runs/${run.id}/rerun-failed-jobs`)
     } catch (error) {
-      return stop(`rerun of run ${run.id} failed: ${error.message}`)
+      postError = error
+    }
+    // Hold the concurrency group until the new attempt shows. An error reply
+    // whose rerun shows anyway counts as started.
+    if (!(await rerunVisible(run))) {
+      const answer = postError ? `answered with an error (${postError.message})` : 'was accepted'
+      return {
+        ...stop(`the rerun request for run ${run.id} ${answer}, but GitHub shows no new attempt yet; it may still start, so check the run before commenting again`),
+        unconfirmed: [run.id],
+      }
     }
     retried.push(run.id)
   }
   return { ok: true, sha: pull.head.sha, retried, runs: selection.runs }
 }
 
-async function main(phase) {
-  const { appendFileSync, mkdirSync, writeFileSync } = await import('node:fs')
+async function main() {
+  const { appendFileSync } = await import('node:fs')
   const summary = line => {
     console.log(line)
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`)
   }
   let result
   try {
-    result = await retryCi({ env: process.env, phase })
+    result = await retryCi({ env: process.env })
   } catch (error) {
     result = { ok: false, reason: error.message, retried: [] }
   }
   const server = process.env.GITHUB_SERVER_URL || 'https://github.com'
-  if (result.ok && phase === 'admit') {
-    // The marker's content is informational; its name is the record.
-    const dir = `${process.env.RUNNER_TEMP}/retry-ci`
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(
-      `${dir}/admission.json`,
-      `${JSON.stringify({ pr: Number(process.env.PR_NUMBER), sha: result.sha, runs: result.runs.map(run => run.id) })}\n`,
-    )
-    appendFileSync(process.env.GITHUB_OUTPUT, `sha=${result.sha}\n`)
-    return
-  }
   if (result.ok) {
     summary(`Retrying failed jobs on PR #${process.env.PR_NUMBER} at ${result.sha}:`)
     for (const run of result.runs) summary(`- ${run.name}: ${server}/${process.env.REPO}/actions/runs/${run.id}`)
@@ -363,8 +323,9 @@ async function main(phase) {
   }
   summary(`/retry-ci refused on PR #${process.env.PR_NUMBER}: ${result.reason}`)
   if (result.retried.length) summary(`Reruns already started: ${result.retried.join(', ')}`)
+  if (result.unconfirmed?.length) summary(`Rerun requested, not confirmed yet: ${result.unconfirmed.join(', ')}`)
   console.log(`::error::/retry-ci refused: ${result.reason}`)
   process.exitCode = 1
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main(process.argv[2])
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main()

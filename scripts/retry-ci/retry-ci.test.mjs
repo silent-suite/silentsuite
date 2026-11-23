@@ -117,8 +117,8 @@ test('ignores runs of other forks, commits and events', () => {
   assert.deepEqual(result.runs.map(r => r.id), [mine.id])
 })
 
-test('counts the retry per commit across every branch of the fork', () => {
-  // Two PRs from two branches at one commit must not get a retry each.
+test('refuses a commit that also ran CI from another branch of the fork', () => {
+  // A run from another branch may belong to another pull request.
   const result = selectRuns(pull(), listing([
     run('ci', { conclusion: 'failure' }),
     run('ci-server', { conclusion: 'failure', head_branch: 'other' }),
@@ -139,18 +139,19 @@ test('retries only runs that existed when the comment was written', () => {
   assert.equal(selectRuns(pull(), listing([run('ci', { conclusion: 'failure' })]), 'not a time').ok, false)
 })
 
-test('refuses a commit that was already retried, by anyone (run 43827172180)', () => {
-  const result = selectRuns(pull(), listing([
-    run('ci', { conclusion: 'failure' }),
-    run('build-android', { id: 43827172180, run_attempt: 2, conclusion: 'failure' }),
-  ]))
-  assert.equal(result.ok, false)
-  assert.match(result.reason, /already been retried/)
+test('retries a commit again after earlier reruns, by anyone (run 43827172180)', () => {
+  const android = run('build-android', { id: 43827172180, run_attempt: 3, conclusion: 'failure' })
+  const result = selectRuns(pull(), listing([run('ci', { run_attempt: 2 }), android]))
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.runs.map(r => r.id), [43827172180])
 })
 
-test('refuses a second /retry-ci once the first rerun is queued', () => {
-  const result = selectRuns(pull(), listing([run('ci', { status: 'queued', conclusion: null, run_attempt: 2 })]))
-  assert.match(result.reason, /already been retried/)
+test('waits while an earlier rerun is still queued or running', () => {
+  for (const status of ['queued', 'in_progress']) {
+    const result = selectRuns(pull(), listing([run('ci', { status, conclusion: null, run_attempt: 2 })]))
+    assert.equal(result.ok, false, status)
+    assert.match(result.reason, /wait until every run has finished/, status)
+  }
 })
 
 test('refuses when a workflow ran more than once on the commit', () => {
@@ -181,7 +182,7 @@ test('refuses incomplete or oversized listings', () => {
   assert.equal(selectRuns(pull(), { total_count: 101, workflow_runs: [] }).ok, false)
   assert.equal(selectRuns(pull(), { total_count: 2, workflow_runs: [run('ci', { conclusion: 'failure' })] }).ok, false)
   assert.equal(selectRuns(pull(), {}).ok, false)
-  for (const run_attempt of [undefined, 0, '1', 1.5]) {
+  for (const run_attempt of [undefined, 0.5, '1']) {
     assert.equal(selectRuns(pull(), listing([run('ci', { conclusion: 'failure', run_attempt })])).ok, false, String(run_attempt))
   }
   assert.equal(selectRuns(pull(), listing([null, run('ci', { conclusion: 'failure' })])).ok, false, 'null entry')
@@ -200,10 +201,10 @@ const env = {
   GITHUB_API_URL: 'https://api.example',
 }
 
-// A stateful stand-in. POST rerun-failed-jobs turns the run into attempt 2
-// (queued) the way GitHub shows an accepted rerun, unless `post` says the
-// change stays invisible to later listings. `upload(sha, runId)` plays the
-// workflow's upload-artifact step between the two phases.
+// A stateful stand-in. POST rerun-failed-jobs turns the run into its next
+// attempt (queued) the way GitHub shows an accepted rerun, unless `post` says
+// the change stays invisible; `finish(id, conclusion)` plays that attempt
+// ending.
 function fakeGitHub({
   pullAt = () => pull(),
   runs = [],
@@ -211,20 +212,17 @@ function fakeGitHub({
   timelineAt = () => [[]],
   eventsAt = () => [[]],
   runAt = null,
-  artifacts = [],
-  artifactListing = null,
   post = () => ({ accepted: true, status: 201 }),
 } = {}) {
   const calls = []
   const state = new Map(runs.map(r => [r.id, { ...r }]))
-  const markers = [...artifacts]
   let posts = 0
   const fetchImpl = async (url, init) => {
     const path = url.replace('https://api.example', '')
     calls.push(`${init.method} ${path}`)
     assert.equal(init.headers.Authorization, 'Bearer test-token')
     assert.equal(init.headers.Accept, 'application/vnd.github+json')
-    const answer = (status, body = null) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
+    const answer = (status, body = null) => ({ ok: status >= 200 && status < 300, status, json: async () => structuredClone(body) })
     const query = new URL(url).searchParams
     if (init.method === 'GET' && path.endsWith('/pulls/1115')) return answer(200, pullAt(posts))
     if (init.method === 'GET' && path.includes('/pulls?')) return answer(200, fromBranch)
@@ -239,41 +237,30 @@ function fakeGitHub({
       const id = Number(single[1])
       return answer(200, runAt ? runAt(id, posts, state.get(id)) : state.get(id))
     }
-    if (init.method === 'GET' && path.includes('/actions/artifacts?')) {
-      if (artifactListing) return answer(200, artifactListing)
-      const found = markers.filter(a => a.name === query.get('name'))
-      return answer(200, { total_count: found.length, artifacts: found })
-    }
     const rerun = path.match(/\/actions\/runs\/(\d+)\/rerun-failed-jobs$/)
     if (init.method === 'POST' && rerun) {
       posts++
       const id = Number(rerun[1])
       const outcome = post(id)
       if (outcome.accepted && outcome.visible !== false) {
-        Object.assign(state.get(id), { run_attempt: 2, status: 'queued', conclusion: null })
+        const target = state.get(id)
+        Object.assign(target, { run_attempt: target.run_attempt + 1, status: 'queued', conclusion: null })
       }
       return answer(outcome.status)
     }
     return answer(404)
   }
-  const upload = (sha, runId, headRepositoryId = REPOSITORY_ID) =>
-    markers.push({ name: `retry-ci-${sha}`, workflow_run: { id: runId, repository_id: REPOSITORY_ID, head_repository_id: headRepositoryId } })
-  return { calls, fetchImpl, state, upload }
+  const finish = (id, conclusion) => Object.assign(state.get(id), { status: 'completed', conclusion })
+  return { calls, fetchImpl, state, finish }
 }
 const posts = github => github.calls.filter(call => call.startsWith('POST'))
-const RUN_ID = 777
 
-// One /retry-ci comment end to end: admit, upload the marker, rerun.
-async function comment(github, extra = {}) {
-  const admitted = await retryCi({ env: { ...env, ...extra }, phase: 'admit', fetchImpl: github.fetchImpl })
-  if (!admitted.ok) return admitted
-  github.upload(admitted.sha, extra.runId ?? RUN_ID)
-  return retryCi({
-    env: { ...env, ...extra, ADMITTED_SHA: admitted.sha, GITHUB_RUN_ID: String(extra.runId ?? RUN_ID) },
-    phase: 'rerun',
-    fetchImpl: github.fetchImpl,
-  })
+// One /retry-ci comment end to end.
+let slept = 0
+const sleep = async () => {
+  slept++
 }
+const comment = (github, extra = {}) => retryCi({ env: { ...env, ...extra }, fetchImpl: github.fetchImpl, sleep })
 
 const DECIDE = [
   'GET /repos/silent-suite/silentsuite/pulls/1115',
@@ -281,7 +268,6 @@ const DECIDE = [
   `GET /repos/silent-suite/silentsuite/actions/runs?head_sha=${HEAD}&event=pull_request&per_page=100`,
   'GET /repos/silent-suite/silentsuite/issues/1115/timeline?per_page=100&page=1',
   'GET /repos/silent-suite/silentsuite/issues/1115/events?per_page=100&page=1',
-  `GET /repos/silent-suite/silentsuite/actions/artifacts?name=retry-ci-${HEAD}&per_page=100`,
 ]
 const LIVE = id => [
   'GET /repos/silent-suite/silentsuite/pulls/1115',
@@ -290,7 +276,7 @@ const LIVE = id => [
   `GET /repos/silent-suite/silentsuite/actions/runs/${id}`,
 ]
 
-test('admits, then reruns each failed run after re-reading the pull request and its history', async () => {
+test('reruns each failed run after re-reading the pull request and its history', async () => {
   const github = fakeGitHub({
     runs: [run('ci', { id: 11, conclusion: 'failure' }), run('build-android', { id: 12, conclusion: 'failure' }), run('ci-server', { id: 13 })],
   })
@@ -300,20 +286,13 @@ test('admits, then reruns each failed run after re-reading the pull request and 
   assert.deepEqual(result.retried, [11, 12])
   assert.deepEqual(github.calls, [
     ...DECIDE,
-    ...DECIDE,
     ...LIVE(11),
     'POST /repos/silent-suite/silentsuite/actions/runs/11/rerun-failed-jobs',
+    'GET /repos/silent-suite/silentsuite/actions/runs/11',
     ...LIVE(12),
     'POST /repos/silent-suite/silentsuite/actions/runs/12/rerun-failed-jobs',
+    'GET /repos/silent-suite/silentsuite/actions/runs/12',
   ])
-})
-
-test('the admit phase never posts', async () => {
-  const github = fakeGitHub({ runs: [run('ci', { id: 14, conclusion: 'failure' })] })
-  const result = await retryCi({ env, phase: 'admit', fetchImpl: github.fetchImpl })
-  assert.equal(result.ok, true)
-  assert.deepEqual(posts(github), [])
-  assert.equal((await retryCi({ env, phase: 'other', fetchImpl: github.fetchImpl })).ok, false)
 })
 
 test('makes no API call for a comment outside the scope', async () => {
@@ -325,11 +304,9 @@ test('makes no API call for a comment outside the scope', async () => {
     { PR_NUMBER: '0' },
     { REPO: '../x' },
   ]) {
-    const result = await retryCi({ env: { ...env, ...override }, phase: 'admit', fetchImpl: github.fetchImpl })
+    const result = await retryCi({ env: { ...env, ...override }, fetchImpl: github.fetchImpl })
     assert.equal(result.ok, false)
   }
-  const noRunId = await retryCi({ env: { ...env, ADMITTED_SHA: HEAD }, phase: 'rerun', fetchImpl: github.fetchImpl })
-  assert.equal(noRunId.ok, false)
   assert.deepEqual(github.calls, [])
 })
 
@@ -338,7 +315,7 @@ test('posts nothing when any check refuses', async () => {
   const history = events => () => [events]
   const cases = {
     'another author': { pullAt: () => pull({ user: { id: 1 } }), runs: failed() },
-    'already retried': { runs: [run('ci', { conclusion: 'failure', run_attempt: 2 })] },
+    'earlier rerun still queued': { runs: [run('ci', { status: 'queued', conclusion: null, run_attempt: 2 })] },
     'head moved': { pullAt: () => pull({ head: { ...pull().head, sha: 'd'.repeat(40) } }), runs: failed() },
     'number mismatch': { pullAt: () => pull({ number: 1116 }), runs: failed() },
     'two pull requests from the branch': { fromBranch: [{ number: 1115 }, { number: 1001 }], runs: failed() },
@@ -357,13 +334,6 @@ test('posts nothing when any check refuses', async () => {
     },
     'entry without an id': { runs: [{ ...run('ci', { conclusion: 'failure' }), id: undefined }] },
     'completed entry without a conclusion beside a failed run': { runs: [...failed(), run('ci-server', { conclusion: undefined })] },
-    'marker already present': {
-      artifacts: [{ name: `retry-ci-${HEAD}`, workflow_run: { id: 1, repository_id: REPOSITORY_ID, head_repository_id: REPOSITORY_ID } }],
-      runs: failed(),
-    },
-    'marker without its run': { artifacts: [{ name: `retry-ci-${HEAD}` }], runs: failed() },
-    'unreadable marker listing': { artifactListing: { total_count: 1, artifacts: [] }, runs: failed() },
-    'marker listing with a foreign name': { artifactListing: { total_count: 1, artifacts: [{ name: 'other' }] }, runs: failed() },
   }
   for (const [label, state] of Object.entries(cases)) {
     const github = fakeGitHub(state)
@@ -372,14 +342,6 @@ test('posts nothing when any check refuses', async () => {
     assert.deepEqual(result.retried, [], label)
     assert.deepEqual(posts(github), [], label)
   }
-})
-
-test('a same-named artifact from fork CI does not spend the retry', async () => {
-  const github = fakeGitHub({ runs: [run('ci', { id: 34, conclusion: 'failure' })] })
-  github.upload(HEAD, 43827172180, FORK_ID)
-  const result = await comment(github)
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.retried, [34])
 })
 
 test('re-reads each target run right before its rerun', async () => {
@@ -400,34 +362,52 @@ test('re-reads each target run right before its rerun', async () => {
   }
 })
 
-test('the rerun phase requires exactly this run\'s marker and the admitted commit', async () => {
-  const github = fakeGitHub({ runs: [run('ci', { id: 32, conclusion: 'failure' })] })
-  const rerun = extra => retryCi({ env: { ...env, GITHUB_RUN_ID: String(RUN_ID), ADMITTED_SHA: HEAD, ...extra }, phase: 'rerun', fetchImpl: github.fetchImpl })
-  assert.match((await rerun()).reason, /missing or not from this run/, 'no marker uploaded')
-  github.upload(HEAD, 1)
-  assert.match((await rerun()).reason, /missing or not from this run/, "another run's marker")
-  github.upload(HEAD, RUN_ID)
-  assert.match((await rerun()).reason, /missing or not from this run/, 'two markers')
-  assert.deepEqual(posts(github), [])
-
-  const fresh = fakeGitHub({ runs: [run('ci', { id: 33, conclusion: 'failure' })] })
-  fresh.upload(HEAD, RUN_ID)
-  const moved = await retryCi({ env: { ...env, GITHUB_RUN_ID: String(RUN_ID), ADMITTED_SHA: 'e'.repeat(40) }, phase: 'rerun', fetchImpl: fresh.fetchImpl })
-  assert.match(moved.reason, /head changed/)
-  assert.deepEqual(posts(fresh), [])
+test('every later comment retries again once the previous rerun has finished', async () => {
+  const github = fakeGitHub({ runs: [run('ci', { id: 61, conclusion: 'failure' }), run('ci-server', { id: 62 })] })
+  assert.deepEqual((await comment(github)).retried, [61])
+  // While the rerun is queued, a second comment waits instead of stacking another.
+  const early = await comment(github)
+  assert.match(early.reason, /wait until every run has finished/)
+  assert.equal(posts(github).length, 1)
+  for (const attempt of [3, 4, 5]) {
+    github.finish(61, 'failure')
+    assert.deepEqual((await comment(github)).retried, [61])
+    assert.equal(github.state.get(61).run_attempt, attempt)
+  }
+  github.finish(61, 'success')
+  assert.match((await comment(github)).reason, /no failed build or test run/)
+  assert.equal(posts(github).length, 4)
 })
 
-test('a second comment is refused by the marker even if GitHub never shows the rerun', async () => {
-  for (const outcome of [{ accepted: true, status: 201, visible: false }, { accepted: true, status: 502, visible: false }, { accepted: false, status: 502 }]) {
-    const github = fakeGitHub({ runs: [run('ci', { id: 61, conclusion: 'failure' })], post: () => outcome })
-    await comment(github)
-    assert.equal(posts(github).length, 1)
-    assert.equal(github.state.get(61).run_attempt, 1, 'listing still shows attempt 1')
-    const second = await comment(github, { runId: RUN_ID + 1 })
-    assert.equal(second.ok, false)
-    assert.match(second.reason, /already been retried/)
-    assert.equal(posts(github).length, 1, JSON.stringify(outcome))
-  }
+test('holds the lock until GitHub shows the rerun, so a later comment cannot repeat it', async () => {
+  const runs = () => [run('ci', { id: 71, conclusion: 'failure' }), run('build-android', { id: 72, conclusion: 'failure' })]
+  const runGets = (github, id) => github.calls.filter(call => call === `GET /repos/silent-suite/silentsuite/actions/runs/${id}`).length
+
+  // Accepted but not shown in time: stop, report it as unconfirmed, and say to check.
+  slept = 0
+  const hidden = fakeGitHub({ runs: runs(), post: () => ({ accepted: true, status: 201, visible: false }) })
+  const result = await comment(hidden)
+  assert.equal(result.ok, false)
+  assert.match(result.reason, /was accepted, but GitHub shows no new attempt yet/)
+  assert.deepEqual(result.retried, [])
+  assert.deepEqual(result.unconfirmed, [71])
+  assert.equal(posts(hidden).length, 1, 'no request for the next run')
+  assert.equal(runGets(hidden, 71), 1 + 20, 'one check before, twenty polls after')
+  assert.equal(slept, 19)
+
+  // An error reply whose rerun shows anyway counts as started and goes on.
+  const ambiguous = fakeGitHub({ runs: runs(), post: () => ({ accepted: true, status: 502 }) })
+  const started = await comment(ambiguous)
+  assert.equal(started.ok, true)
+  assert.deepEqual(started.retried, [71, 72])
+
+  // An error reply with nothing shown may still have been accepted: unconfirmed, not failed.
+  const refused = fakeGitHub({ runs: runs(), post: () => ({ accepted: false, status: 502 }) })
+  const failedRequest = await comment(refused)
+  assert.match(failedRequest.reason, /answered with an error \(.*502\), but GitHub shows no new attempt yet/)
+  assert.deepEqual(failedRequest.retried, [])
+  assert.deepEqual(failedRequest.unconfirmed, [71])
+  assert.equal(posts(refused).length, 1)
 })
 
 test('accepts a force push from before CI started and a long readable timeline', async () => {
@@ -463,7 +443,7 @@ test('re-checks the live pull request and its history before every rerun', async
   }
 })
 
-test('stops at the first refused rerun and reports what started', async () => {
+test('stops at the first unconfirmed rerun and reports what started', async () => {
   const github = fakeGitHub({
     runs: [21, 22, 23].map((id, i) => run(['ci', 'build-android', 'ci-server'][i], { id, conclusion: 'failure' })),
     post: id => (id === 22 ? { accepted: false, status: 403 } : { accepted: true, status: 201 }),
@@ -471,7 +451,8 @@ test('stops at the first refused rerun and reports what started', async () => {
   const result = await comment(github)
   assert.equal(result.ok, false)
   assert.deepEqual(result.retried, [21])
-  assert.match(result.reason, /run 22 failed/)
+  assert.match(result.reason, /run 22 answered with an error/)
+  assert.deepEqual(result.unconfirmed, [22])
   assert.equal(posts(github).length, 2)
 })
 
@@ -481,7 +462,7 @@ test('an unreadable API answer refuses before any rerun', async () => {
     calls.push(init.method)
     return { ok: false, status: 500, json: async () => null }
   }
-  await assert.rejects(retryCi({ env, phase: 'admit', fetchImpl: failing }), /answered 500/)
+  await assert.rejects(retryCi({ env, fetchImpl: failing }), /answered 500/)
   assert.deepEqual(calls, ['GET'])
 })
 
@@ -505,7 +486,6 @@ test('retry-ci.yml gates on the contributor id before the job starts', () => {
   assert.equal(
     gate[1],
     [
-      '      github.run_attempt == 1 &&',
       '      github.event.issue.pull_request &&',
       `      github.event.comment.user.id == ${CONTRIBUTOR_ID} &&`,
       `      github.event.issue.user.id == ${CONTRIBUTOR_ID} &&`,
@@ -521,28 +501,14 @@ test('retry-ci.yml runs only default-branch code and keeps the comment out of sh
   assert.deepEqual(code.match(/uses: \S+/g), [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
     'uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-    'uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
   ])
   assert.doesNotMatch(code, /head\.(sha|ref)|refs\/pull|pull_request\.head|secrets\./)
-  assert.deepEqual(code.match(/\brun: .*/g), ['run: node scripts/retry-ci/retry-ci.mjs admit', 'run: node scripts/retry-ci/retry-ci.mjs rerun'])
-  // The comment body appears in the job gate and in each script step's env, nowhere else.
-  assert.equal(code.match(/github\.event\.comment\.body/g).length, 3)
-  assert.equal(code.match(/\n {10}COMMENT_BODY: \$\{\{ github\.event\.comment\.body \}\}\n/g).length, 2)
-  assert.equal(code.match(/GH_TOKEN: \$\{\{ github\.token \}\}/g).length, 2, 'token only in the two script steps')
+  assert.deepEqual(code.match(/\brun: .*/g), ['run: node scripts/retry-ci/retry-ci.mjs'])
+  // The comment body appears in the job gate and in the script step's env, nowhere else.
+  assert.equal(code.match(/github\.event\.comment\.body/g).length, 2)
+  assert.equal(code.match(/\n {10}COMMENT_BODY: \$\{\{ github\.event\.comment\.body \}\}\n/g).length, 1)
+  assert.equal(code.match(/GH_TOKEN: \$\{\{ github\.token \}\}/g).length, 1, 'token only in the script step')
   assert.doesNotMatch(code, /\n {4}env:/, 'no job-level env')
-})
-
-test('retry-ci.yml records the admission marker between the two phases', () => {
-  const admit = code.indexOf('run: node scripts/retry-ci/retry-ci.mjs admit')
-  const upload = code.indexOf('uses: actions/upload-artifact@')
-  const rerun = code.indexOf('run: node scripts/retry-ci/retry-ci.mjs rerun')
-  assert.ok(admit > 0 && admit < upload && upload < rerun)
-  assert.match(
-    code,
-    /\n {8}with:\n {10}name: retry-ci-\$\{\{ steps\.admit\.outputs\.sha \}\}\n {10}path: \$\{\{ runner\.temp \}\}\/retry-ci\/admission\.json\n {10}if-no-files-found: error\n {10}retention-days: 90\n/,
-  )
-  assert.match(code, /\n {8}id: admit\n/)
-  assert.match(code, /\n {10}ADMITTED_SHA: \$\{\{ steps\.admit\.outputs\.sha \}\}\n {8}run: node scripts\/retry-ci\/retry-ci\.mjs rerun\n/)
   assert.doesNotMatch(code, /continue-on-error|if: always|if: failure/)
 })
 

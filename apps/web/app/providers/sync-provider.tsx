@@ -4,18 +4,20 @@ import { useEffect, useRef } from 'react'
 import * as Sentry from '@sentry/nextjs'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { logger } from '@/app/lib/logger'
+import { parseRemoteItems } from '@/app/lib/parse-remote-items'
 import { keepPendingCacheRecords, useEtebaseStore, withoutPendingDeletes } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
-import { useNoteStore } from '@/app/stores/use-note-store'
+import { useNoteStore, type StoredNote } from '@/app/stores/use-note-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
+  replaceItemsForCollection as cacheReplaceItemsForCollection,
   isCacheEnabled as isLocalCacheEnabled,
   getCacheCapabilityStatus,
   type CachedItem,
@@ -226,7 +228,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (taskItems.length > 0) {
           try {
-            const tasks = taskItems.map((it) => {
+            const tasks = parseRemoteItems('tasks', taskItems, (it) => {
               const task = core.deserializeTask(it.content)
               return { ...task, id: it.itemUid, listId: it.collectionUid }
             })
@@ -253,7 +255,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (eventItems.length > 0) {
           try {
-            const events = eventItems.map((it) => {
+            const events = parseRemoteItems('calendar', eventItems, (it) => {
               const event = core.deserializeCalendarEvent(it.content)
               return { ...event, id: it.itemUid, calendarId: it.collectionUid }
             })
@@ -291,9 +293,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    /** Replaces the cached items of the type, or with `collectionUid`, of that collection only. */
     async function mirrorToCache(
       type: 'tasks' | 'contacts' | 'calendar' | 'notes',
       items: { uid: string; content: string; collectionUid: string }[],
+      collectionUid?: string,
     ) {
       if (!isLocalCacheEnabled()) return
       const startedAt = nowMs()
@@ -305,9 +309,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         lastModified: Date.now(),
       }))
       try {
-        const kept = await keepPendingCacheRecords(type, records, accountEpoch, useEtebaseStore.getState().accountFingerprint)
+        const kept = await keepPendingCacheRecords(type, records, accountEpoch, useEtebaseStore.getState().accountFingerprint, collectionUid)
         assertCurrentAccountEpoch(accountEpoch)
-        await cacheReplaceItemsForType(type, kept, accountEpoch)
+        if (collectionUid === undefined) await cacheReplaceItemsForType(type, kept, accountEpoch)
+        else await cacheReplaceItemsForCollection(collectionUid, kept, accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
         safeLogSyncTiming('cache-mirror', startedAt, { type, itemCount: items.length })
       } catch (err) {
@@ -315,6 +320,21 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
         safeLogSyncTiming('cache-mirror-failed', startedAt, { type, itemCount: items.length, errorCategory: 'cache' })
       }
+    }
+
+    /**
+     * Notes go to the display cache as the note store kept them, not as the sync read
+     * them: a row read before this page's own save or delete landed is not written back.
+     * With `collectionUid` (a notes collection event) only that notebook is written, as its
+     * refresh was: the other notebooks' rows in this read may predate their own refresh.
+     */
+    async function mirrorNotesToCache(core: typeof import('@silentsuite/core'), notes: StoredNote[], collectionUid?: string) {
+      const written = collectionUid === undefined ? notes : notes.filter((note) => note.notebookId === collectionUid)
+      await mirrorToCache('notes', written.map((note) => ({
+        uid: note.id,
+        content: core.serializeNote(note),
+        collectionUid: note.notebookId ?? '',
+      })), collectionUid)
     }
 
     // Explicit per-type phase names keep sync timing off arbitrary strings.
@@ -341,7 +361,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           const core = await import('@silentsuite/core')
           assertCurrentAccountEpoch(accountEpoch)
           if (type === 'tasks') {
-            const tasks = items.map((item) => {
+            const tasks = parseRemoteItems('tasks', items, (item) => {
               // Use the Etebase item UID only as the local id so updates/deletes
               // can address the item without changing the stable iCalendar UID.
               const task = core.deserializeTask(item.content)
@@ -367,15 +387,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           } else if (type === 'notes') {
             const notes = items.map((item) => ({ ...core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid), revision: item.revision }))
             domainItemCount = notes.length
-            useNoteStore.getState().syncFromRemote(notes)
+            const saved = useNoteStore.getState().syncFromRemote(notes)
             logger.log(`[sync-provider] Loaded ${notes.length} notes from server`)
-            await mirrorToCache(type, notes.map((note) => ({
-              uid: note.id,
-              content: core.serializeNote(note),
-              collectionUid: note.notebookId ?? '',
-            })))
+            await mirrorNotesToCache(core, saved)
           } else {
-            const events = items.map((item) => {
+            const events = parseRemoteItems('calendar', items, (item) => {
               const event = core.deserializeCalendarEvent(item.content)
               return { ...event, id: item.uid, calendarId: item.collectionUid }
             })
@@ -421,7 +437,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             if (useEtebaseStore.getState().domainLoadState.tasks === 'loaded') {
               const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks', accountEpoch)
               assertCurrentAccountEpoch(accountEpoch)
-              const tasks = taskItems.map((item) => {
+              const tasks = parseRemoteItems('tasks', taskItems, (item) => {
                 const task = core.deserializeTask(item.content)
                 return { ...task, id: item.uid, listId: item.collectionUid }
               })
@@ -460,7 +476,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             if (useEtebaseStore.getState().domainLoadState.calendar === 'loaded') {
               const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar', accountEpoch)
               assertCurrentAccountEpoch(accountEpoch)
-              const events = eventItems.map((item) => {
+              const events = parseRemoteItems('calendar', eventItems, (item) => {
                 const event = core.deserializeCalendarEvent(item.content)
                 return { ...event, id: item.uid, calendarId: item.collectionUid }
               })
@@ -481,7 +497,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
               assertCurrentAccountEpoch(accountEpoch)
               const notes = noteItems.map((item) => ({ ...core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid), revision: item.revision }))
               assertCurrentAccountEpoch(accountEpoch)
-              useNoteStore.getState().syncFromRemote(notes)
+              const saved = useNoteStore.getState().syncFromRemote(notes)
+              // refreshCollection wrote the notebook's rows it read to the display cache; the
+              // rows the note store kept replace them.
+              await mirrorNotesToCache(core, saved, event.collectionUid)
             }
           } catch (err) {
             if (err instanceof AccountBoundaryChangedError) return

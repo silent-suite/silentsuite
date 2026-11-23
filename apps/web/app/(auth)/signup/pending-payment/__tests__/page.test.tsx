@@ -47,7 +47,14 @@ vi.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'light' }) }))
 vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
 vi.mock('@/app/lib/signup-return', () => ({ normalizeSignupReturnTo: (value: string | null) => value }))
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }: { href: string; children: ReactNode }) => <a href={href} {...props}>{children}</a> }))
-vi.mock('../components/step-create-vault', () => ({ StepCreateVault: () => <div data-testid="step-create-vault" /> }))
+const recordSignupStep = vi.hoisted(() => vi.fn())
+vi.mock('../../commercial-funnel-analytics', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../commercial-funnel-analytics')>(),
+  createSignupStepRecorder: () => recordSignupStep,
+}))
+vi.mock('../../components/step-create-vault', () => ({
+  StepCreateVault: ({ onComplete }: { onComplete: () => void }) => <button type="button" data-testid="step-create-vault" onClick={onComplete}>Complete vault</button>,
+}))
 vi.mock('../../components/step-create-paid-account', () => ({
   StepCreatePaidAccount: ({ email, onNext }: { email: string; onNext: (data: { password: string; confirmPassword: string }) => Promise<void> }) => (
     <div data-testid="step-create-paid-account">
@@ -547,6 +554,22 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
       wantsProductUpdates: true,
       rememberDevice: true,
     })
+  })
+
+  it('records the last signup steps when a Bitcoin signup finishes on this page', async () => {
+    configureFullNavigationStore()
+    persistRedirectState()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ contractVersion: 2, state: 'confirmed', flow: { provider: 'btcpay', status: 'provider_confirmed' } }), { status: 200 })))
+
+    render(<PendingPaymentPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /complete restored account/i }))
+    await screen.findByTestId('step-create-vault')
+    expect(recordSignupStep).toHaveBeenCalledWith('account_created')
+    expect(recordSignupStep).not.toHaveBeenCalledWith('completed')
+    fireEvent.click(screen.getByTestId('step-create-vault'))
+    expect(recordSignupStep).toHaveBeenLastCalledWith('completed')
+    expect(authState.completeSignup).toHaveBeenCalledTimes(1)
   })
 
   it('retains restored v2 authority and invoice on closed or unknown recovery', async () => {

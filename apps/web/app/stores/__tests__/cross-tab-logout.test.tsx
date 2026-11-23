@@ -134,11 +134,11 @@ function withCalendar() {
 
 const contactItem = { uid: 'ct-1', isDeleted: false, getMeta: () => ({}), getContent: async () => 'BEGIN:VCARD\r\nEND:VCARD' }
 
-/** Two calendars, both loaded, so collection writes are allowed. */
+/** Two calendars the user administers, both loaded, so collection writes are allowed. */
 function withTwoCalendars() {
   const engine = withCalendar()
   useEtebaseStore.setState({
-    collections: { calendar: [{ uid: 'cal-1', getMeta: () => ({}) }, { uid: 'cal-2', getMeta: () => ({}) }], tasks: [], contacts: [], notes: [], preferences: [] },
+    collections: { calendar: [{ uid: 'cal-1', accessLevel: 1, getMeta: () => ({}) }, { uid: 'cal-2', accessLevel: 1, getMeta: () => ({}) }], tasks: [], contacts: [], notes: [], preferences: [] },
     domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded', preferences: 'unknown' },
   } as any)
   return engine

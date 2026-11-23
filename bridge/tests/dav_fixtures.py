@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from etebase import CollectionAccessLevel
 from playhouse.sqlite_ext import SqliteExtDatabase
 
 from silentsuite_bridge import config, local_cache
@@ -92,6 +93,7 @@ class DavWorld:
 
     def _create_collection(self, kind, meta, content):
         obj = SdkCollection(f"sdk-collection-{len(self.created_collections)}", kind, meta)
+        obj.access_level = CollectionAccessLevel.Admin  # the creator administers it
         obj.item.content = bytes(content)
         self.created_collections.append(obj)
         return obj
@@ -104,8 +106,10 @@ class DavWorld:
     def service(self):
         return _service(self.database, self.user, self.remote)
 
-    def add_collection(self, uid="contacts", kind="etebase.vcard", **metadata):
+    def add_collection(self, uid="contacts", kind="etebase.vcard",
+                       access_level=CollectionAccessLevel.Admin, **metadata):
         obj = SdkCollection(uid, kind, {"name": "Contacts", **metadata})
+        obj.access_level = access_level
         return models.CollectionEntity.create(
             local_user=self.user, uid=uid, eb_col=self.remote.store.save(obj)
         )

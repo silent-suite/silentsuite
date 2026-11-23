@@ -480,7 +480,7 @@ describe('TasksPage search and mobile editor', () => {
     expect(screen.queryByRole('dialog', { name: 'Edit Task' })).not.toBeInTheDocument()
   })
 
-  it('opens the full editor from the mobile edit button without a list selector or listId', () => {
+  it('opens the full editor from the Edit task button without a list selector or listId', () => {
     visibleLists()
     storeMock.taskState.tasks = [taskFixture({
       id: 'alpha',
@@ -494,14 +494,12 @@ describe('TasksPage search and mobile editor', () => {
     })]
     renderWithIntl(<TasksPage />)
 
-    const mobileEdit = screen.getAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('md:hidden'))
-    expect(mobileEdit, 'mobile Edit task button').toBeTruthy()
-    expect(mobileEdit!.className).toContain('md:hidden')
-    const desktopPencil = screen.getAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('hidden') && button.className.includes('md:flex'))
-    expect(desktopPencil?.className).toContain('hidden')
-    expect(desktopPencil?.className).toContain('md:flex')
+    // One Edit task button, shown at every width.
+    const edit = screen.getByRole('button', { name: 'Edit task' })
+    expect(edit.className.split(/\s+/)).not.toContain('hidden')
+    expect(edit.className).not.toContain('md:hidden')
 
-    fireEvent.click(mobileEdit!)
+    fireEvent.click(edit)
     const dialog = screen.getByRole('dialog', { name: 'Edit Task' })
     expect(within(dialog).getByPlaceholderText('Task title')).toHaveValue('Alpha task')
     expect(within(dialog).getByLabelText('Start date')).toHaveValue('2026-06-02')
@@ -537,16 +535,25 @@ describe('TasksPage search and mobile editor', () => {
     expect(storeMock.taskState.createTask).toHaveBeenCalledWith(expect.objectContaining({ title: 'Created', listId: 'work' }))
   })
 
-  it('keeps the desktop pencil as expand-only', () => {
+  it('opens the full editor from Edit task on desktop too, with the title reachable from the keyboard, and a row click still expands inline', () => {
     visibleLists()
     storeMock.taskState.tasks = [taskFixture({ id: 'alpha', title: 'Alpha task' })]
     renderWithIntl(<TasksPage />)
 
-    const pencil = screen.getAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('md:flex'))
-    expect(pencil, 'desktop pencil').toBeTruthy()
-    fireEvent.click(pencil!)
+    // A row click keeps the inline panel.
+    fireEvent.click(screen.getByText('Alpha task'))
     expect(screen.getByPlaceholderText('Add a description...')).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Edit Task' })).not.toBeInTheDocument()
+
+    const edits = screen.getAllByRole('button', { name: 'Edit task' })
+    expect(edits).toHaveLength(1)
+    // Revealed on keyboard focus, not only on hover.
+    expect(edits[0]!.className).toContain('focus:opacity-100')
+    fireEvent.click(edits[0]!)
+    const dialog = screen.getByRole('dialog', { name: 'Edit Task' })
+    fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: 'Alpha renamed' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(storeMock.taskState.updateTask).toHaveBeenCalledWith('alpha', expect.objectContaining({ title: 'Alpha renamed' }))
   })
 
   it('uses mobile-only 44px classes on the complete toggle and primary task actions', () => {
@@ -615,14 +622,12 @@ describe('TasksPage overlays mount above the bottom nav', () => {
     expect(backdrop!.parentElement, 'backdrop is a direct child of <body>').toBe(document.body)
   })
 
-  it('portals the full editor opened from the mobile Edit task button', () => {
+  it('portals the full editor opened from the Edit task button', () => {
     visibleLists()
     storeMock.taskState.tasks = [taskFixture({ id: 'alpha', title: 'Alpha task' })]
     const { container } = renderWithIntl(<TasksPage />)
 
-    const mobileEdit = screen.getAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('md:hidden'))
-    expect(mobileEdit, 'mobile Edit task button').toBeTruthy()
-    fireEvent.click(mobileEdit!)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit task' }))
     const dialog = screen.getByRole('dialog', { name: 'Edit Task' })
     expect(within(dialog).getByPlaceholderText('Task title')).toHaveValue('Alpha task')
 
@@ -736,9 +741,7 @@ describe('TasksPage mobile metadata line and dialog reachability', () => {
 
     // Every row action keeps its label and 44px mobile target.
     expectMobileSquare(screen.getByRole('button', { name: 'Mark complete' }))
-    const mobileEdit = screen.getAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('md:hidden'))
-    expect(mobileEdit, 'mobile Edit task button').toBeTruthy()
-    expectMobileSquare(mobileEdit!)
+    expectMobileSquare(screen.getByRole('button', { name: 'Edit task' }))
     expect(screen.getByRole('button', { name: 'Delete task' }).className).toContain('min-h-[44px]')
     expect(screen.getByRole('button', { name: 'Delete task' }).className).toContain('min-w-[44px]')
 
@@ -770,8 +773,7 @@ describe('TasksPage mobile metadata line and dialog reachability', () => {
     assertScrollOwner(screen.getByRole('dialog', { name: 'New Task' }))
     fireEvent.click(within(screen.getByRole('dialog', { name: 'New Task' })).getByRole('button', { name: 'Cancel' }))
 
-    const mobileEdit = screen.getAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('md:hidden'))
-    fireEvent.click(mobileEdit!)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit task' }))
     assertScrollOwner(screen.getByRole('dialog', { name: 'Edit Task' }))
   })
 
@@ -917,8 +919,7 @@ describe('TasksPage tasks in a list shared read-only', () => {
   it('disables Save in the full editor once its list turns read-only', () => {
     storeMock.taskState.tasks = [taskFixture({ id: 'rw', title: 'Own task', listId: 'work' })]
     const view = renderWithIntl(<TasksPage />)
-    const mobileEdit = screen.getAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('md:hidden'))
-    fireEvent.click(mobileEdit!)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit task' }))
     const dialog = screen.getByRole('dialog', { name: 'Edit Task' })
     fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: 'Renamed' } })
 

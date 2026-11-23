@@ -5,8 +5,8 @@ const updateCollectionMeta = vi.fn()
 
 const mockCalendarListState = {
   calendars: [
-    { id: 'cal-1', name: 'Work Calendar', color: '#10b981', visible: true },
-    { id: 'cal-2', name: 'New Calendar', color: '#3b82f6', visible: false },
+    { id: 'cal-1', name: 'Work Calendar', color: '#10b981', visible: true, accessLevel: 1 },
+    { id: 'cal-2', name: 'New Calendar', color: '#3b82f6', visible: false, accessLevel: 2 },
   ],
   defaultCalendarId: 'cal-1',
   toggleVisibility: vi.fn(),
@@ -78,5 +78,18 @@ describe('CalendarListPanel', () => {
     expect(add.className).toContain('max-md:min-h-[44px]')
     expect(add.className).toContain('max-md:min-w-[44px]')
     expect(add.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+  })
+
+  it('offers Delete only on a calendar this user administers', () => {
+
+    render(<CalendarListPanel />)
+
+    fireEvent.click(screen.getByLabelText('Open Work Calendar actions'))
+    expect(screen.getByRole('menuitem', { name: 'Delete calendar' })).toBeEnabled()
+    fireEvent.click(screen.getByLabelText('Open Work Calendar actions'))
+
+    fireEvent.click(screen.getByLabelText('Open New Calendar actions'))
+    expect(screen.getByRole('menuitem', { name: 'Delete calendar' })).toBeDisabled()
+    expect(screen.getByText('Only an admin of this shared calendar can delete it.')).toBeInTheDocument()
   })
 })

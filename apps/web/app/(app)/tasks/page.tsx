@@ -884,19 +884,21 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
               {PRIORITY_LABELS[task.priority]}
             </span>
           )}
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
-            className="hidden md:flex rounded p-1 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
-            aria-label="Edit task"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-          {canWrite && (
+          {/* The full editor at every width; a row click still opens the inline panel. */}
+          {canWrite ? (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onEdit(task) }}
-              className="md:hidden max-md:min-h-[44px] max-md:min-w-[44px] flex items-center justify-center rounded text-[rgb(var(--muted))] hover:text-[rgb(var(--primary))] focus:outline-none"
+              className="flex rounded max-md:min-h-[44px] max-md:min-w-[44px] items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
+              aria-label="Edit task"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+              className="hidden md:flex rounded p-1 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
               aria-label="Edit task"
             >
               <Pencil className="h-3.5 w-3.5" />

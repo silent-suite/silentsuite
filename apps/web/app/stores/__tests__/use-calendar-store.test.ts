@@ -1677,6 +1677,18 @@ describe('useCalendarStore keeps VTIMEZONE blocks and overrides of a series', ()
     expect(lastCreated()).not.toMatch(/^RECURRENCE-ID/m)
     expect(lastUpdated()).toContain(OVERRIDE.join('\r\n'))
   })
+
+  it('a "this" edit of the overridden occurrence keeps the override\'s time and title', async () => {
+    const master = seedRemote(ITEM)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { location: 'Room 2' }, 'this', new Date('2027-03-15T09:00:00Z'))
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^DTSTART;TZID=Europe\/Berlin:20270315T150000$/m)
+    expect(copy).toMatch(/^DTEND;TZID=Europe\/Berlin:20270315T160000$/m)
+    expect(copy).toMatch(/^SUMMARY:Moved$/m)
+    expect(copy).toMatch(/^LOCATION:Room 2$/m)
+    expect(lastUpdated()).not.toMatch(/^RECURRENCE-ID/m)
+  })
 })
 
 

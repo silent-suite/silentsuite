@@ -7,6 +7,14 @@ export function canWriteCollection(collection: { accessLevel?: number } | null |
 }
 
 /**
+ * Whether this user may delete a collection: only its admins, because a delete
+ * removes it for the owner and every member. A missing level fails closed.
+ */
+export function canDeleteCollection(collection: { accessLevel?: number } | null | undefined): boolean {
+  return collection?.accessLevel === 1
+}
+
+/**
  * The calendar or task list an item is written to. As in the Etebase store, a
  * missing, 'default' or 'all' id means the account's first collection.
  */

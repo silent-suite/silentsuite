@@ -262,6 +262,66 @@ def test_removed_membership_preserves_pending_item_and_marks_collection_dirty(
     assert ("IMMEDIATE", False) in lock_types
 
 
+def test_reshared_collection_after_removed_membership_pulls_items_from_start(tmp_path):
+    """#1191: a collection shared again after removal must not resume its old
+    item token, or items unchanged since the removal are never fetched again."""
+    database = _database(tmp_path / "reshared-membership.sqlite")
+    user = models.User.create(username="books@example.test", stoken="before")
+    shared = models.CollectionEntity.create(
+        local_user=user,
+        uid="contacts-shared",
+        eb_col=b"shared-cache",
+        stoken="col-1",
+        local_stoken="items-before-removal",
+    )
+    item = models.ItemEntity.create(
+        collection=shared, uid="shared-contact", eb_item=b"shared-item"
+    )
+    models.HrefMapper.create(content=item, href="shared-contact.vcf")
+    other = models.CollectionEntity.create(
+        local_user=user,
+        uid="contacts-other",
+        eb_col=b"other-cache",
+        stoken="other-1",
+        local_stoken="other-items",
+    )
+    manager = MagicMock()
+    manager.list.side_effect = [
+        MagicMock(
+            data=[],
+            removed_memberships=["contacts-shared"],
+            done=True,
+            stoken="after-removal",
+        ),
+        MagicMock(
+            data=[
+                _remote_collection("contacts-shared", stoken="col-2"),
+                _remote_collection("contacts-other", stoken="other-2", name="Other"),
+            ],
+            removed_memberships=[],
+            done=True,
+            stoken="after-reshare",
+        ),
+    ]
+    manager.cache_save.side_effect = [b"reshared-cache", b"other-refreshed"]
+    service = _service(database, user, manager)
+
+    service.sync_collection_list()
+    removed = models.CollectionEntity.get_by_id(shared.id)
+    assert removed.deleted is True
+    assert models.ItemEntity.get_or_none(models.ItemEntity.id == item.id) is None
+
+    service.sync_collection_list()
+
+    revived = models.CollectionEntity.get_by_id(shared.id)
+    assert revived.deleted is False
+    assert revived.stoken == "col-2"
+    assert revived.local_stoken is None, "revived collection must pull all items again"
+    refreshed = models.CollectionEntity.get_by_id(other.id)
+    assert refreshed.stoken == "other-2"
+    assert refreshed.local_stoken == "other-items", "a live collection keeps its item token"
+
+
 def test_full_sync_snapshots_collection_list_before_nested_connection_phases(tmp_path):
     database = _database(tmp_path / "full-sync-connection-lifecycle.sqlite")
     user = models.User.create(username="books@example.test")

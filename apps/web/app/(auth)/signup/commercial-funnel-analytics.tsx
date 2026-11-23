@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, type CommercialEventPayload, type SignupStep } from '@/app/lib/public-analytics'
+import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_PAYMENT_RETURN_PATHS, SIGNUP_PAYMENT_RETURN_STEPS, type CommercialEventPayload, type SignupStep } from '@/app/lib/public-analytics'
 import type { AnnualOffer } from '@/app/lib/billing-v2'
 
 // Same-origin relay (app/api/event/route.ts); the browser never contacts the analytics host.
@@ -28,7 +28,20 @@ export function CheckoutReturnAnalytics({ outcome, paymentMethod }: { outcome: '
 }
 export function trackPlanSelected(offer: AnnualOffer) { sendCommercialEvent(buildPlanSelectedPayload(offer)) }
 export function trackCheckoutInitiated(offer: AnnualOffer, paymentMethod: 'stripe' | 'btcpay') { sendCommercialEvent(buildCheckoutInitiatedPayload(offer, paymentMethod)) }
-export function trackSignupStep(step: SignupStep) { sendCommercialEvent(buildSignupStepPayload(step)) }
+
+/**
+ * Builds the step event for the page it is recorded on: any step on /signup,
+ * only the last two on a payment return page, nothing anywhere else.
+ */
+export function signupStepPayloadFor(step: SignupStep, location: URL) {
+  const returnPath = SIGNUP_PAYMENT_RETURN_PATHS.find((path) => path === location.pathname)
+  if (!returnPath) return location.pathname === '/signup' ? buildSignupStepPayload(step) : null
+  return (SIGNUP_PAYMENT_RETURN_STEPS as readonly SignupStep[]).includes(step) ? buildSignupStepPayload(step, returnPath) : null
+}
+export function trackSignupStep(step: SignupStep) {
+  const payload = signupStepPayloadFor(step, new URL(window.location.href))
+  if (payload) sendCommercialEvent(payload)
+}
 
 /** Maps the hosted signup state to its funnel milestone; self-hosted server signups are not counted. */
 export function signupStepFor(view: { step: string; awaitingEmailProof: boolean; usingSelfHostedServer: boolean }): SignupStep | null {

@@ -6,6 +6,7 @@ import { replay, getHeldCount, getPendingCount, getFailedCount, onCountChange, t
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
+import { parseRemoteItems } from '@/app/lib/parse-remote-items'
 import { AccountBoundaryChangedError, assertCurrentAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 
 async function captureQueueGuard(): Promise<OfflineQueueAccountGuard> {
@@ -275,7 +276,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       const domainLoadState = refreshedEtebase.domainLoadState
       let partialDomainCount = 0
 
-      const tasks = taskItems.map((item) => {
+      const tasks = parseRemoteItems('tasks', taskItems, (item) => {
         const task = core.deserializeTask(item.content)
         return { ...task, id: item.uid, listId: item.collectionUid }
       })
@@ -300,7 +301,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         partialDomainCount += 1
       }
 
-      const events = eventItems.map((item) => {
+      const events = parseRemoteItems('calendar', eventItems, (item) => {
         const event = core.deserializeCalendarEvent(item.content)
         return { ...event, id: item.uid, calendarId: item.collectionUid }
       })

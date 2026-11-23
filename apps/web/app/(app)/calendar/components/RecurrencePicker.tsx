@@ -1,6 +1,8 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { resolveTimeZone, untilTimeBefore } from '@silentsuite/core'
+import { formatDateForInputInZone, instantFromWallClock } from '@/app/lib/tz'
 
 type Frequency = 'NONE' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY'
 
@@ -19,6 +21,38 @@ interface RecurrencePickerProps {
   onChange: (rrule: string | null) => void
   /** Read-only: every control is disabled, as for the dialog's other fields. */
   disabled?: boolean
+  /** Whether the series is all-day (DATE start); "Ends on" then writes a DATE UNTIL. */
+  allDay: boolean
+  /** The timed series' zone (IANA or 'UTC'); undefined for a floating series. Unused when all-day. */
+  timeZone: string | undefined
+}
+
+/** How "Ends on" writes UNTIL: a DATE, a floating date-time, or a UTC date-time for this zone. */
+type UntilForm = { kind: 'date' } | { kind: 'floating' } | { kind: 'zoned'; zone: string }
+
+function untilFormOf(allDay: boolean, timeZone: string | undefined): UntilForm {
+  if (allDay) return { kind: 'date' }
+  if (timeZone === undefined) return { kind: 'floating' }
+  // An unrecognised zone is expanded as UTC (core's recurrenceTimeZone), so it ends in UTC too.
+  return { kind: 'zoned', zone: resolveTimeZone(timeZone) ?? 'UTC' }
+}
+
+const untilFormKey = (form: UntilForm): string => (form.kind === 'zoned' ? form.zone : form.kind)
+
+/**
+ * The UNTIL for an inclusive last day (YYYY-MM-DD). RFC 5545 requires UNTIL to have DTSTART's
+ * value type, and core reads a DATE UNTIL as midnight starting that day, which would drop a timed
+ * series' occurrence on it. So a timed series ends at 23:59:59 on that day: as a floating wall
+ * clock, or for a zoned series as the UTC instant one second before the next day starts there.
+ */
+function formatUntil(date: string, form: UntilForm): string {
+  const compact = date.replace(/-/g, '')
+  if (form.kind === 'date') return compact
+  if (form.kind === 'floating') return `${compact}T235959`
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number]
+  const next = new Date(Date.UTC(y, m - 1, d + 1))
+  const nextStart = instantFromWallClock(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), 0, 0, form.zone)
+  return untilTimeBefore(nextStart, form.zone)
 }
 
 function parseFrequency(rrule: string | null): Frequency {
@@ -39,12 +73,17 @@ function parseCount(rrule: string | null): number | undefined {
   return match ? parseInt(match[1], 10) : undefined
 }
 
-function parseUntil(rrule: string | null): string | undefined {
+/** The last day (YYYY-MM-DD) of a rule's UNTIL, a UTC date-time taken as its date in the series zone. */
+function parseUntil(rrule: string | null, form: UntilForm): string | undefined {
   if (!rrule) return undefined
-  const match = rrule.match(/UNTIL=(\d{8})/)
+  const match = rrule.match(/UNTIL=(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?/)
   if (!match) return undefined
-  const v = match[1]
-  return `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`
+  const [, y, mo, d, h, mi, sec, utc] = match
+  if (!utc) return `${y}-${mo}-${d}`
+  const instant = new Date(Date.UTC(+y!, +mo! - 1, +d!, +h!, +mi!, +sec!))
+  // All-day and floating series expand in the host zone, so their UTC UNTIL ends on its host date.
+  const zone = form.kind === 'zoned' ? form.zone : Intl.DateTimeFormat().resolvedOptions().timeZone
+  return formatDateForInputInZone(instant, zone)
 }
 
 type EndType = 'never' | 'count' | 'until'
@@ -55,28 +94,66 @@ function buildRRule(
   endType: EndType,
   count: number,
   until: string,
+  form: UntilForm,
 ): string | null {
   if (freq === 'NONE') return null
   const parts = [`FREQ=${freq}`]
   if (interval > 1) parts.push(`INTERVAL=${interval}`)
   if (endType === 'count' && count > 0) parts.push(`COUNT=${count}`)
   if (endType === 'until' && until) {
-    parts.push(`UNTIL=${until.replace(/-/g, '')}`)
+    parts.push(`UNTIL=${formatUntil(until, form)}`)
   }
   return parts.join(';')
 }
 
-export function RecurrencePicker({ value, onChange, disabled = false }: RecurrencePickerProps) {
+const partKey = (part: string): string => part.split('=', 1)[0]!.toUpperCase()
+
+/**
+ * `rrule` with each named part set in place (appended when absent) or removed when undefined.
+ * Every other part (BYDAY, BYMONTHDAY, BYSETPOS, WKST, ...) is kept as written, so editing the
+ * interval or end of an imported rule does not change which days it falls on.
+ */
+function withParts(rrule: string, changes: Record<string, string | undefined>): string {
+  const parts = rrule.split(';').filter((part) => part !== '')
+  for (const [key, value] of Object.entries(changes)) {
+    const index = parts.findIndex((part) => partKey(part) === key)
+    if (value === undefined) {
+      if (index !== -1) parts.splice(index, 1)
+    } else if (index !== -1) {
+      parts[index] = `${key}=${value}`
+    } else {
+      parts.push(`${key}=${value}`)
+    }
+  }
+  return parts.join(';')
+}
+
+/** The end parts for an end condition: at most one of COUNT and UNTIL. */
+function endParts(endType: EndType, count: number, until: string, form: UntilForm): Record<string, string | undefined> {
+  return {
+    COUNT: endType === 'count' && count > 0 ? String(count) : undefined,
+    UNTIL: endType === 'until' && until ? formatUntil(until, form) : undefined,
+  }
+}
+
+export function RecurrencePicker({ value, onChange, disabled = false, allDay, timeZone }: RecurrencePickerProps) {
+  const untilForm = useMemo(() => untilFormOf(allDay, timeZone), [allDay, timeZone])
   const [showCustom, setShowCustom] = useState(false)
   const [freq, setFreq] = useState<Frequency>(() => parseFrequency(value))
   const [interval, setInterval] = useState(() => parseInterval(value))
   const [endType, setEndType] = useState<EndType>(() => {
     if (parseCount(value)) return 'count'
-    if (parseUntil(value)) return 'until'
+    if (parseUntil(value, untilForm)) return 'until'
     return 'never'
   })
   const [count, setCount] = useState(() => parseCount(value) ?? 10)
-  const [until, setUntil] = useState(() => parseUntil(value) ?? '')
+  const [until, setUntil] = useState(() => parseUntil(value, untilForm) ?? '')
+
+  // Edits change only the part the user touched; the rest of the current rule is kept.
+  const edit = useCallback(
+    (changes: Record<string, string | undefined>) => onChange(withParts(value ?? `FREQ=${freq}`, changes)),
+    [value, freq, onChange],
+  )
 
   const handleFreqChange = useCallback(
     (newFreq: Frequency) => {
@@ -84,46 +161,62 @@ export function RecurrencePicker({ value, onChange, disabled = false }: Recurren
       if (newFreq === 'NONE') {
         setShowCustom(false)
         onChange(null)
+      } else if (!value) {
+        onChange(buildRRule(newFreq, interval, endType, count, until, untilForm))
       } else {
-        onChange(buildRRule(newFreq, interval, endType, count, until))
+        // BY* parts select days within the old frequency's period (BYDAY=MO,WE,FR of a week,
+        // BYMONTHDAY=15 of a month) and change meaning or become invalid under another one, so a
+        // new frequency drops them. Interval, end, WKST and any other parts are kept.
+        const kept = value.split(';').filter((part) => part !== '' && !partKey(part).startsWith('BY'))
+        onChange(withParts(kept.join(';'), { FREQ: newFreq }))
       }
     },
-    [interval, endType, count, until, onChange],
+    [value, interval, endType, count, until, untilForm, onChange],
   )
 
   const handleIntervalChange = useCallback(
     (val: number) => {
       const clamped = Math.max(1, val)
       setInterval(clamped)
-      onChange(buildRRule(freq, clamped, endType, count, until))
+      edit({ INTERVAL: clamped > 1 ? String(clamped) : undefined })
     },
-    [freq, endType, count, until, onChange],
+    [edit],
   )
 
   const handleEndTypeChange = useCallback(
     (val: EndType) => {
       setEndType(val)
-      onChange(buildRRule(freq, interval, val, count, until))
+      edit(endParts(val, count, until, untilForm))
     },
-    [freq, interval, count, until, onChange],
+    [edit, count, until, untilForm],
   )
 
   const handleCountChange = useCallback(
     (val: number) => {
       const clamped = Math.max(1, val)
       setCount(clamped)
-      onChange(buildRRule(freq, interval, endType, clamped, until))
+      edit(endParts(endType, clamped, until, untilForm))
     },
-    [freq, interval, endType, until, onChange],
+    [edit, endType, until, untilForm],
   )
 
   const handleUntilChange = useCallback(
     (val: string) => {
       setUntil(val)
-      onChange(buildRRule(freq, interval, endType, count, val))
+      edit(endParts(endType, count, val, untilForm))
     },
-    [freq, interval, endType, count, onChange],
+    [edit, endType, count, untilForm],
   )
+
+  // The chosen last day is kept when the series later turns all-day or timed or changes zone, so
+  // UNTIL is rewritten in the new form. Opening the dialog rewrites nothing.
+  const untilKey = untilFormKey(untilForm)
+  const writtenKey = useRef(untilKey)
+  useEffect(() => {
+    if (writtenKey.current === untilKey) return
+    writtenKey.current = untilKey
+    if (value && endType === 'until' && until) edit({ UNTIL: formatUntil(until, untilForm) })
+  }, [untilKey, untilForm, value, endType, until, edit])
 
   return (
     <fieldset disabled={disabled} className="flex min-w-0 flex-col gap-2">

@@ -12,6 +12,7 @@ import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { canDeleteCollection } from '@/app/lib/collection-access'
 
 interface Toast {
   id: number
@@ -25,6 +26,7 @@ interface DataCollectionRow {
   name: string
   color: string
   count: number
+  accessLevel?: number
 }
 
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
@@ -45,18 +47,21 @@ function ManageImportedDataSection({ showToast }: { showToast: (message: string)
     id: calendar.id,
     name: calendar.name,
     color: calendar.color,
+    accessLevel: calendar.accessLevel,
     count: events.filter((event) => (event.calendarId ?? 'default') === calendar.id).length,
   }))
   const taskRows: DataCollectionRow[] = taskLists.map((list) => ({
     id: list.id,
     name: list.name,
     color: list.color,
+    accessLevel: list.accessLevel,
     count: tasks.filter((task) => (task.listId ?? 'default') === list.id).length,
   }))
   const contactRows: DataCollectionRow[] = contactLists.map((list) => ({
     id: list.id,
     name: list.name,
     color: list.color,
+    accessLevel: list.accessLevel,
     count: contacts.filter((contact) => (contact.listId ?? 'default') === list.id).length,
   }))
 
@@ -135,7 +140,7 @@ function ManageImportedDataSection({ showToast }: { showToast: (message: string)
             <div className="space-y-1">
               {section.rows.map((row) => {
                 const itemLabel = pluralize(row.count, section.itemSingular, section.itemPlural)
-                const canDeleteCollection = section.rows.length > 1
+                const canDelete = section.rows.length > 1 && canDeleteCollection(row)
                 return (
                   <div key={row.id} className="flex flex-col gap-2 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 sm:flex-row sm:items-center">
                     <div className="min-w-0 flex-1">
@@ -156,7 +161,7 @@ function ManageImportedDataSection({ showToast }: { showToast: (message: string)
                       >
                         Clear {section.itemPlural}
                       </button>
-                      {canDeleteCollection && (
+                      {canDelete && (
                         <button
                           type="button"
                           onClick={() => handleDelete(section.type, row, section.collectionLabel, section.itemSingular, section.itemPlural)}

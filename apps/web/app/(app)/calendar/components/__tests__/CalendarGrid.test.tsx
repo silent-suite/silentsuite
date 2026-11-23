@@ -540,6 +540,54 @@ describe('CalendarGrid timed-event integration', () => {
       vi.useRealTimers()
     }
   })
+
+  it('a slow scroll that starts on an event never arms the long-press drag', () => {
+    vi.useFakeTimers()
+    try {
+      const { target } = renderGestureHarness(false)
+
+      fireEvent.touchStart(target, { touches: [{ clientX: 20, clientY: 200, target }] })
+      act(() => vi.advanceTimersByTime(200))
+      // The finger travels more than 10 px before the 500 ms hold completes: this is a scroll.
+      fireEvent.touchMove(target, { touches: [{ clientX: 20, clientY: 230, target }] })
+      act(() => vi.advanceTimersByTime(400))
+      expect(document.body.classList.contains('is-drag-moving')).toBe(false)
+      expect(navigator.vibrate).not.toHaveBeenCalled()
+
+      fireEvent.touchMove(target, { touches: [{ clientX: 20, clientY: 400, target }] })
+      fireEvent.touchEnd(target, { changedTouches: [{ clientX: 20, clientY: 400, target }] })
+      expect(mocks.calendarState.updateEvent).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a cancelled touch (browser took over the gesture) drops the drag without moving the event', () => {
+    vi.useFakeTimers()
+    try {
+      const { container, target } = renderGestureHarness(false)
+
+      // Cancelled before the hold completes: the timer must not fire later.
+      fireEvent.touchStart(target, { touches: [{ clientX: 20, clientY: 200, target }] })
+      fireEvent.touchCancel(target, { changedTouches: [{ clientX: 20, clientY: 200, target }] })
+      act(() => vi.advanceTimersByTime(600))
+      expect(document.body.classList.contains('is-drag-moving')).toBe(false)
+
+      // Cancelled after the drag armed: preview cleared, nothing written.
+      fireEvent.touchStart(target, { touches: [{ clientX: 20, clientY: 200, target }] })
+      act(() => vi.advanceTimersByTime(500))
+      fireEvent.touchMove(target, { touches: [{ clientX: 25, clientY: 300, target }] })
+      expect(container.querySelector('[class*="bg-emerald-500"]')).not.toBeNull()
+      fireEvent.touchCancel(target, { changedTouches: [{ clientX: 25, clientY: 300, target }] })
+      expect(document.body.classList.contains('is-drag-moving')).toBe(false)
+      expect(container.querySelector('[class*="bg-emerald-500"]')).toBeNull()
+      // A later stray touchend must not complete the cancelled move.
+      fireEvent.touchEnd(target, { changedTouches: [{ clientX: 25, clientY: 300, target }] })
+      expect(mocks.calendarState.updateEvent).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('CalendarGrid slot clicks', () => {
