@@ -171,6 +171,42 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Architecture check failed in $shell" }
           }
 
+      - name: Assert checksum download is read as text in Windows PowerShell 5.1 and PowerShell 7
+        shell: pwsh
+        run: |
+          # GitHub serves .sha256 assets as application/octet-stream; Windows
+          # PowerShell 5.1 then returns the body as bytes, which broke .Trim().
+          $check = @'
+          $ErrorActionPreference = "Stop"
+          $script = Get-Content bridge/install.ps1 -Raw -Encoding UTF8
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { throw "PowerShell parser errors in bridge/install.ps1" }
+          $fn = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ConvertTo-ResponseText'
+          }, $true)
+          if (-not $fn) { throw "ConvertTo-ResponseText helper not found" }
+          Invoke-Expression $fn.Extent.Text
+          $line = "d55a765030b99dc7e9e4bf4cbab3fb5b32e0bc108d2a8820797a1599530b0310  silentsuite-bridge-windows-x86_64.exe`n"
+          $fromBytes = (ConvertTo-ResponseText ([System.Text.Encoding]::ASCII.GetBytes($line))).Trim()
+          $fromString = (ConvertTo-ResponseText $line).Trim()
+          if ($fromBytes -ne $line.Trim() -or $fromString -ne $line.Trim()) { throw "Checksum text conversion failed" }
+          # The real asset from a published release, fetched the way install.ps1 does.
+          $url = "https://github.com/silent-suite/silentsuite/releases/download/v0.5.21-beta.2/silentsuite-bridge-windows-x86_64.exe.sha256"
+          $body = (Invoke-WebRequest -Uri $url -UseBasicParsing).Content
+          Write-Host "PowerShell $($PSVersionTable.PSVersion): checksum body type $($body.GetType().FullName)"
+          $hash = ((ConvertTo-ResponseText $body).Trim() -split '\s+')[0].ToUpper()
+          if ($hash -notmatch '^[0-9A-F]{64}$') { throw "Expected a SHA256 hash, got '$hash'" }
+          '@
+          $file = Join-Path $env:RUNNER_TEMP 'checksum-check.ps1'
+          Set-Content -Path $file -Value $check -Encoding UTF8
+          foreach ($shell in @('powershell', 'pwsh')) {
+            & $shell -NoProfile -ExecutionPolicy Bypass -File $file
+            if ($LASTEXITCODE -ne 0) { throw "Checksum check failed in $shell" }
+          }
+
   smoke:
     name: Bridge CLI smoke test
     runs-on: windows-latest

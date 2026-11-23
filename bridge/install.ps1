@@ -173,6 +173,13 @@ function Install-BridgeBinary([string]$Source, [string]$Target, [string]$Expecte
     }
 }
 
+function ConvertTo-ResponseText($Content) {
+    # GitHub serves release assets such as .sha256 as application/octet-stream,
+    # and Windows PowerShell 5.1 then returns the response body as bytes.
+    if ($Content -is [byte[]]) { return [System.Text.Encoding]::UTF8.GetString($Content) }
+    return [string]$Content
+}
+
 function Get-OSArchitecture {
     # RuntimeInformation can come back empty in Windows PowerShell 5.1, so fall
     # back to the variables Windows sets for every process. A 32-bit PowerShell
@@ -269,7 +276,8 @@ function Invoke-SilentSuiteBridgeInstall {
     }
 
     try {
-        $ExpectedLine = (Invoke-WebRequest -Uri $ChecksumAsset.browser_download_url -UseBasicParsing).Content.Trim()
+        $ChecksumBody = (Invoke-WebRequest -Uri $ChecksumAsset.browser_download_url -UseBasicParsing).Content
+        $ExpectedLine = (ConvertTo-ResponseText $ChecksumBody).Trim()
         $ExpectedHash = ($ExpectedLine -split '\s+')[0].ToUpper()
         if ($ExpectedHash -notmatch '^[0-9A-F]{64}$') {
             Write-Err "Invalid checksum content for $AssetName.sha256"
