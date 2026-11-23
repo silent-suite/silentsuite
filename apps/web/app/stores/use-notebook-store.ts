@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { tabScopedStateStorage } from '@/app/lib/session-scope'
+import { registerScopedStore, tabScopedStateStorage } from '@/app/lib/session-scope'
 
 export interface Notebook {
   id: string
@@ -124,3 +124,5 @@ export const useNotebookStore = create<NotebookState>()(
     },
   ),
 )
+
+registerScopedStore(() => useNotebookStore.persist.rehydrate())

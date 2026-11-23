@@ -20,6 +20,8 @@ const DB_NAME = 'silentsuite-secure'
 const DB_VERSION = 1
 const STORE_NAME = 'keyval'
 const SESSION_KEY = 'etebase_session'
+/** The Billing user a durable hosted session was saved for (absent for self-hosted). */
+export const SESSION_OWNER_KEY = 'etebase_session_owner'
 
 /** Sensitive localStorage keys that were migrated — cleared on first load. */
 const LEGACY_KEYS = [
@@ -115,7 +117,11 @@ export interface SecureSetOptions {
    * not remembered.
    */
   persist?: boolean
-  /** Tab-only session: the Billing user it was confirmed for, when known. */
+  /**
+   * The Billing user the session was confirmed for, when known. Stored with a
+   * tab copy, and with a durable copy (in the same transaction) so a restore
+   * can refuse a copy saved for someone else.
+   */
   owner?: string | null
 }
 
@@ -123,11 +129,23 @@ async function setSession(value: string, persist: boolean, owner: string | null)
   if (persist) {
     // Write before removing the tab copy, so a concurrent read always finds one.
     // If the write fails, the tab copy and scope stay as they were: the session
-    // keeps working in this tab and is simply not remembered.
+    // keeps working in this tab and is simply not remembered. An older durable
+    // copy that survives carries its own owner and is refused at restore.
+    const tabCopyBefore = readTabSession()
     try {
-      await withCommittedStore((store) => { store.put(value, SESSION_KEY) })
+      await withCommittedStore((store) => {
+        store.put(value, SESSION_KEY)
+        if (owner) store.put(owner, SESSION_OWNER_KEY)
+        else store.delete(SESSION_OWNER_KEY)
+      })
     } catch (err) {
       console.error('[secure-storage] Failed to write to IndexedDB', getSafeErrorDetails(err))
+      return
+    }
+    if (readTabSession() !== tabCopyBefore) {
+      // A newer tab-only sign-in wrote this tab while this one was being saved:
+      // keep that one and take back this write.
+      await removeStoredSessionIfEqual(value)
       return
     }
     setSessionScope('device')
@@ -166,7 +184,26 @@ export async function secureRemove(key: string): Promise<void> {
     setSessionScope(null)
   }
   try {
-    await withStore('readwrite', (store) => store.delete(key))
+    await withCommittedStore((store) => {
+      store.delete(key)
+      if (key === SESSION_KEY) store.delete(SESSION_OWNER_KEY)
+    })
+  } catch {
+    // Ignore errors on removal
+  }
+}
+
+/** Delete the durable session (and its owner) only while it still equals `expected`. */
+async function removeStoredSessionIfEqual(expected: string): Promise<void> {
+  try {
+    await withCommittedStore((store) => {
+      const req = store.get(SESSION_KEY)
+      req.onsuccess = () => {
+        if (req.result !== expected) return
+        store.delete(SESSION_KEY)
+        store.delete(SESSION_OWNER_KEY)
+      }
+    })
   } catch {
     // Ignore errors on removal
   }
@@ -184,7 +221,9 @@ export async function secureRemoveIfEqual(key: string, expected: string, options
     await withCommittedStore((store) => {
       const req = store.get(key)
       req.onsuccess = () => {
-        if (req.result === expected) store.delete(key)
+        if (req.result !== expected) return
+        store.delete(key)
+        if (key === SESSION_KEY) store.delete(SESSION_OWNER_KEY)
       }
     })
   } catch {

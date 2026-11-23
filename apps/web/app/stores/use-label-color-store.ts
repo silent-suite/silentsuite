@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { tabScopedStateStorage } from '@/app/lib/session-scope'
+import { registerScopedStore, tabScopedStateStorage } from '@/app/lib/session-scope'
 
 export const LABEL_COLOR_PALETTE = [
   '#10b981', // emerald
@@ -85,3 +85,5 @@ export const useLabelColorStore = create<LabelColorState>()(
     },
   ),
 )
+
+registerScopedStore(() => useLabelColorStore.persist.rehydrate())

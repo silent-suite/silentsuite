@@ -448,7 +448,7 @@ describe('Security page password change billing boundary', () => {
     expect(mocks.core.logIn).toHaveBeenCalledWith('https://server.silentsuite.io', 'fixture@example.test', 'OldPassw0rd')
     expect(mocks.core.changePassword).toHaveBeenCalledWith(LIVE_ACCOUNT, 'NewPassw0rd')
     // Hosted user without "Keep me signed in": the new session stays in the tab.
-    expect(mocks.secureStorage.secureSet).toHaveBeenCalledWith('etebase_session', 'saved-session', { persist: false })
+    expect(mocks.secureStorage.secureSet).toHaveBeenCalledWith('etebase_session', 'saved-session', { persist: false, owner: 'hosted-user-1' })
     expect(passwordPatchCalls()).toEqual([[PASSWORD_PATCH_URL, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -468,7 +468,7 @@ describe('Security page password change billing boundary', () => {
     expect(mocks.core.logIn).toHaveBeenCalledWith(CUSTOM_SERVER_URL, 'fixture@example.test', 'OldPassw0rd')
     expect(mocks.core.changePassword).toHaveBeenCalledWith(LIVE_ACCOUNT, 'NewPassw0rd')
     // A custom server always keeps the session on the device.
-    expect(mocks.secureStorage.secureSet).toHaveBeenCalledWith('etebase_session', 'saved-session', { persist: true })
+    expect(mocks.secureStorage.secureSet).toHaveBeenCalledWith('etebase_session', 'saved-session', { persist: true, owner: null })
     expect(passwordPatchCalls()).toEqual([])
     // Nothing here signed other sessions out, so that claim must not appear.
     expect(screen.queryByText(SUCCESS_TEXT)).not.toBeInTheDocument()

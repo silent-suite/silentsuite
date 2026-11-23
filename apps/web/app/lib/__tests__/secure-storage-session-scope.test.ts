@@ -4,7 +4,10 @@ import { migrateFromLocalStorage, secureClear, secureGet, secureRemoveIfEqual, s
 import {
   NAME_STORE_KEYS,
   TAB_SESSION_KEY,
+  bindTabSession,
   getSessionScope,
+  readTabSessionOwner,
+  registerScopedStore,
   setSessionScope,
   tabScopedStateStorage,
 } from '../session-scope'
@@ -115,6 +118,31 @@ describe('Etebase session storage scope', () => {
     expect(sessionStorage.getItem(NAME_STORE_KEYS[0])).toBeNull()
   })
 
+  it('takes back a durable write when a newer tab-only sign-in lands while it commits', async () => {
+    await secureSet(KEY, 'older-tab', { persist: false })
+    const promotion = secureSet(KEY, 'promoted', { persist: true, owner: 'user-old' })
+    await secureSet(KEY, 'newer-tab', { persist: false, owner: 'user-new' })
+    await promotion
+    expect(getSessionScope()).toBe('tab')
+    expect(await secureGet(KEY)).toBe('newer-tab')
+    expect(await storedCopy()).toBeNull()
+  })
+
+  it('binds a tab copy only to the session the sign-in saved', async () => {
+    await secureSet(KEY, 'successor-session', { persist: false })
+    bindTabSession('user-late', 'late-session')
+    expect(readTabSessionOwner()).toBeNull()
+    bindTabSession('user-successor', 'successor-session')
+    expect(readTabSessionOwner()).toBe('user-successor')
+  })
+
+  it('stores the owner with a durable copy and removes it with the copy', async () => {
+    await secureSet(KEY, 'device-session', { persist: true, owner: 'user-1' })
+    expect(await secureGet('etebase_session_owner')).toBe('user-1')
+    await secureRemoveIfEqual(KEY, 'device-session', { storedOnly: true })
+    expect(await secureGet('etebase_session_owner')).toBeNull()
+  })
+
   it('rejects an unreadable tab copy', async () => {
     sessionStorage.setItem(TAB_SESSION_KEY, 'not-json')
     expect(await secureGet(KEY)).toBeNull()
@@ -181,6 +209,19 @@ describe('decrypted names follow the session scope', () => {
     expect(sessionStorage.getItem(NAME)).toBe('tab')
     expect(localStorage.getItem(NAME)).toBeNull()
     expect(tabScopedStateStorage.getItem(NAME)).toBe('tab')
+  })
+
+  it('rehydrates registered name stores when the scope moves to or from device', () => {
+    const rehydrate = vi.fn()
+    registerScopedStore(rehydrate)
+    setSessionScope('tab')
+    expect(rehydrate).not.toHaveBeenCalled()
+    setSessionScope('device')
+    expect(rehydrate).toHaveBeenCalledTimes(1)
+    setSessionScope('device')
+    expect(rehydrate).toHaveBeenCalledTimes(1)
+    setSessionScope(null)
+    expect(rehydrate).toHaveBeenCalledTimes(2)
   })
 
   it('uses localStorage only for a device scope', () => {

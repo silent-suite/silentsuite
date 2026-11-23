@@ -27,8 +27,28 @@ export function getSessionScope(): SessionScope {
   return sessionScope
 }
 
+const scopedStores = new Set<() => unknown>()
+
+/**
+ * Name stores hydrate when they are created, before the scope is known. Each
+ * registers its rehydrate function, which runs whenever the scope moves to or
+ * from 'device', so a remembered or self-hosted reload reads its saved names.
+ */
+export function registerScopedStore(rehydrate: () => unknown): void {
+  scopedStores.add(rehydrate)
+}
+
 export function setSessionScope(scope: SessionScope): void {
+  const previous = sessionScope
   sessionScope = scope
+  if (previous === scope || (previous !== 'device' && scope !== 'device')) return
+  for (const rehydrate of scopedStores) {
+    try {
+      void rehydrate()
+    } catch {
+      // A store that can't rehydrate keeps its in-memory state.
+    }
+  }
 }
 
 interface TabSessionRecord {
@@ -125,12 +145,13 @@ export function writeTabSession(value: string, owner: string | null = null): voi
 }
 
 /**
- * Records the Billing user a fresh copy was confirmed for. A copy already bound
- * to someone else belongs to an earlier sign-in and is removed.
+ * Records the Billing user a fresh copy was confirmed for, only if the copy is
+ * still the session that sign-in saved. A copy already bound to someone else
+ * belongs to an earlier sign-in and is removed.
  */
-export function bindTabSession(owner: string): void {
+export function bindTabSession(owner: string, expectedSession: string): void {
   const record = readTabRecord()
-  if (!record) return
+  if (!record || record.session !== expectedSession) return
   if (record.owner !== null && record.owner !== owner) {
     removeTabMaterial()
     return

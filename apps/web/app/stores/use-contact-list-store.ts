@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { tabScopedStateStorage } from '@/app/lib/session-scope'
+import { registerScopedStore, tabScopedStateStorage } from '@/app/lib/session-scope'
 import { useAuthStore } from './use-auth-store'
 
 export interface ContactList {
@@ -118,3 +118,5 @@ export const useContactListStore = create<ContactListState>()(
     },
   ),
 )
+
+registerScopedStore(() => useContactListStore.persist.rehydrate())

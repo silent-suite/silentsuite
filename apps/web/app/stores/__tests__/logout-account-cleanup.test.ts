@@ -75,7 +75,7 @@ vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
 vi.stubGlobal('BroadcastChannel', undefined)
 
 async function seed(session: string, fingerprint: string, itemUid: string) {
-  await secureSet('etebase_session', session, { persist: true })
+  await secureSet('etebase_session', session, { persist: true, owner: session === SESSION_B ? userB.id : userA.id })
   // A delete mutation carries no plaintext content, so the real queue accepts it.
   await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'nb-1', itemUid }, { accountEpoch: getAccountEpoch(), accountFingerprint: fingerprint })
   await putMeta({ accountFingerprint: fingerprint, cacheSchemaVersion: 1, lastInvalidatedAt: null })
@@ -918,7 +918,9 @@ describe('restoreSession and retryBillingConnection keep their own cleanup and p
     expect(useAuthStore.getState().user?.id).toBe(USER_C.id)
     expect(useAuthStore.getState().subscriptionStatus).toBe('active')
     expect(useEtebaseStore.getState().accountFingerprint).toBeNull()
-    expect(await persisted()).toEqual(RETAINED_A)
+    // A's stored session was saved for A, so a remembered device confirmed for C
+    // refuses it (C unlocks with C's password); A's queue and cache metadata stay.
+    expect(await persisted()).toEqual({ ...RETAINED_A, session: null })
   })
 })
 

@@ -116,7 +116,7 @@ describe('login', () => {
 
 describe('restoreSession', () => {
   it('a remembered restore ignores and removes a stale tab copy from an earlier account', async () => {
-    await secureSet(KEY, 'SYNTHETIC-SESSION-REMEMBERED-B', { persist: true })
+    await secureSet(KEY, 'SYNTHETIC-SESSION-REMEMBERED-B', { persist: true, owner: 'synthetic-user-B' })
     writeStaleTabCopy('SYNTHETIC-SESSION-STALE-A')
     setSessionScope(null)
     billing.mockResolvedValue(json({ ...user, id: 'synthetic-user-B', rememberDevice: true }))
@@ -126,6 +126,44 @@ describe('restoreSession', () => {
     expect(useAuthStore.getState().user?.id).toBe('synthetic-user-B')
     expect(sessionStorage.getItem(TAB_SESSION_KEY)).toBeNull()
     expect(await secureGet(KEY)).toBe('SYNTHETIC-SESSION-REMEMBERED-B')
+  })
+
+  it('a remembered restore refuses a stored copy saved for another user, or with no owner', async () => {
+    for (const owner of ['synthetic-user-OTHER', null]) {
+      await secureSet(KEY, 'SYNTHETIC-SESSION-FOREIGN', { persist: true, owner })
+      setSessionScope(null)
+      billing.mockResolvedValue(json({ ...user, rememberDevice: true }))
+
+      await useAuthStore.getState().restoreSession()
+
+      expect(useAuthStore.getState().user?.id).toBe(user.id)
+      expect(await secureGet(KEY)).toBeNull()
+      expect(await storedCopy()).toBeNull()
+      useAuthStore.setState({ user: null, isAuthenticated: false })
+    }
+  })
+
+  it('a failed remembered promotion never lets the next restore open an older account', async () => {
+    await secureSet(KEY, 'SYNTHETIC-SESSION-OLDER-ACCOUNT', { persist: true, owner: 'synthetic-user-OLDER' })
+    setSessionScope(null)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const put = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore) {
+      this.transaction.abort()
+      throw new DOMException('aborted', 'AbortError')
+    })
+    billing.mockImplementation(async () => json({ ...user, rememberDevice: true }))
+    await useAuthStore.getState().login(user.email, 'synthetic-password', undefined, true)
+    put.mockRestore()
+    expect(await storedCopy()).toBe('SYNTHETIC-SESSION-OLDER-ACCOUNT')
+
+    // Reload: a remembered restore for this user must not read the older account.
+    setSessionScope(null)
+    sessionStorage.clear()
+    useAuthStore.setState({ user: null, isAuthenticated: false })
+    await useAuthStore.getState().restoreSession()
+
+    expect(useAuthStore.getState().user?.id).toBe(user.id)
+    expect(await secureGet(KEY)).toBeNull()
   })
 
   it('a non-remembered restore with this tab\'s marker keeps the tab copy and deletes an old IndexedDB copy', async () => {
@@ -229,6 +267,22 @@ describe('unlockEtebaseSession', () => {
 
     expect(await secureGet(KEY)).toBeNull()
     expect(sessionStorage.getItem(TAB_SESSION_KEY)).toBeNull()
+  })
+
+  it('saves nothing when another tab logged out while signing in', async () => {
+    useAuthStore.setState({ user: { ...user, onboardedAt: null, rememberDevice: false }, isAuthenticated: true })
+    let release!: () => void
+    vi.mocked(etebaseLogIn).mockImplementationOnce(() => new Promise(resolve => {
+      release = () => resolve({ authToken: 'synthetic-token', savedSession: 'SYNTHETIC-SESSION-UNLOCK' } as never)
+    }))
+    const unlocking = useAuthStore.getState().unlockEtebaseSession(user.email, 'synthetic-password')
+    await vi.waitFor(() => expect(release).toBeDefined())
+    localStorage.setItem('silentsuite-logout-generation', 'synthetic-logout-elsewhere')
+    release()
+    await unlocking
+
+    expect(sessionStorage.getItem(TAB_SESSION_KEY)).toBeNull()
+    expect(await storedCopy()).toBeNull()
   })
 
   it('binds a non-remembered unlock to the signed-in user', async () => {

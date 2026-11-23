@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { tabScopedStateStorage } from '@/app/lib/session-scope'
+import { registerScopedStore, tabScopedStateStorage } from '@/app/lib/session-scope'
 import { useAuthStore } from './use-auth-store'
 
 export interface CalendarList {
@@ -117,3 +117,5 @@ export const useCalendarListStore = create<CalendarListState>()(
     },
   ),
 )
+
+registerScopedStore(() => useCalendarListStore.persist.rehydrate())

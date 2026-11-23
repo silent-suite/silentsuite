@@ -302,7 +302,7 @@ function ChangePasswordSection() {
       if (!isAccountOwner(owner)) throw accountChanged()
       // Keep it where this sign-in was allowed to keep it: on the device only for
       // a local server or a device Billing confirmed as remembered.
-      await secureSet('etebase_session', newSession, { persist: mode === 'local' || user?.rememberDevice === true })
+      await secureSet('etebase_session', newSession, { persist: mode === 'local' || user?.rememberDevice === true, owner: mode === 'local' ? null : user?.id ?? null })
       if (!isAccountOwner(owner)) {
         // The write cannot be cancelled once started. Remove it only if it is
         // still the stored value, so a newer account's later write survives;
