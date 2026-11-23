@@ -121,6 +121,28 @@ describe('login', () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
   })
 
+  it('a self-hosted sign-in without WebCrypto works in this tab and never reopens an older account', async () => {
+    const serverUrl = 'https://dav.synthetic.invalid'
+    await secureSet(KEY, 'SYNTHETIC-SESSION-OLDER-SELF-HOSTED', { persist: true })
+    setSessionScope(null)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(globalThis.crypto.subtle, 'generateKey').mockRejectedValue(new Error('synthetic: no WebCrypto'))
+    await useAuthStore.getState().login(user.email, 'synthetic-password', serverUrl, true)
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    // What the Etebase store's initialize reads.
+    expect(await secureGet(KEY)).toBe('SYNTHETIC-SESSION-LOGIN')
+    expect(await storedCopy()).toBeNull()
+
+    // Reload in the same tab: the self-hosted restore settles on the device copy
+    // (dropping this tab's copy), which is gone, so it signs out; never the older account.
+    setSessionScope(null)
+    useAuthStore.setState({ user: null, isAuthenticated: false })
+    await useAuthStore.getState().restoreSession()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(await secureGet(KEY)).toBeNull()
+  })
+
   it('stores nothing durable when the token exchange fails', async () => {
     billing.mockRejectedValue(new TypeError('synthetic Failed to fetch'))
     await useAuthStore.getState().login(user.email, 'synthetic-password', undefined, true)
@@ -158,6 +180,35 @@ describe('restoreSession', () => {
     }
   })
 
+  it('a remembered restore keeps a plain copy from an older version working and wraps it', async () => {
+    await new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open('silentsuite-secure', 1)
+      open.onsuccess = () => {
+        const tx = open.result.transaction('keyval', 'readwrite')
+        tx.objectStore('keyval').put('SYNTHETIC-SESSION-LEGACY-PLAIN', KEY)
+        tx.objectStore('keyval').put(user.id, 'etebase_session_owner')
+        tx.oncomplete = () => { open.result.close(); resolve() }
+        tx.onerror = () => reject(tx.error)
+      }
+    })
+    setSessionScope(null)
+    billing.mockResolvedValue(json({ ...user, rememberDevice: true }))
+
+    await useAuthStore.getState().restoreSession()
+
+    expect(useAuthStore.getState().user?.id).toBe(user.id)
+    expect(await secureGet(KEY)).toBe('SYNTHETIC-SESSION-LEGACY-PLAIN')
+    const raw = await new Promise<unknown>((resolve) => {
+      const open = indexedDB.open('silentsuite-secure', 1)
+      open.onsuccess = () => {
+        const req = open.result.transaction('keyval').objectStore('keyval').get(KEY)
+        req.onsuccess = () => { open.result.close(); resolve(req.result) }
+      }
+    })
+    expect(typeof raw).not.toBe('string')
+    expect(await secureGet(KEY)).toBe('SYNTHETIC-SESSION-LEGACY-PLAIN')
+  })
+
   it('a remembered restore never reads a foreign stored copy, even when deleting it fails', async () => {
     await secureSet(KEY, 'SYNTHETIC-SESSION-FOREIGN', { persist: true, owner: 'synthetic-user-OTHER' })
     setSessionScope(null)
@@ -186,7 +237,8 @@ describe('restoreSession', () => {
     billing.mockImplementation(async () => json({ ...user, rememberDevice: true }))
     await useAuthStore.getState().login(user.email, 'synthetic-password', undefined, true)
     put.mockRestore()
-    expect(await storedCopy()).toBe('SYNTHETIC-SESSION-OLDER-ACCOUNT')
+    // The failed save was meant to replace the older copy, so that copy is gone too.
+    expect(await storedCopy()).toBeNull()
 
     // Reload: a remembered restore for this user must not read the older account.
     setSessionScope(null)
