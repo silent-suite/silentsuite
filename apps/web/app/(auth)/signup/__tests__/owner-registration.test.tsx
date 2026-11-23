@@ -126,7 +126,7 @@ describe('opted-in owner registration (self-host build)', () => {
     expect(sdk.signup).toHaveBeenCalledWith(
       { username: USERNAME, email: USERNAME }, ACCOUNT_PASSWORD, ORIGIN, { registrationToken: GRANT },
     )
-    await waitFor(() => expect(storage.set).toHaveBeenCalledWith('etebase_session', 'synthetic-saved-session'))
+    await waitFor(() => expect(storage.set).toHaveBeenCalledWith('etebase_session', 'synthetic-saved-session', { persist: true }))
     const state = allBrowserState(useAuthStore)
     expect(state).not.toContain(OWNER_PASSWORD)
     expect(state).not.toContain(GRANT)
@@ -276,7 +276,7 @@ describe('owner registration off (default build)', () => {
     expect(sdk.signup).toHaveBeenCalledTimes(1)
     expect(sdk.signup.mock.calls[0][3]).toBeUndefined()
     expect(ownerFetchCalls()).toHaveLength(0)
-    await waitFor(() => expect(storage.set).toHaveBeenCalledWith('etebase_session', 'synthetic-saved-session'))
+    await waitFor(() => expect(storage.set).toHaveBeenCalledWith('etebase_session', 'synthetic-saved-session', { persist: true }))
     expect(useAuthStore.getState().pendingSignup?.etebaseAccountReady).toBe(true)
   })
 })

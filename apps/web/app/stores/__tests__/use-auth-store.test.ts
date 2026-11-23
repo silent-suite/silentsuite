@@ -56,19 +56,22 @@ vi.mock('@/app/lib/offline-queue', () => ({
   clearOtherAccounts: offlineQueueClearOtherAccounts,
 }))
 
-// In-memory store for secure storage mock
+// In-memory store for secure storage mock: `secureStore` is what a tab may read;
+// `storedOnlyStore` stands in for IndexedDB copies addressed with `storedOnly`.
 let secureStore: Record<string, string> = {}
+let storedOnlyStore: Record<string, string> = {}
 
 // Mock secure storage (IndexedDB wrapper)
 vi.mock('@/app/lib/secure-storage', () => ({
-  secureGet: vi.fn(async (key: string) => secureStore[key] ?? null),
+  secureGet: vi.fn(async (key: string, options?: { storedOnly?: boolean }) => (options?.storedOnly ? storedOnlyStore : secureStore)[key] ?? null),
   secureSet: vi.fn(async (key: string, value: string) => { secureStore[key] = value }),
   secureRemove: vi.fn(async (key: string) => { delete secureStore[key] }),
   // In-memory stand-in for one IndexedDB transaction (see secure-storage.test.ts for the real one).
-  secureRemoveIfEqual: vi.fn(async (key: string, expected: string) => {
-    if (secureStore[key] === expected) delete secureStore[key]
+  secureRemoveIfEqual: vi.fn(async (key: string, expected: string, options?: { storedOnly?: boolean }) => {
+    const store = options?.storedOnly ? storedOnlyStore : secureStore
+    if (store[key] === expected) delete store[key]
   }),
-  secureClear: vi.fn(async () => { secureStore = {} }),
+  secureClear: vi.fn(async () => { secureStore = {}; storedOnlyStore = {} }),
   migrateFromLocalStorage: vi.fn(async () => {}),
 }))
 
@@ -239,9 +242,10 @@ describe('useAuthStore', () => {
     preferencesReset.mockClear()
     preferencesSyncDestroy.mockClear()
     vi.mocked(secureClear).mockClear()
-    vi.mocked(secureClear).mockImplementation(async () => { secureStore = {} })
+    vi.mocked(secureClear).mockImplementation(async () => { secureStore = {}; storedOnlyStore = {} })
     vi.stubGlobal('BroadcastChannel', undefined)
     secureStore = {}
+    storedOnlyStore = {}
     localStorage.clear()
     sessionStorage.clear()
   })
@@ -1578,7 +1582,8 @@ describe('useAuthStore', () => {
     await useAuthStore.getState().login('test@example.com', 'password123')
 
     expect(offlineQueueClearAll).toHaveBeenCalledTimes(1)
-    expect(secureSet).toHaveBeenCalledWith('etebase_session', 'mock-saved-session')
+    // Not remembered: kept in this tab only.
+    expect(secureSet).toHaveBeenCalledWith('etebase_session', 'mock-saved-session', { persist: false })
     expect(offlineQueueClearAll.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(secureSet).mock.invocationCallOrder[0],
     )
@@ -1851,8 +1856,9 @@ describe('useAuthStore', () => {
       expect(secureStore['etebase_session']).toBeUndefined()
     })
 
-    it('restoreSession preserves local data in an offline new tab while another session tab is active', async () => {
-      secureStore['etebase_session'] = 'fake-session-data'
+    it('restoreSession signs an offline new tab out locally while another session tab is active (no shared session to borrow)', async () => {
+      // Older versions shared a non-remembered session through IndexedDB; this tab has none of its own.
+      storedOnlyStore['etebase_session'] = 'fake-session-data'
       sessionStorage.setItem('silentsuite-hosted-tab-id', 'tab-current')
       localStorage.setItem('silentsuite-hosted-validation-initialized', 'true')
       localStorage.setItem('silentsuite-hosted-validation-active-tabs', JSON.stringify({
@@ -1863,10 +1869,10 @@ describe('useAuthStore', () => {
       await useAuthStore.getState().restoreSession()
 
       const state = useAuthStore.getState()
-      expect(state.isAuthenticated).toBe(true)
-      expect(state.subscriptionStatus).toBe('billing_unavailable')
-      expect(state.user).toMatchObject({ id: 'u1', rememberDevice: false })
-      expect(secureStore['etebase_session']).toBe('fake-session-data')
+      expect(state.isAuthenticated).toBe(false)
+      expect(state.user).toBeNull()
+      // Offline there is no Billing confirmation: the durable copy is neither adopted nor deleted.
+      expect(storedOnlyStore['etebase_session']).toBe('fake-session-data')
     })
 
     it('restoreSession clears stale local auth after validation has initialized and no marker is present', async () => {
