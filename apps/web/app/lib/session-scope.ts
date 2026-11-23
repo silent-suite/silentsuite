@@ -34,11 +34,18 @@ export function setSessionScope(scope: SessionScope): void {
 interface TabSessionRecord {
   /** The logout generation when it was written; any later logout voids it. */
   generation: string | null
+  /** The Billing user this copy was confirmed for; null until confirmed. */
+  owner: string | null
   session: string
 }
 
-function currentLogoutGeneration(): string | null {
-  return readLogoutGeneration() ?? null
+/** The current logout generation, or undefined when it can't be read. */
+function currentLogoutGeneration(): string | null | undefined {
+  try {
+    return readLogoutGeneration()
+  } catch {
+    return undefined
+  }
 }
 
 /** Persisted stores that hold decrypted collection or label names. */
@@ -66,11 +73,7 @@ function deviceStorage(): Storage | null {
   }
 }
 
-/**
- * This tab's session copy, only while no logout happened anywhere since it was
- * written. A stale or unreadable copy is removed with this tab's names.
- */
-export function readTabSession(): string | null {
+function readTabRecord(): TabSessionRecord | null {
   let raw: string | null
   try {
     raw = tabStorage()?.getItem(TAB_SESSION_KEY) ?? null
@@ -80,8 +83,12 @@ export function readTabSession(): string | null {
   if (raw === null) return null
   try {
     const record = JSON.parse(raw) as Partial<TabSessionRecord>
+    const generation = currentLogoutGeneration()
     if (typeof record.session === 'string' && record.session
-      && (record.generation ?? null) === currentLogoutGeneration()) return record.session
+      && generation !== undefined && record.generation === generation
+      && (record.owner === null || typeof record.owner === 'string')) {
+      return { generation: record.generation, owner: record.owner, session: record.session }
+    }
   } catch {
     // Unreadable: treated as stale below.
   }
@@ -89,11 +96,50 @@ export function readTabSession(): string | null {
   return null
 }
 
-export function writeTabSession(value: string): void {
+/**
+ * This tab's session copy, only while no logout happened anywhere since it was
+ * written (an unreadable generation counts as changed). A stale or unreadable
+ * copy is removed with this tab's names.
+ */
+export function readTabSession(): string | null {
+  return readTabRecord()?.session ?? null
+}
+
+/** The Billing user this tab's copy was confirmed for, or null. */
+export function readTabSessionOwner(): string | null {
+  return readTabRecord()?.owner ?? null
+}
+
+/**
+ * Write this tab's copy, replacing any earlier one. The old copy is removed
+ * first, so a failed write never leaves it readable.
+ */
+export function writeTabSession(value: string, owner: string | null = null): void {
+  removeTabSession()
   const storage = tabStorage()
   if (!storage) throw new Error('Tab storage is not available')
-  const record: TabSessionRecord = { generation: currentLogoutGeneration(), session: value }
+  const generation = currentLogoutGeneration()
+  if (generation === undefined) throw new Error('The logout generation is not readable')
+  const record: TabSessionRecord = { generation, owner, session: value }
   storage.setItem(TAB_SESSION_KEY, JSON.stringify(record))
+}
+
+/**
+ * Records the Billing user a fresh copy was confirmed for. A copy already bound
+ * to someone else belongs to an earlier sign-in and is removed.
+ */
+export function bindTabSession(owner: string): void {
+  const record = readTabRecord()
+  if (!record) return
+  if (record.owner !== null && record.owner !== owner) {
+    removeTabMaterial()
+    return
+  }
+  try {
+    tabStorage()?.setItem(TAB_SESSION_KEY, JSON.stringify({ ...record, owner }))
+  } catch {
+    // Unbound copies are rejected at the next restore, which then asks to unlock.
+  }
 }
 
 export function removeTabSession(): void {

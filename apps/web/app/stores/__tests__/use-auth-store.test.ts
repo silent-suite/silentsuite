@@ -1871,8 +1871,8 @@ describe('useAuthStore', () => {
       const state = useAuthStore.getState()
       expect(state.isAuthenticated).toBe(false)
       expect(state.user).toBeNull()
-      // The live peer keeps its own tab copy; the durable copy is deleted, never adopted.
-      expect(storedOnlyStore['etebase_session']).toBeUndefined()
+      // Offline there is no Billing confirmation: the durable copy is neither adopted nor deleted.
+      expect(storedOnlyStore['etebase_session']).toBe('fake-session-data')
     })
 
     it('restoreSession clears stale local auth after validation has initialized and no marker is present', async () => {

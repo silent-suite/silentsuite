@@ -14,7 +14,7 @@
  * IndexedDB and sessionStorage are both readable by any script in this origin.
  */
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
-import { getSessionScope, readTabSession, removePersistentNames, removeTabSession, setSessionScope, writeTabSession } from '@/app/lib/session-scope'
+import { getSessionScope, readTabSession, removeTabSession, setSessionScope, writeTabSession } from '@/app/lib/session-scope'
 
 const DB_NAME = 'silentsuite-secure'
 const DB_VERSION = 1
@@ -110,14 +110,20 @@ export interface SecureSetOptions {
    * Etebase session only. `true` stores it in IndexedDB; use it only when
    * keeping the session is authorized (self-hosted, or a hosted device Billing
    * confirmed as remembered). Anything else, including omitting it, keeps the
-   * session in this tab only and deletes any IndexedDB copy.
+   * session in this tab only. A tab-only write never touches IndexedDB; the
+   * auth store removes an old durable copy once Billing confirms the device is
+   * not remembered.
    */
   persist?: boolean
+  /** Tab-only session: the Billing user it was confirmed for, when known. */
+  owner?: string | null
 }
 
-async function setSession(value: string, persist: boolean): Promise<void> {
+async function setSession(value: string, persist: boolean, owner: string | null): Promise<void> {
   if (persist) {
     // Write before removing the tab copy, so a concurrent read always finds one.
+    // If the write fails, the tab copy and scope stay as they were: the session
+    // keeps working in this tab and is simply not remembered.
     try {
       await withCommittedStore((store) => { store.put(value, SESSION_KEY) })
     } catch (err) {
@@ -128,20 +134,13 @@ async function setSession(value: string, persist: boolean): Promise<void> {
     removeTabSession()
     return
   }
-  // Decide the scope first: reads now never reach IndexedDB, even if the tab
-  // write fails (then the session simply isn't kept and unlock asks again).
+  // Decide the scope first: reads now never reach IndexedDB, and a failed tab
+  // write leaves no readable session (unlock then asks again).
   setSessionScope('tab')
   try {
-    writeTabSession(value)
+    writeTabSession(value, owner)
   } catch (err) {
     console.error('[secure-storage] Failed to write the tab session', getSafeErrorDetails(err))
-  }
-  removePersistentNames()
-  try {
-    await withCommittedStore((store) => { store.delete(SESSION_KEY) })
-  } catch (err) {
-    // The next restore deletes it again.
-    console.error('[secure-storage] Failed to delete the stored session', getSafeErrorDetails(err))
   }
 }
 
@@ -150,7 +149,7 @@ async function setSession(value: string, persist: boolean): Promise<void> {
  * SecureSetOptions).
  */
 export async function secureSet(key: string, value: string, options: SecureSetOptions = {}): Promise<void> {
-  if (key === SESSION_KEY) return setSession(value, options.persist === true)
+  if (key === SESSION_KEY) return setSession(value, options.persist === true, options.owner ?? null)
   try {
     await withStore('readwrite', (store) => store.put(value, key))
   } catch (err) {

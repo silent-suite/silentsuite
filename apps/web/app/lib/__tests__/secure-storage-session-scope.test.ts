@@ -45,12 +45,46 @@ describe('Etebase session storage scope', () => {
     expect(getSessionScope()).toBe('tab')
   })
 
-  it('deletes an existing IndexedDB copy when a session is saved tab-only', async () => {
-    await secureSet(KEY, 'old-remembered', { persist: true })
-    expect(await storedCopy()).toBe('old-remembered')
+  it('a tab-only save leaves IndexedDB alone and never reads it', async () => {
+    await secureSet(KEY, 'other-remembered', { persist: true })
     await secureSet(KEY, 'new-tab-only', { persist: false })
-    expect(await storedCopy()).toBeNull()
+    // Cleanup is the auth store's job after Billing confirms; reads ignore it meanwhile.
+    expect(await storedCopy()).toBe('other-remembered')
     expect(await secureGet(KEY)).toBe('new-tab-only')
+  })
+
+  it('a failed tab overwrite leaves the earlier tab copy unreadable', async () => {
+    await secureSet(KEY, 'earlier-account', { persist: false })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await secureSet(KEY, 'new-account', { persist: false })
+    vi.mocked(Storage.prototype.setItem).mockRestore()
+    expect(await secureGet(KEY)).toBeNull()
+  })
+
+  it('a failed durable write keeps the working tab copy (not remembered, never more)', async () => {
+    await secureSet(KEY, 'tab-session', { persist: false })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore) {
+      this.transaction.abort()
+      throw new DOMException('aborted', 'AbortError')
+    })
+    await secureSet(KEY, 'tab-session', { persist: true })
+    vi.mocked(IDBObjectStore.prototype.put).mockRestore()
+    expect(getSessionScope()).toBe('tab')
+    expect(await secureGet(KEY)).toBe('tab-session')
+    expect(await storedCopy()).toBeNull()
+  })
+
+  it('rejects a tab copy when the logout generation cannot be read', async () => {
+    await secureSet(KEY, 'tab-session', { persist: false })
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+      if (key === LOGOUT_GENERATION_KEY) throw new Error('blocked')
+      return Object.getOwnPropertyDescriptor(Storage.prototype, 'getItem')!.value.call(this, key)
+    })
+    const read = await secureGet(KEY)
+    vi.mocked(Storage.prototype.getItem).mockRestore()
+    expect(read).toBeNull()
   })
 
   it('stores a persisted session in IndexedDB and drops the tab copy after the write commits', async () => {
@@ -95,7 +129,6 @@ describe('Etebase session storage scope', () => {
     vi.mocked(Storage.prototype.setItem).mockRestore()
     expect(getSessionScope()).toBe('tab')
     expect(await secureGet(KEY)).toBeNull()
-    expect(await storedCopy()).toBeNull()
   })
 
   it('removes only the stored copy it was asked to, keeping a newer value', async () => {
@@ -156,11 +189,5 @@ describe('decrypted names follow the session scope', () => {
     tabScopedStateStorage.setItem(NAME, 'device')
     expect(localStorage.getItem(NAME)).toBe('device')
     expect(sessionStorage.getItem(NAME)).toBeNull()
-  })
-
-  it('removes legacy names from localStorage when a session is saved tab-only', async () => {
-    localStorage.setItem(NAME, 'legacy')
-    await secureSet(KEY, 'tab-session', { persist: false })
-    expect(localStorage.getItem(NAME)).toBeNull()
   })
 })

@@ -17,7 +17,8 @@ vi.mock('@/app/lib/etebase-auth', () => ({
 
 import { useAuthStore } from '../use-auth-store'
 import { secureClear, secureGet, secureSet } from '@/app/lib/secure-storage'
-import { TAB_SESSION_KEY, getSessionScope, setSessionScope } from '@/app/lib/session-scope'
+import { TAB_SESSION_KEY, getSessionScope, readTabSessionOwner, setSessionScope } from '@/app/lib/session-scope'
+import { etebaseLogIn } from '@/app/lib/etebase-auth'
 
 const KEY = 'etebase_session'
 const SESSION_MARKER = 'silentsuite-hosted-validation-session'
@@ -38,8 +39,8 @@ function json(body: unknown, status = 200) {
 }
 
 /** A tab copy written by an earlier sign-in in this tab (no logout since). */
-function writeStaleTabCopy(session: string) {
-  sessionStorage.setItem(TAB_SESSION_KEY, JSON.stringify({ generation: null, session }))
+function writeStaleTabCopy(session: string, owner: string | null = null) {
+  sessionStorage.setItem(TAB_SESSION_KEY, JSON.stringify({ generation: null, owner, session }))
 }
 
 async function storedCopy() {
@@ -70,6 +71,22 @@ describe('login', () => {
     expect(await storedCopy()).toBeNull()
     expect(getSessionScope()).toBe('tab')
     expect(await secureGet(KEY)).toBe('SYNTHETIC-SESSION-LOGIN')
+    expect(readTabSessionOwner()).toBe(user.id)
+  })
+
+  it('removes an older durable copy only after Billing confirms the device is not remembered', async () => {
+    await secureSet(KEY, 'SYNTHETIC-SESSION-OTHER-REMEMBERED', { persist: true })
+    localStorage.setItem('silentsuite-notebooks', '{"state":{"legacy":true}}')
+    let storedDuringExchange: string | null = 'unread'
+    billing.mockImplementation(async () => {
+      storedDuringExchange = await storedCopy()
+      return json({ ...user, rememberDevice: false })
+    })
+    await useAuthStore.getState().login(user.email, 'synthetic-password', undefined, false)
+
+    expect(storedDuringExchange).toBe('SYNTHETIC-SESSION-OTHER-REMEMBERED')
+    expect(await storedCopy()).toBeNull()
+    expect(localStorage.getItem('silentsuite-notebooks')).toBeNull()
   })
 
   it('keeps the session on the device only after Billing confirms "Keep me signed in"', async () => {
@@ -113,7 +130,7 @@ describe('restoreSession', () => {
 
   it('a non-remembered restore with this tab\'s marker keeps the tab copy and deletes an old IndexedDB copy', async () => {
     await secureSet(KEY, 'SYNTHETIC-SESSION-LEGACY', { persist: true })
-    writeStaleTabCopy('SYNTHETIC-SESSION-TAB')
+    writeStaleTabCopy('SYNTHETIC-SESSION-TAB', user.id)
     setSessionScope(null)
     sessionStorage.setItem(SESSION_MARKER, JSON.stringify({ userId: user.id, rememberDevice: false, validatedAt: Date.now() }))
     billing.mockResolvedValue(json({ ...user, rememberDevice: false }))
@@ -123,6 +140,21 @@ describe('restoreSession', () => {
     expect(useAuthStore.getState().user?.id).toBe(user.id)
     expect(await storedCopy()).toBeNull()
     expect(await secureGet(KEY)).toBe('SYNTHETIC-SESSION-TAB')
+  })
+
+  it('drops a tab copy that was confirmed for another user, or never confirmed, even when the marker matches', async () => {
+    for (const owner of ['synthetic-user-OTHER', null]) {
+      writeStaleTabCopy('SYNTHETIC-SESSION-TAB', owner)
+      setSessionScope(null)
+      sessionStorage.setItem(SESSION_MARKER, JSON.stringify({ userId: user.id, rememberDevice: false, validatedAt: Date.now() }))
+      billing.mockResolvedValue(json({ ...user, rememberDevice: false }))
+
+      await useAuthStore.getState().restoreSession()
+
+      expect(useAuthStore.getState().user?.id).toBe(user.id)
+      expect(await secureGet(KEY)).toBeNull()
+      useAuthStore.setState({ user: null, isAuthenticated: false })
+    }
   })
 
   it('a non-remembered restore never adopts an IndexedDB copy when the tab has none', async () => {
@@ -154,17 +186,57 @@ describe('restoreSession', () => {
     expect(await storedCopy()).toBeNull()
   })
 
-  it('offline with this tab\'s non-remembered marker uses only the tab copy', async () => {
-    await secureSet(KEY, 'SYNTHETIC-SESSION-LEGACY', { persist: true })
+  it('offline with an old non-remembered marker reads only the tab copy and keeps a newer remembered session and its names', async () => {
+    await secureSet(KEY, 'SYNTHETIC-SESSION-NEWER-REMEMBERED', { persist: true })
+    localStorage.setItem('silentsuite-notebooks', '{"state":{"newer":true}}')
     setSessionScope(null)
     sessionStorage.setItem(SESSION_MARKER, JSON.stringify({ userId: user.id, rememberDevice: false, validatedAt: Date.now() }))
     billing.mockRejectedValue(new TypeError('synthetic Failed to fetch'))
 
     await useAuthStore.getState().restoreSession()
 
-    // No tab copy: nothing to unlock offline, and the durable copy is gone.
+    // No tab copy: nothing to use offline, and no Billing confirmation to clean up with.
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(await storedCopy()).toBe('SYNTHETIC-SESSION-NEWER-REMEMBERED')
+    expect(localStorage.getItem('silentsuite-notebooks')).toBe('{"state":{"newer":true}}')
+  })
+
+  it('offline with this tab\'s marker and its own tab copy enters degraded mode', async () => {
+    writeStaleTabCopy('SYNTHETIC-SESSION-TAB', user.id)
+    setSessionScope(null)
+    sessionStorage.setItem(SESSION_MARKER, JSON.stringify({ userId: user.id, rememberDevice: false, validatedAt: Date.now() }))
+    billing.mockRejectedValue(new TypeError('synthetic Failed to fetch'))
+
+    await useAuthStore.getState().restoreSession()
+
+    expect(useAuthStore.getState().subscriptionStatus).toBe('billing_unavailable')
+    expect(await secureGet(KEY)).toBe('SYNTHETIC-SESSION-TAB')
+  })
+})
+
+describe('unlockEtebaseSession', () => {
+  it('saves nothing when the account changed while signing in', async () => {
+    useAuthStore.setState({ user: { ...user, onboardedAt: null, rememberDevice: false }, isAuthenticated: true })
+    let release!: () => void
+    vi.mocked(etebaseLogIn).mockImplementationOnce(() => new Promise(resolve => {
+      release = () => resolve({ authToken: 'synthetic-token', savedSession: 'SYNTHETIC-SESSION-UNLOCK' } as never)
+    }))
+    const unlocking = useAuthStore.getState().unlockEtebaseSession(user.email, 'synthetic-password')
+    await vi.waitFor(() => expect(release).toBeDefined())
+    useAuthStore.setState({ user: { ...user, id: 'synthetic-user-B', onboardedAt: null } })
+    release()
+    await unlocking
+
+    expect(await secureGet(KEY)).toBeNull()
+    expect(sessionStorage.getItem(TAB_SESSION_KEY)).toBeNull()
+  })
+
+  it('binds a non-remembered unlock to the signed-in user', async () => {
+    useAuthStore.setState({ user: { ...user, onboardedAt: null, rememberDevice: false }, isAuthenticated: true })
+    await useAuthStore.getState().unlockEtebaseSession(user.email, 'synthetic-password')
+
     expect(await storedCopy()).toBeNull()
+    expect(readTabSessionOwner()).toBe(user.id)
   })
 })
 

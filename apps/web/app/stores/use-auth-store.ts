@@ -8,7 +8,7 @@ import { logger } from '@/app/lib/logger'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/constants'
 import { secureGet, secureSet, secureRemove, secureRemoveIfEqual, secureClear, migrateFromLocalStorage } from '@/app/lib/secure-storage'
-import { removePersistentNames, removeTabMaterial, removeTabNames, setSessionScope } from '@/app/lib/session-scope'
+import { bindTabSession, readTabSessionOwner, removePersistentNames, removeTabMaterial, removeTabNames, setSessionScope } from '@/app/lib/session-scope'
 import { clearAll as clearLocalDataCache } from '@/app/lib/data-cache'
 import { clearAll as clearOfflineQueue, clearOtherAccounts as clearOtherAccountsOfflineQueue } from '@/app/lib/offline-queue'
 import { clearScheduledAlarms } from '@/app/lib/notification-alarms'
@@ -844,37 +844,53 @@ function keepsSessionOnDevice(serverUrl: string | undefined, confirmedRememberDe
   return isSelfHosted || isCustomServer(serverUrl) || confirmedRememberDevice === true
 }
 
+type SessionOutcome =
+  | { kind: 'device' }
+  | { kind: 'tab'; owner: string }
+  | { kind: 'untrusted-tab' }
+  | { kind: 'signed-out' }
+
 /**
  * Decides this tab's session scope before an identity is published, so every
  * later read comes only from the permitted place (session-scope.ts):
  * - 'device': self-hosted or a Billing-confirmed remembered device. Any tab
  *   copy belongs to an earlier sign-in and is removed.
- * - 'tab': hosted, not remembered, and this tab's own marker matches. Its copy
- *   is still voided by any logout since it was written.
+ * - 'tab': hosted, not remembered, and this tab's own marker matches `owner`.
+ *   The copy is kept only if it was confirmed for that same user; any logout
+ *   since it was written has already voided it.
  * - 'untrusted-tab': not remembered, but this tab has no matching marker; its
  *   copy is removed and the unlock banner asks for the password.
  * - 'signed-out': nothing may be read.
- * A non-remembered session never keeps a durable copy (older versions wrote
- * one, and so can a failed delete): it is deleted here, never adopted, and
- * reads ignore it whatever the outcome of the delete.
+ * Synchronous: it only changes this tab's own material.
  */
-async function settleSessionMaterial(outcome: 'device' | 'tab' | 'untrusted-tab' | 'signed-out'): Promise<void> {
-  if (outcome !== 'tab') removeTabMaterial()
-  if (outcome === 'device') {
-    setSessionScope('device')
+function settleSessionMaterial(outcome: SessionOutcome): void {
+  if (outcome.kind === 'tab') {
+    if (readTabSessionOwner() !== outcome.owner) removeTabMaterial()
+    setSessionScope('tab')
     return
   }
-  if (outcome === 'signed-out') {
-    setSessionScope(null)
-    return
-  }
-  setSessionScope('tab')
+  removeTabMaterial()
+  setSessionScope(outcome.kind === 'device' ? 'device' : outcome.kind === 'signed-out' ? null : 'tab')
+}
+
+/**
+ * Cleanup authority, separate from the read scope: only after Billing has just
+ * confirmed that this browser's hosted session is not remembered may older
+ * durable material go. Older versions kept a copy of such sessions, and a
+ * previous account's names may still be in localStorage. The session copy is
+ * deleted only if still equal to the value read here, so a write that lands
+ * after this read survives; reads never use it either way (secureGet).
+ */
+async function dropDurableMaterialAfterConfirmedTabOnly(): Promise<void> {
   removePersistentNames()
-  // Billing just confirmed this browser's hosted session as not remembered, so
-  // no durable copy may exist for it. Deleting only the value read here keeps a
-  // write that lands after this read; at worst another tab asks for the password.
-  const stored = await secureGet('etebase_session', { storedOnly: true })
-  if (stored) await secureRemoveIfEqual('etebase_session', stored, { storedOnly: true })
+  try {
+    const stored = await secureGet('etebase_session', { storedOnly: true })
+    if (stored) await secureRemoveIfEqual('etebase_session', stored, { storedOnly: true })
+  } catch (err) {
+    // Best effort: reads never use the durable copy here, and the next
+    // confirmed restore tries again. A failed cleanup never blocks sign-in.
+    logger.warn('[auth-store] Failed to remove an older stored session:', getSafeErrorDetails(err))
+  }
 }
 
 function clearHostedValidationMarkers() {
@@ -1292,8 +1308,11 @@ async function establishSignupBillingSession(
     // now, and finish the write before completion can navigate away.
     if (profile.rememberDevice === true) {
       await secureSet('etebase_session', savedSession, { persist: true })
-      assertCurrent()
+    } else {
+      bindTabSession(expected.id)
+      await dropDurableMaterialAfterConfirmedTabOnly()
     }
+    assertCurrent()
     set({ pendingSignup: { ...pending, billingSessionUserId: expected.id }, isLoading: false, error: null })
   } catch (error) {
     if (get().pendingSignup === pending) set({ error: SIGNUP_SESSION_ERROR, isLoading: false })
@@ -1890,7 +1909,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       const data = await res.json()
       const confirmedRememberDevice = data.rememberDevice === true
-      if (confirmedRememberDevice) await secureSet('etebase_session', savedSession, { persist: true })
+      if (confirmedRememberDevice) {
+        await secureSet('etebase_session', savedSession, { persist: true })
+      } else {
+        bindTabSession(data.id)
+        await dropDurableMaterialAfterConfirmedTabOnly()
+      }
       const isAdmin = data.isAdmin === true
       syncAdminCookie(isAdmin, confirmedRememberDevice)
       markHostedValidation(data.id, confirmedRememberDevice)
@@ -1917,13 +1941,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       })
       return
     }
+    const unlockingUser = get().user
+    const unlockEpoch = getAccountEpoch()
     try {
       const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
       const { savedSession } = await etebaseLogIn(email, password, serverUrl)
+      // The account changed while signing in (logout, another account): this
+      // session belongs to nobody here any more.
+      if (get().user !== unlockingUser || getAccountEpoch() !== unlockEpoch) {
+        set({ isLoading: false })
+        return
+      }
       // This is same-account recovery, not an account switch. Preserve queued
       // offline work while restoring the missing session blob, stored the way
       // Billing confirmed this device's sign-in.
-      await secureSet('etebase_session', savedSession, { persist: keepsSessionOnDevice(serverUrl, get().user?.rememberDevice) })
+      await secureSet('etebase_session', savedSession, {
+        persist: keepsSessionOnDevice(serverUrl, unlockingUser?.rememberDevice),
+        owner: unlockingUser?.id ?? null,
+      })
       // Save the server selection only now that it has been verified.
       if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
       else localStorage.removeItem('silentsuite-server-url')
@@ -1972,7 +2007,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const current = () => getAccountEpoch() === epoch && get().user === originalUser
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
-      await settleSessionMaterial('device')
+      settleSessionMaterial({ kind: 'device' })
       const hasSession = !!(await secureGet('etebase_session'))
       if (!current()) return false
       if (hasSession) {
@@ -2031,7 +2066,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
       }
       // Decide where this tab may read its session before anything is published.
-      await settleSessionMaterial(rememberDevice ? 'device' : refreshUnmarked ? 'untrusted-tab' : 'tab')
+      settleSessionMaterial(rememberDevice ? { kind: 'device' } : refreshUnmarked ? { kind: 'untrusted-tab' } : { kind: 'tab', owner: data.id })
+      if (!rememberDevice) await dropDurableMaterialAfterConfirmedTabOnly()
       if (!current()) return false
       const isAdmin = data.isAdmin === true
       if (get().user?.id !== data.id) {
@@ -2073,7 +2109,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
-      await settleSessionMaterial('device')
+      settleSessionMaterial({ kind: 'device' })
       const hasSession = !!(await secureGet('etebase_session'))
       if (!current()) return
       if (hasSession) {
@@ -2171,7 +2207,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           }
         }
         // Decide where this tab may read its session before anything is published.
-        await settleSessionMaterial(rememberDevice ? 'device' : restoreUnmarked ? 'untrusted-tab' : 'tab')
+        settleSessionMaterial(rememberDevice ? { kind: 'device' } : restoreUnmarked ? { kind: 'untrusted-tab' } : { kind: 'tab', owner: data.id })
+        if (!rememberDevice) await dropDurableMaterialAfterConfirmedTabOnly()
         if (!current()) return
         const isAdmin = data.isAdmin === true
         // Recheck after resuming: microtasks queued by the reset run before this continuation.
@@ -2227,14 +2264,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       // Network error — billing API is unreachable.
       logger.warn('[auth-store] Session restore failed (network):', err)
-      // Decide this tab's session scope from its own marker before reading: a
-      // non-remembered session is read only from this tab, and an unmarked tab
-      // has none. Without marker or live peer, a durable copy is still found
-      // below so the existing cleanup removes it.
+      // Only this restore's unchanged boundary may touch this tab's material.
+      if (!current()) return
+      // Decide this tab's read scope from its own marker: a non-remembered
+      // session is read only from this tab, and an unmarked tab has none.
+      // Offline there is no Billing confirmation, so nothing durable is removed
+      // here; without marker or live peer the existing cleanup below still
+      // finds and clears a durable copy.
       const settleMarker = readHostedValidationMarker()
       const settlePeer = settleMarker ? null : readOtherActiveHostedSessionTab()
-      await settleSessionMaterial(settleMarker ? (settleMarker.rememberDevice ? 'device' : 'tab') : settlePeer ? 'untrusted-tab' : 'signed-out')
-      if (!current()) return
+      settleSessionMaterial(settleMarker
+        ? (settleMarker.rememberDevice ? { kind: 'device' } : { kind: 'tab', owner: settleMarker.userId })
+        : settlePeer ? { kind: 'untrusted-tab' } : { kind: 'signed-out' })
       // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.
       const hasEtebaseSession = !!(await secureGet('etebase_session'))
         || (!settleMarker && !settlePeer && !!(await secureGet('etebase_session', { storedOnly: true })))
@@ -2376,7 +2417,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // before any teardown; recheck after resuming, since microtasks queued by the reset run first.
       const ownedLatest = () => current() && latest()
       if (get().user?.id !== refreshData.id && (!(await resetInMemoryAccountState('login', ownedLatest, owner)) || !ownedLatest())) return false
-      await settleSessionMaterial(rememberDevice ? 'device' : retryUnmarked ? 'untrusted-tab' : 'tab')
+      settleSessionMaterial(rememberDevice ? { kind: 'device' } : retryUnmarked ? { kind: 'untrusted-tab' } : { kind: 'tab', owner: refreshData.id })
+      if (!rememberDevice) await dropDurableMaterialAfterConfirmedTabOnly()
       if (!ownedLatest()) return false
       syncAdminCookie(isAdmin, rememberDevice)
       markHostedValidation(refreshData.id, rememberDevice)
@@ -2498,8 +2540,9 @@ function signedOutElsewhere(): void {
 
 function syncSignedOutElsewhereState() {
   stopHostedActiveTabHeartbeat()
-  // This tab's session copy and names belong to the account that was signed out.
+  // This tab's session copy, names and read scope belong to the account that was signed out.
   removeTabMaterial()
+  setSessionScope(null)
   useAuthStore.setState({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null, ...clearedAccountNotice })
 }
 

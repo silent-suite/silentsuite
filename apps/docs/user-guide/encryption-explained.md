@@ -51,7 +51,7 @@ To decrypt your data, the web app needs your account's encryption key, so a sign
 
 Where the key is kept depends on how you signed in:
 
-- **"Keep me signed in on this device" off** (the default): the key stays in that browser tab only. Closing the tab removes it, although a browser's "restore tabs" feature can keep it for longer. A new tab you open yourself asks for your password again.
+- **"Keep me signed in on this device" off** (the default): the key stays in that browser tab only. Closing the tab removes it, although a browser's "restore tabs" feature can keep it for longer. A fresh tab asks for your password again; a duplicated tab, or one the app opens, may carry the sign-in over.
 - **"Keep me signed in on this device" on**, or a **self-hosted server**: the key stays in the browser's storage until you log out.
 
 Some things to know:
