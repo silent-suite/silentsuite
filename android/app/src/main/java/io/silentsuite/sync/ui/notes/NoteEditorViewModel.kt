@@ -14,8 +14,10 @@ import com.etebase.client.CollectionManager
 import com.etebase.client.ItemManager
 import com.etebase.client.ItemMetadata
 import com.etebase.client.exceptions.EtebaseException
+import com.etebase.client.CollectionAccessLevel
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.InvalidAccountException
@@ -23,7 +25,9 @@ import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.notes.edit.EtebasePushRemote
+import io.silentsuite.sync.notes.edit.LandedRecord
 import io.silentsuite.sync.notes.edit.NoteMetaCodec
+import io.silentsuite.sync.notes.edit.NotePushPolicy
 import io.silentsuite.sync.notes.edit.NotePushStep
 import io.silentsuite.sync.notes.edit.PendingEntry
 import io.silentsuite.sync.notes.edit.PendingNotesStore
@@ -48,7 +52,8 @@ import kotlinx.coroutines.withContext
  * (through [NotesLoader.note] and for the status line), [PendingNotesStore.editorOpened], the reads a save builds on
  * ([PendingNotesStore.read], [PendingNotesStore.landed], [PendingNotesStore.notebook]), [PendingNotesStore.saveLocal]
  * through the editor's handle, [PendingNotesStore.deleteNote] for the user's confirmed delete ([askDelete], [delete]),
- * and [PendingNotesStore.editorClosed]. Nothing here releases, discards, holds or sends.
+ * [PendingNotesStore.moveNote] for the user's move to another notebook ([askMove], [move]), and
+ * [PendingNotesStore.editorClosed]. Nothing here releases, discards, holds or sends.
  *
  * Opening, saving, deleting and closing run one at a time, as steps in a scope of the app's ([background]), not this
  * ViewModel's: closing the editor clears the ViewModel, and that must not stop its last save or the sync request after
@@ -109,6 +114,11 @@ internal class NoteEditorViewModel(
         data class Editor(val note: NoteContent?) : Opened()
         /** The user deleted the note here ([delete]): nothing more is saved or loaded, and the screen closes. */
         object Deleted : Opened()
+        /**
+         * The user moved the note here ([move]) to note [noteUid] in notebook [notebookUid]: nothing more is saved or loaded,
+         * and the screen opens the moved note in its place.
+         */
+        data class Moved(val noteUid: String, val notebookUid: String) : Opened()
     }
 
     /** Set on the main thread from a confirmed delete until its answer: the fields take no typing, and nothing is saved. */
@@ -131,7 +141,8 @@ internal class NoteEditorViewModel(
      * ([PendingNotesStore.deleteNote] compares them), or, when it has none, [revision], the revision of the item the
      * editor showed (its landed record or the item it opened on), which [deleteOnIo] compares with the item it marks
      * deleted, so a load that brought another device's newer copy in meanwhile deletes nothing. [neverSynced] chooses
-     * the wording only: the store decides again whether the note reached the server.
+     * the wording only: the store decides again whether the note reached the server. A move's picker shows and checks the
+     * same ([MoveStep.Ask]), since a move deletes the original.
      */
     data class DeleteShown(val noteUid: String, val version: Long?, val digest: String?, val neverSynced: Boolean,
                            val revision: String? = null) {
@@ -148,7 +159,12 @@ internal class NoteEditorViewModel(
         UNSURE,
         /** A new note with nothing saved: nothing to delete, and the screen closes. */
         NOTHING_SAVED,
-        /** Text typed or changed since the confirmation was prepared: nothing was deleted. */
+        /** The note was moved to another notebook on this device (another editor's move): nothing was deleted here. */
+        MOVED_AWAY,
+        /**
+         * The note changed since the screen showed it (text typed since the confirmation, another editor's save, another
+         * device's copy): nothing was deleted, and the screen loads the note again.
+         */
         CHANGED,
         /** The editor has text that was not saved: nothing was deleted. */
         NOT_SAVED,
@@ -205,7 +221,7 @@ internal class NoteEditorViewModel(
      * nothing changes. A viewer loads again too.
      */
     fun reload() {
-        if (cleared || opened == Opened.Deleted) return
+        if (cleared || gone()) return
         background.launch {
             steps.withLock {
                 val shown = withContext(Dispatchers.Main) {
@@ -305,8 +321,8 @@ internal class NoteEditorViewModel(
     }
 
     private fun applyOpening(opening: Opening, first: Boolean) {
-        // A load that waited behind a delete opens nothing over it.
-        if (cleared || opened == Opened.Deleted) {
+        // A load that waited behind a delete or a move opens nothing over it.
+        if (cleared || gone()) {
             // The screen went away meanwhile: a handle this opened is closed by the close step, or here if that ran.
             if (opening is Opening.Editor) keep(opening)
             return
@@ -381,7 +397,7 @@ internal class NoteEditorViewModel(
     fun redo(field: NoteEditorCore.Field): EditHistory.Applied? = core.redo(field)?.also { scheduleAutosave() }
 
     private fun scheduleAutosave() {
-        if (deleting || opened == Opened.Deleted) return
+        if (deleting || moving || gone()) return
         autosave?.cancel()
         autosave = viewModelScope.launch {
             delay(AUTOSAVE_MILLIS)
@@ -533,19 +549,20 @@ internal class NoteEditorViewModel(
         return Built(item.etag, itemMgr.cacheSaveWithContent(item), kept)
     }
 
-    private class NotebookAccess(val itemMgr: ItemManager, val copyToKeep: ByteArray?)
+    /** [writable]: the cached notebook is there and accepts writes ([NotePushPolicy.acceptsWrites]). */
+    private class NotebookAccess(val itemMgr: ItemManager, val copyToKeep: ByteArray?, val writable: Boolean)
 
     /**
      * The notebook's item manager, from the copy the store keeps ([stored]) when it loads, else from the cached
      * notebook, which uses the same key; and a copy of the cached notebook for a note's first entry to keep, so held
      * text stays readable after the cache drops the notebook. The cache is read under its monitor, never with a store call.
      */
-    private fun notebook(stored: ByteArray?): NotebookAccess {
+    private fun notebook(stored: ByteArray?, uid: String = notebookUid): NotebookAccess {
         val colMgr = collectionManager()
         val cache = EtebaseLocalCache.getInstance(app, account.name)
         val live = synchronized(cache) {
             try {
-                cache.collectionGet(colMgr, notebookUid).col
+                cache.collectionGet(colMgr, uid).col
             } catch (e: EtebaseException) {
                 Logger.log.warning("The cached notebook could not be read: ${e.javaClass.name}")
                 null
@@ -560,7 +577,8 @@ internal class NoteEditorViewModel(
             }
         }
         val col = loaded ?: live ?: throw IOException("no copy of the notebook to encrypt with")
-        return NotebookAccess(colMgr.getItemManager(col), live?.let { colMgr.cacheSave(it) })
+        val writable = live != null && NotePushPolicy.acceptsWrites(live.isDeleted, live.accessLevel == CollectionAccessLevel.ReadOnly)
+        return NotebookAccess(colMgr.getItemManager(col), live?.let { colMgr.cacheSave(it) }, writable)
     }
 
     /** The cached item [uid] as a blob, or null when the cache has no note there. */
@@ -588,12 +606,12 @@ internal class NoteEditorViewModel(
      * note's entry is read for the confirmation ([DeleteStep.Ask]), or the reason there is none ([DeleteStep.Answered]).
      */
     fun askDelete() {
-        if (deleting) return
+        if (deleting || moving) return
         autosave?.cancel()
         background.launch {
             steps.withLock {
                 // Asked again from a confirmation restored in a new process, the editor may still have been opening.
-                if (withContext(Dispatchers.Main) { opened !is Opened.Editor || deleting }) return@withLock
+                if (withContext(Dispatchers.Main) { opened !is Opened.Editor || deleting || moving }) return@withLock
                 saveStep()
                 val mode = withContext(Dispatchers.Main) { if (core.dirty) null else core.mode }
                 val step = when (mode) {
@@ -609,7 +627,11 @@ internal class NoteEditorViewModel(
         }
     }
 
-    /** What the confirmation shows: the note the handle names now, and its entry. Off the main thread. */
+    /**
+     * What the confirmation shows: the note the handle names now, and its entry, or with none the item the editor shows.
+     * It asks only over text this editor showed: an entry or a landed upload that holds another editor's save answers
+     * [DeleteAnswer.CHANGED] instead, and the screen loads the note again. Off the main thread.
+     */
     private fun readDelete(): DeleteStep {
         if (!current()) return DeleteStep.Answered(DeleteAnswer.STALE)
         val store = session.store
@@ -623,19 +645,28 @@ internal class NoteEditorViewModel(
                     when {
                         entry.notebookUid != notebookUid -> DeleteStep.Answered(DeleteAnswer.FAILED)
                         entry.state == PendingEntry.State.HELD -> DeleteStep.Answered(DeleteAnswer.HELD)
-                        entry.state == PendingEntry.State.DELETE -> DeleteStep.Answered(DeleteAnswer.RECORDED)
+                        entry.state == PendingEntry.State.DELETE ->
+                            DeleteStep.Answered(if (entry.move != null) DeleteAnswer.MOVED_AWAY else DeleteAnswer.RECORDED)
+                        // Another editor's save, which this one has not loaded: never asked about from here.
+                        !store.owns(handle, entry.version) -> DeleteStep.Answered(DeleteAnswer.CHANGED)
+                        // The copy of moves that have not finished is not only on this device: its delete sends theirs.
                         else -> DeleteStep.Ask(DeleteShown(uid, entry.version, PendingNotesStore.digestOf(entry.blob),
-                            neverSynced = entry.isCreate && entry.sent.isEmpty()))
+                            neverSynced = entry.isCreate && entry.sent.isEmpty() && !store.hasWaitingMoves(uid)))
                     }
                 }
                 is PendingNotesStore.Read.Unreadable -> DeleteStep.Answered(DeleteAnswer.UNREADABLE)
-                // A new note whose first save did not write, and that never landed: nothing of it is anywhere.
-                PendingNotesStore.Read.Missing -> if (session.newNote && uid == session.pinnedUid && store.landed(uid) == null) {
-                    DeleteStep.Answered(DeleteAnswer.NOTHING_SAVED)
-                } else {
-                    val base = baseWithoutEntry(store, uid) ?: return DeleteStep.Answered(DeleteAnswer.FAILED)
-                    val shown = notebook(store.notebook(notebookUid)).itemMgr.cacheLoad(base).etag
-                    DeleteStep.Ask(DeleteShown(uid, null, null, neverSynced = false, revision = shown))
+                PendingNotesStore.Read.Missing -> {
+                    val landed = store.landed(uid)
+                    when {
+                        // A new note whose first save did not write, and that never landed: nothing of it is anywhere.
+                        session.newNote && uid == session.pinnedUid && landed == null -> DeleteStep.Answered(DeleteAnswer.NOTHING_SAVED)
+                        unshown(store, handle, uid, landed) -> DeleteStep.Answered(DeleteAnswer.CHANGED)
+                        else -> {
+                            val base = baseWithoutEntry(store, uid, landed) ?: return DeleteStep.Answered(DeleteAnswer.FAILED)
+                            val shown = notebook(store.notebook(notebookUid)).itemMgr.cacheLoad(base).etag
+                            DeleteStep.Ask(DeleteShown(uid, null, null, neverSynced = false, revision = shown))
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -651,7 +682,7 @@ internal class NoteEditorViewModel(
      * editor's handle, so nothing more is saved, and one that recorded a pending delete asks for a Notes run at once.
      */
     fun delete(shown: DeleteShown, discardConfirmed: Boolean) {
-        if (deleting || opened !is Opened.Editor) return
+        if (deleting || moving || opened !is Opened.Editor) return
         deleting = true
         autosave?.cancel()
         updates.value = Unit
@@ -722,7 +753,9 @@ internal class NoteEditorViewModel(
                     PendingNotesStore.DeleteRefusal.HELD -> DeleteAnswer.HELD
                     PendingNotesStore.DeleteRefusal.UNREADABLE -> DeleteAnswer.UNREADABLE
                     PendingNotesStore.DeleteRefusal.DISCARD_UNFINISHED -> DeleteAnswer.DISCARD_UNFINISHED
-                    PendingNotesStore.DeleteRefusal.UNFINISHED_ORIGINAL, PendingNotesStore.DeleteRefusal.TOO_LARGE -> DeleteAnswer.FAILED
+                    // Nothing was written: "could not be saved on this device, so nothing was deleted" is true for each.
+                    PendingNotesStore.DeleteRefusal.UNFINISHED_ORIGINAL, PendingNotesStore.DeleteRefusal.TOO_LARGE,
+                    PendingNotesStore.DeleteRefusal.MOVES_UNKNOWN -> DeleteAnswer.FAILED
                 }
             }
         } catch (_: PendingNotesStore.RemovalNotSynced) {
@@ -766,13 +799,277 @@ internal class NoteEditorViewModel(
     }
 
     /**
-     * The item the editor shows for a note with no entry: its landed record when an upload landed since the pin, else the
-     * item it opened on, the same choice a save makes ([attempt]); null when it has neither.
+     * Whether [landed], the landed record of [uid], holds a save this editor did not show: an upload that landed since the
+     * pin whose version is none of this editor's own ([PendingNotesStore.owns]), such as another editor's save, which
+     * this one loads only once the run that sent it ends. The record that was there at the pin is never newer than the pin.
      */
-    private fun baseWithoutEntry(store: PendingNotesStore, uid: String): ByteArray? {
-        val landed = store.landed(uid)
+    private fun unshown(store: PendingNotesStore, handle: PendingNotesStore.EditorHandle, uid: String, landed: LandedRecord?): Boolean =
+        landed != null && !(uid == session.pinnedUid && landed.revision == session.landedAtPin) && !store.owns(handle, landed.version)
+
+    /**
+     * The item the editor shows for a note with no entry: its landed record when an upload landed since the pin, else the
+     * item it opened on, the same choice a save makes ([attempt]); null when it has neither. [landed] is the note's landed
+     * record, read once by a caller that needs it too.
+     */
+    private fun baseWithoutEntry(store: PendingNotesStore, uid: String, landed: LandedRecord? = store.landed(uid)): ByteArray? {
         val pinned = session.pinned.takeIf { uid == session.pinnedUid }
         return if (landed != null && (pinned == null || landed.revision != session.landedAtPin)) landed.blob else pinned
+    }
+
+    // ---- moving ----
+
+    /** Set on the main thread from a confirmed move until its answer: the fields take no typing, and nothing is saved. */
+    var moving = false
+        private set
+
+    /** What a move asks of the screen, for the screen to take once ([takeMoveStep]). Main thread. */
+    var moveStep: MoveStep? = null
+        private set
+
+    /**
+     * A notebook a note can be moved to: one that accepts writes, other than the note's own, by its decoded name. [shared]:
+     * another account owns it (this account is not its admin), as the notebook list marks it.
+     */
+    data class MoveTarget(val uid: String, val name: String, val shared: Boolean = false)
+
+    /**
+     * The notebooks the last picker offered, in memory only, so the picker's arguments hold uids and no decrypted name. A
+     * picker restored in a new process finds none here and asks again. Main thread.
+     */
+    var moveTargets: List<MoveTarget> = emptyList()
+        private set
+
+    sealed class MoveStep {
+        /** Ask where to move [shown], to one of [targets]. */
+        data class Ask(val shown: DeleteShown, val targets: List<MoveTarget>) : MoveStep()
+        /** What the move, or the read for it, came to. */
+        data class Answered(val answer: MoveAnswer) : MoveStep()
+    }
+
+    enum class MoveAnswer {
+        /** The copy was written there, and the original's delete recorded; a run sends both, the copy first. */
+        MOVED,
+        /** As [MOVED], but the last write may not last a power loss: the note may then show in both notebooks. */
+        UNSURE,
+        /** Nothing changed on this device. */
+        NOT_MOVED,
+        /** The move stopped halfway: the note stays, and a copy may also show in the other notebook. */
+        MAYBE_BOTH,
+        /**
+         * The note changed since the screen showed it (text typed since the picker, another editor's save, another device's
+         * copy): nothing was moved, and the screen loads the note again.
+         */
+        CHANGED,
+        /** The editor has text that was not saved: nothing was moved. */
+        NOT_SAVED,
+        HELD,
+        UNREADABLE,
+        /**
+         * With no entry, the note's landed record does not decode ([PendingNotesStore.NoteMove.LandedUnreadable]): nothing
+         * was moved. It goes once no editor is open on the note, so a move from the note opened again can go ahead.
+         */
+        LANDED_UNREADABLE,
+        DISCARD_UNFINISHED,
+        REMOVAL_PENDING,
+        /** No other notebook accepts writes. */
+        NO_TARGET,
+        /** The notebook chosen no longer accepts writes. */
+        TARGET_GONE,
+        /** Another editor deleted the note on this device: nothing was moved. */
+        DELETED,
+        /** Another editor moved the note on this device already: nothing more was moved. */
+        MOVED_AWAY,
+        FAILED,
+        STALE,
+    }
+
+    /** The move step for the screen to act on, once. Main thread. */
+    fun takeMoveStep(): MoveStep? = moveStep.also { moveStep = null }
+
+    /** Whether the user deleted or moved the note here: nothing more is saved or loaded. Main thread. */
+    private fun gone(): Boolean = opened == Opened.Deleted || opened is Opened.Moved
+
+    /**
+     * The user chose Move. As for Delete ([askDelete]), everything typed is saved first, in this same step; then the note's
+     * entry is read for the picker, with the notebooks it can go to ([MoveStep.Ask]), or the reason there is none.
+     */
+    fun askMove() {
+        if (deleting || moving) return
+        autosave?.cancel()
+        background.launch {
+            steps.withLock {
+                if (withContext(Dispatchers.Main) { opened !is Opened.Editor || deleting || moving }) return@withLock
+                saveStep()
+                val mode = withContext(Dispatchers.Main) { if (core.dirty) null else core.mode }
+                val step = when (mode) {
+                    NoteEditorCore.Mode.EDITING -> withContext(Dispatchers.IO) { readMove() }
+                    NoteEditorCore.Mode.HELD -> MoveStep.Answered(MoveAnswer.HELD)
+                    NoteEditorCore.Mode.STOPPED, null -> MoveStep.Answered(MoveAnswer.NOT_SAVED)
+                }
+                withContext(Dispatchers.Main) {
+                    if (step is MoveStep.Ask) moveTargets = step.targets
+                    moveStep = step
+                    if (!cleared) updates.value = Unit
+                }
+            }
+        }
+    }
+
+    /**
+     * What the picker shows: what a delete's confirmation would, and the notebooks the note can go to. Like the delete, it
+     * offers nothing over text this editor did not show ([readDelete]). Off the main thread.
+     */
+    private fun readMove(): MoveStep {
+        val shown = when (val step = readDelete()) {
+            is DeleteStep.Ask -> step.shown
+            is DeleteStep.Answered -> return MoveStep.Answered(when (step.answer) {
+                DeleteAnswer.STALE -> MoveAnswer.STALE
+                DeleteAnswer.HELD -> MoveAnswer.HELD
+                DeleteAnswer.UNREADABLE -> MoveAnswer.UNREADABLE
+                DeleteAnswer.NOTHING_SAVED -> MoveAnswer.NOT_SAVED
+                // Another editor's save, or a record this editor never showed: the screen loads the note again.
+                DeleteAnswer.CHANGED -> MoveAnswer.CHANGED
+                // Another editor deleted or moved this note on this device already.
+                DeleteAnswer.RECORDED -> MoveAnswer.DELETED
+                DeleteAnswer.MOVED_AWAY -> MoveAnswer.MOVED_AWAY
+                else -> MoveAnswer.FAILED
+            })
+        }
+        return try {
+            val targets = moveTargets()
+            if (!current()) MoveStep.Answered(MoveAnswer.STALE)
+            else if (targets.isEmpty()) MoveStep.Answered(MoveAnswer.NO_TARGET)
+            else MoveStep.Ask(shown, targets)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Logger.log.warning("The notebooks to move a note to could not be read: ${e.javaClass.name}")
+            MoveStep.Answered(if (current()) MoveAnswer.FAILED else MoveAnswer.STALE)
+        }
+    }
+
+    /** The cached notebooks that accept writes, other than this one, by name; one whose name cannot be decoded is left out. */
+    private fun moveTargets(): List<MoveTarget> {
+        val colMgr = collectionManager()
+        val cache = EtebaseLocalCache.getInstance(app, account.name)
+        val listed = synchronized(cache) {
+            cache.decodableCollectionList(colMgr, Constants.ETEBASE_TYPE_NOTES) { _, error ->
+                Logger.log.warning("Skipping a notebook that could not be decoded: ${error.javaClass.name}")
+            }
+        }
+        return listed.filter {
+            it.col.uid != notebookUid && NotePushPolicy.acceptsWrites(it.col.isDeleted, it.col.accessLevel == CollectionAccessLevel.ReadOnly)
+        }.map { MoveTarget(it.col.uid, it.meta.name.orEmpty(), shared = it.col.accessLevel != CollectionAccessLevel.Admin) }
+            .sortedBy { it.name.lowercase() }
+    }
+
+    /**
+     * The user chose [target] in the picker that showed [shown]. From here the fields take no typing ([moving]). A move that
+     * was recorded closes the editor's handle, so nothing more is saved, asks for a Notes run at once, and leaves the
+     * screen to open the moved note ([Opened.Moved]).
+     */
+    fun move(shown: DeleteShown, target: MoveTarget) {
+        if (deleting || moving || opened !is Opened.Editor) return
+        moving = true
+        autosave?.cancel()
+        updates.value = Unit
+        background.launch {
+            steps.withLock {
+                // Typed after the picker was prepared, and so not covered by it: nothing is moved.
+                val (answer, copy) = if (withContext(Dispatchers.Main) { core.dirty }) MoveAnswer.CHANGED to null
+                    else withContext(Dispatchers.IO) { moveOnIo(shown, target) }
+                withContext(Dispatchers.Main) {
+                    if (copy != null) {
+                        opened = Opened.Moved(copy, target.uid)
+                        drop()
+                    } else if (answer == MoveAnswer.STALE) {
+                        opened = Opened.Stale
+                    }
+                    moving = false
+                    moveStep = MoveStep.Answered(answer)
+                    if (!cleared) updates.value = Unit
+                }
+                if (copy != null) requestSync(0)
+            }
+        }
+    }
+
+    /**
+     * The move on IO: the copy is a new note in [target] with the text and metadata of the item the editor shows, byte for
+     * byte (the same item a delete marks: [deleteOnIo]); the original is that item marked deleted. Both go to the store
+     * with what the picker showed ([PendingNotesStore.moveNote]), which checks it against what is there under its lock.
+     * Returns the answer, and the copy's uid when the move was recorded.
+     */
+    private fun moveOnIo(shown: DeleteShown, target: MoveTarget): Pair<MoveAnswer, String?> {
+        if (!current()) return MoveAnswer.STALE to null
+        val store = session.store ?: return MoveAnswer.CHANGED to null
+        val handle = session.handle ?: return MoveAnswer.CHANGED to null
+        return try {
+            val uid = handle.noteUid
+            if (uid != shown.noteUid || target.uid == notebookUid) return MoveAnswer.CHANGED to null
+            val read = store.read(uid)
+            // With no entry: the landed record read with the copy's base, which the store checks is still there under its lock.
+            var landed: LandedRecord? = null
+            val base = when (read) {
+                is PendingNotesStore.Read.Present -> {
+                    if (read.entry.notebookUid != notebookUid || read.entry.state != PendingEntry.State.UPSERT) return MoveAnswer.CHANGED to null
+                    read.entry.blob
+                }
+                is PendingNotesStore.Read.Unreadable -> return MoveAnswer.UNREADABLE to null
+                PendingNotesStore.Read.Missing -> {
+                    landed = store.landed(uid)
+                    baseWithoutEntry(store, uid, landed) ?: return MoveAnswer.CHANGED to null
+                }
+            }
+            val source = notebook(store.notebook(notebookUid))
+            val item = source.itemMgr.cacheLoad(base)
+            // With no entry, the item must be the revision the picker showed, as for a delete.
+            if (read == PendingNotesStore.Read.Missing && (shown.revision == null || item.etag != shown.revision)) {
+                return MoveAnswer.CHANGED to null
+            }
+            val into = notebook(store.notebook(target.uid), target.uid)
+            if (!into.writable) return MoveAnswer.TARGET_GONE to null
+            // A move is not an edit: the text and every metadata field, other clients' included, go across as they are.
+            val content = item.content
+            val meta = item.metaRaw
+            val made = into.itemMgr.create(ItemMetadata(), content)
+            if (meta != null && meta.isNotEmpty()) made.setMetaRaw(meta)
+            if (!made.content.contentEquals(content) || (meta != null && meta.isNotEmpty() && !made.metaRaw.contentEquals(meta))) {
+                Logger.log.warning("A moved note did not read back as written")
+                return MoveAnswer.FAILED to null
+            }
+            val copy = PendingEntry(made.uid, target.uid, PendingEntry.State.UPSERT, version = 0L, revision = made.etag,
+                isCreate = true, blob = into.itemMgr.cacheSaveWithContent(made))
+            // No text of the note goes into the original's deleted item: it is in the copy.
+            EtebasePushRemote.markDeleted(item, System.currentTimeMillis())
+            val deleted = source.itemMgr.cacheSaveWithContent(item)
+            // The cache and the settings are read by account name: a same-name account must not get this move.
+            if (!current()) return MoveAnswer.STALE to null
+            when (val outcome = store.moveNote(uid, notebookUid, shown.version, shown.digest, item.etag, deleted, copy,
+                notebookCopy = if (read == PendingNotesStore.Read.Missing) source.copyToKeep else null,
+                targetCopy = into.copyToKeep, landedRevision = landed?.revision)) {
+                is PendingNotesStore.NoteMove.Moved -> MoveAnswer.MOVED to outcome.copyUid
+                is PendingNotesStore.NoteMove.Unsure -> MoveAnswer.UNSURE to outcome.copyUid
+                PendingNotesStore.NoteMove.NotMoved -> MoveAnswer.NOT_MOVED to null
+                PendingNotesStore.NoteMove.MaybeBoth -> MoveAnswer.MAYBE_BOTH to null
+                is PendingNotesStore.NoteMove.Changed -> MoveAnswer.CHANGED to null
+                PendingNotesStore.NoteMove.LandedUnreadable -> MoveAnswer.LANDED_UNREADABLE to null
+                PendingNotesStore.NoteMove.RemovalPending -> MoveAnswer.REMOVAL_PENDING to null
+                is PendingNotesStore.NoteMove.Refused -> when (outcome.reason) {
+                    PendingNotesStore.DeleteRefusal.HELD -> MoveAnswer.HELD
+                    PendingNotesStore.DeleteRefusal.UNREADABLE -> MoveAnswer.UNREADABLE
+                    PendingNotesStore.DeleteRefusal.DISCARD_UNFINISHED -> MoveAnswer.DISCARD_UNFINISHED
+                    PendingNotesStore.DeleteRefusal.UNFINISHED_ORIGINAL, PendingNotesStore.DeleteRefusal.TOO_LARGE,
+                    PendingNotesStore.DeleteRefusal.MOVES_UNKNOWN -> MoveAnswer.FAILED
+                } to null
+            }
+        } catch (_: InvalidAccountException) {
+            MoveAnswer.STALE to null
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            // The class only: a binding's message can quote a decrypted value. The store wrote nothing it did not answer for.
+            Logger.log.warning("A note could not be moved on this device: ${e.javaClass.name}")
+            (if (current()) MoveAnswer.FAILED else MoveAnswer.STALE) to null
+        }
     }
 
     // ---- the sync request and the status line ----

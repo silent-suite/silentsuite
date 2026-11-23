@@ -89,6 +89,33 @@ class NotePushPolicyTest {
         assertNull(NotePushPolicy.deleteNotDoneFor(HeldReason.LOST_ACCESS))
     }
 
+    @Test fun `a move's delete sent before and dropped for a read-only notebook says the original may already be deleted`() {
+        for (reason in HeldReason.values()) {
+            // Only read-only can stop it with no answer to it; every other reason follows an answer that shows the original.
+            val expected = when (reason) {
+                HeldReason.NOTEBOOK_DELETED, HeldReason.LOST_ACCESS -> null
+                HeldReason.READ_ONLY -> NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT_DELETE_SENT
+                else -> NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT
+            }
+            assertEquals("$reason", expected, NotePushPolicy.deleteNotDoneFor(reason, moved = true, sent = true))
+            assertEquals("an ordinary delete's notice is the same: $reason", NotePushPolicy.deleteNotDoneFor(reason),
+                NotePushPolicy.deleteNotDoneFor(reason, sent = true))
+        }
+    }
+
+    @Test fun `a move's delete dropped that way says the original stays, for every reason, unless the notebook is gone`() {
+        for (reason in HeldReason.values()) {
+            val expected = if (reason == HeldReason.NOTEBOOK_DELETED || reason == HeldReason.LOST_ACCESS) null
+                else NotePushPolicy.DeleteNotDone.MOVED_ORIGINAL_KEPT
+            assertEquals("$reason", expected, NotePushPolicy.deleteNotDoneFor(reason, moved = true))
+        }
+        // The notice is stored by name: the names stay.
+        assertEquals(listOf("CHANGED_ELSEWHERE", "READ_ONLY", "REJECTED", "NOT_BUILT", "MOVED_CHANGED_ELSEWHERE",
+            "MOVED_ORIGINAL_KEPT", "MOVE_NOT_DONE", "MOVED_COPY_DELETED", "MOVE_NOT_DONE_DELETE_SENT",
+            "MOVED_ORIGINAL_KEPT_DELETE_SENT", "MOVE_NOT_DONE_TEXT_HELD", "MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT"),
+            NotePushPolicy.DeleteNotDone.values().map { it.name })
+    }
+
     // ---- a note made from a conflict that conflicts again (design section 3.8) ----
 
     @Test fun `a marked note whose server copy is not ours is held, not copied again`() {
