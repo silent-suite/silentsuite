@@ -133,6 +133,37 @@ jobs:
             throw "Write-Err must not call exit because irm ... | iex would close the user's terminal"
           }
 
+      - name: Assert architecture detection works in Windows PowerShell 5.1 and PowerShell 7
+        shell: pwsh
+        run: |
+          # irm ... | iex runs in whichever shell the user opened; stock Windows 11
+          # opens Windows PowerShell 5.1, so check both hosts.
+          $check = @'
+          $ErrorActionPreference = "Stop"
+          $script = Get-Content bridge/install.ps1 -Raw
+          $ast = [System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$null, [ref]$null)
+          $fn = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-OSArchitecture'
+          }, $true)
+          if (-not $fn) { throw "Get-OSArchitecture helper not found" }
+          Invoke-Expression $fn.Extent.Text
+          $raw = try { "$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)" } catch { "error: $_" }
+          Write-Host "PowerShell $($PSVersionTable.PSVersion): RuntimeInformation='$raw' PROCESSOR_ARCHITECTURE='$env:PROCESSOR_ARCHITECTURE'"
+          $detected = Get-OSArchitecture
+          if ($detected -ne "X64") { throw "Expected X64, got '$detected'" }
+          # Same helper with RuntimeInformation returning nothing must still find X64.
+          Invoke-Expression ($fn.Extent.Text.Replace('[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture', '$null'))
+          $fallback = Get-OSArchitecture
+          if ($fallback -ne "X64") { throw "Fallback expected X64, got '$fallback'" }
+          '@
+          $file = Join-Path $env:RUNNER_TEMP 'arch-check.ps1'
+          Set-Content -Path $file -Value $check -Encoding UTF8
+          foreach ($shell in @('powershell', 'pwsh')) {
+            & $shell -NoProfile -ExecutionPolicy Bypass -File $file
+            if ($LASTEXITCODE -ne 0) { throw "Architecture check failed in $shell" }
+          }
+
   smoke:
     name: Bridge CLI smoke test
     runs-on: windows-latest
