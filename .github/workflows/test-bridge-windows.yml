@@ -140,8 +140,15 @@ jobs:
           # opens Windows PowerShell 5.1, so check both hosts.
           $check = @'
           $ErrorActionPreference = "Stop"
-          $script = Get-Content bridge/install.ps1 -Raw
-          $ast = [System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$null, [ref]$null)
+          # Windows PowerShell 5.1 reads BOM-less files as ANSI; install.ps1 is UTF-8.
+          $script = Get-Content bridge/install.ps1 -Raw -Encoding UTF8
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Host
+            throw "PowerShell parser errors in bridge/install.ps1"
+          }
           $fn = $ast.Find({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-OSArchitecture'
