@@ -136,6 +136,17 @@ describe('Etebase session storage scope', () => {
     expect(readTabSessionOwner()).toBe('user-successor')
   })
 
+  it('hands out a durable copy only to the owner the device scope requires', async () => {
+    await secureSet(KEY, 'device-session', { persist: true, owner: 'user-1' })
+    setSessionScope('device', 'user-2')
+    expect(await secureGet(KEY)).toBeNull()
+    expect(await storedCopy()).toBe('device-session')
+    setSessionScope('device', 'user-1')
+    expect(await secureGet(KEY)).toBe('device-session')
+    setSessionScope('device', null)
+    expect(await secureGet(KEY)).toBe('device-session')
+  })
+
   it('stores the owner with a durable copy and removes it with the copy', async () => {
     await secureSet(KEY, 'device-session', { persist: true, owner: 'user-1' })
     expect(await secureGet('etebase_session_owner')).toBe('user-1')

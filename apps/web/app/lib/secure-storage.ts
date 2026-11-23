@@ -14,7 +14,7 @@
  * IndexedDB and sessionStorage are both readable by any script in this origin.
  */
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
-import { getSessionScope, readTabSession, removeTabSession, setSessionScope, writeTabSession } from '@/app/lib/session-scope'
+import { getDeviceOwner, getSessionScope, readTabSession, removeTabSession, setSessionScope, writeTabSession } from '@/app/lib/session-scope'
 
 const DB_NAME = 'silentsuite-secure'
 const DB_VERSION = 1
@@ -92,13 +92,43 @@ export interface StoredOnlyOptions {
 }
 
 /**
+ * The durable session, read in one transaction with its owner, and returned
+ * only when it belongs to `owner` (null: self-hosted, no owner to check). A
+ * copy saved for anyone else is never handed out, whether or not cleanup
+ * managed to delete it.
+ */
+async function readOwnedStoredSession(owner: string | null): Promise<string | null> {
+  try {
+    return await openDB().then((db) => new Promise<string | null>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly')
+      const store = tx.objectStore(STORE_NAME)
+      const session = store.get(SESSION_KEY)
+      const storedOwner = store.get(SESSION_OWNER_KEY)
+      tx.oncomplete = () => {
+        const value = typeof session.result === 'string' ? session.result : null
+        if (value === null) return resolve(null)
+        if (owner !== null && storedOwner.result !== owner) return resolve(null)
+        resolve(value)
+      }
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    }))
+  } catch {
+    return null
+  }
+}
+
+/**
  * Get a value from secure storage. The Etebase session is read only from the
  * place this tab's session scope allows (see session-scope.ts): IndexedDB for
  * 'device'; otherwise this tab's valid copy, never IndexedDB. Returns null if
  * the key doesn't exist or storage is unavailable.
  */
 export async function secureGet(key: string, options: StoredOnlyOptions = {}): Promise<string | null> {
-  if (key === SESSION_KEY && !options.storedOnly && getSessionScope() !== 'device') return readTabSession()
+  if (key === SESSION_KEY && !options.storedOnly) {
+    if (getSessionScope() !== 'device') return readTabSession()
+    return readOwnedStoredSession(getDeviceOwner())
+  }
   try {
     const value = await withStore('readonly', (store) => store.get(key))
     return (value as string) ?? null
@@ -148,7 +178,7 @@ async function setSession(value: string, persist: boolean, owner: string | null)
       await removeStoredSessionIfEqual(value)
       return
     }
-    setSessionScope('device')
+    setSessionScope('device', owner)
     removeTabSession()
     return
   }

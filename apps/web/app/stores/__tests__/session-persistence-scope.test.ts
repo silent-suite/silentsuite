@@ -19,6 +19,7 @@ import { useAuthStore } from '../use-auth-store'
 import { secureClear, secureGet, secureSet } from '@/app/lib/secure-storage'
 import { TAB_SESSION_KEY, getSessionScope, readTabSessionOwner, setSessionScope } from '@/app/lib/session-scope'
 import { etebaseLogIn } from '@/app/lib/etebase-auth'
+import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 
 const KEY = 'etebase_session'
 const SESSION_MARKER = 'silentsuite-hosted-validation-session'
@@ -106,6 +107,20 @@ describe('login', () => {
     expect(getSessionScope()).toBe('tab')
   })
 
+  it('a login superseded while its session is being saved publishes nothing', async () => {
+    const original = IDBObjectStore.prototype.put
+    vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['put']>) {
+      // A newer sign-in in this tab starts while the remembered session commits.
+      if (args[1] === KEY) bumpAccountEpoch()
+      return original.apply(this, args)
+    })
+    billing.mockImplementation(async () => json({ ...user, rememberDevice: true }))
+    await useAuthStore.getState().login(user.email, 'synthetic-password', undefined, true)
+
+    expect(useAuthStore.getState().user).toBeNull()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+  })
+
   it('stores nothing durable when the token exchange fails', async () => {
     billing.mockRejectedValue(new TypeError('synthetic Failed to fetch'))
     await useAuthStore.getState().login(user.email, 'synthetic-password', undefined, true)
@@ -141,6 +156,23 @@ describe('restoreSession', () => {
       expect(await storedCopy()).toBeNull()
       useAuthStore.setState({ user: null, isAuthenticated: false })
     }
+  })
+
+  it('a remembered restore never reads a foreign stored copy, even when deleting it fails', async () => {
+    await secureSet(KEY, 'SYNTHETIC-SESSION-FOREIGN', { persist: true, owner: 'synthetic-user-OTHER' })
+    setSessionScope(null)
+    const remove = vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementation(function (this: IDBObjectStore) {
+      this.transaction.abort()
+      throw new DOMException('aborted', 'AbortError')
+    })
+    billing.mockImplementation(async () => json({ ...user, rememberDevice: true }))
+
+    await useAuthStore.getState().restoreSession()
+    remove.mockRestore()
+
+    expect(useAuthStore.getState().user?.id).toBe(user.id)
+    expect(await storedCopy()).toBe('SYNTHETIC-SESSION-FOREIGN')
+    expect(await secureGet(KEY)).toBeNull()
   })
 
   it('a failed remembered promotion never lets the next restore open an older account', async () => {

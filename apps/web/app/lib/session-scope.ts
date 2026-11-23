@@ -22,9 +22,18 @@ export const TAB_SESSION_KEY = 'silentsuite-tab-etebase-session'
  */
 export type SessionScope = 'tab' | 'device' | null
 let sessionScope: SessionScope = null
+/**
+ * For 'device': the Billing user the stored session must belong to, checked on
+ * every read; null for self-hosted, which has no Billing owner.
+ */
+let deviceOwner: string | null = null
 
 export function getSessionScope(): SessionScope {
   return sessionScope
+}
+
+export function getDeviceOwner(): string | null {
+  return deviceOwner
 }
 
 const scopedStores = new Set<() => unknown>()
@@ -38,9 +47,10 @@ export function registerScopedStore(rehydrate: () => unknown): void {
   scopedStores.add(rehydrate)
 }
 
-export function setSessionScope(scope: SessionScope): void {
+export function setSessionScope(scope: SessionScope, owner: string | null = null): void {
   const previous = sessionScope
   sessionScope = scope
+  deviceOwner = scope === 'device' ? owner : null
   if (previous === scope || (previous !== 'device' && scope !== 'device')) return
   for (const rehydrate of scopedStores) {
     try {

@@ -846,7 +846,8 @@ function keepsSessionOnDevice(serverUrl: string | undefined, confirmedRememberDe
 }
 
 type SessionOutcome =
-  | { kind: 'device' }
+  // owner: the Billing user a hosted stored session must belong to; absent for self-hosted.
+  | { kind: 'device'; owner?: string }
   | { kind: 'tab'; owner: string }
   | { kind: 'untrusted-tab' }
   | { kind: 'signed-out' }
@@ -871,7 +872,8 @@ function settleSessionMaterial(outcome: SessionOutcome): void {
     return
   }
   removeTabMaterial()
-  setSessionScope(outcome.kind === 'device' ? 'device' : outcome.kind === 'signed-out' ? null : 'tab')
+  if (outcome.kind === 'device') setSessionScope('device', outcome.owner ?? null)
+  else setSessionScope(outcome.kind === 'signed-out' ? null : 'tab')
 }
 
 /**
@@ -1939,6 +1941,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         bindTabSession(data.id, savedSession)
         await dropDurableMaterialAfterConfirmedTabOnly()
       }
+      // A newer sign-in in this tab may have started while the session was saved.
+      if (getAccountEpoch() !== loginEpoch) {
+        set({ isLoading: false })
+        return
+      }
       const isAdmin = data.isAdmin === true
       syncAdminCookie(isAdmin, confirmedRememberDevice)
       markHostedValidation(data.id, confirmedRememberDevice)
@@ -2091,7 +2098,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
       }
       // Decide where this tab may read its session before anything is published.
-      settleSessionMaterial(rememberDevice ? { kind: 'device' } : refreshUnmarked ? { kind: 'untrusted-tab' } : { kind: 'tab', owner: data.id })
+      settleSessionMaterial(rememberDevice ? { kind: 'device', owner: data.id } : refreshUnmarked ? { kind: 'untrusted-tab' } : { kind: 'tab', owner: data.id })
       if (rememberDevice) await dropForeignStoredSession(data.id)
       else await dropDurableMaterialAfterConfirmedTabOnly()
       if (!current()) return false
@@ -2233,7 +2240,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           }
         }
         // Decide where this tab may read its session before anything is published.
-        settleSessionMaterial(rememberDevice ? { kind: 'device' } : restoreUnmarked ? { kind: 'untrusted-tab' } : { kind: 'tab', owner: data.id })
+        settleSessionMaterial(rememberDevice ? { kind: 'device', owner: data.id } : restoreUnmarked ? { kind: 'untrusted-tab' } : { kind: 'tab', owner: data.id })
         if (rememberDevice) await dropForeignStoredSession(data.id)
         else await dropDurableMaterialAfterConfirmedTabOnly()
         if (!current()) return
@@ -2301,7 +2308,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const settleMarker = readHostedValidationMarker()
       const settlePeer = settleMarker ? null : readOtherActiveHostedSessionTab()
       settleSessionMaterial(settleMarker
-        ? (settleMarker.rememberDevice ? { kind: 'device' } : { kind: 'tab', owner: settleMarker.userId })
+        ? (settleMarker.rememberDevice ? { kind: 'device', owner: settleMarker.userId } : { kind: 'tab', owner: settleMarker.userId })
         : settlePeer ? { kind: 'untrusted-tab' } : { kind: 'signed-out' })
       if (settleMarker?.rememberDevice) {
         await dropForeignStoredSession(settleMarker.userId)
@@ -2448,7 +2455,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // before any teardown; recheck after resuming, since microtasks queued by the reset run first.
       const ownedLatest = () => current() && latest()
       if (get().user?.id !== refreshData.id && (!(await resetInMemoryAccountState('login', ownedLatest, owner)) || !ownedLatest())) return false
-      settleSessionMaterial(rememberDevice ? { kind: 'device' } : retryUnmarked ? { kind: 'untrusted-tab' } : { kind: 'tab', owner: refreshData.id })
+      settleSessionMaterial(rememberDevice ? { kind: 'device', owner: refreshData.id } : retryUnmarked ? { kind: 'untrusted-tab' } : { kind: 'tab', owner: refreshData.id })
       if (rememberDevice) await dropForeignStoredSession(refreshData.id)
       else await dropDurableMaterialAfterConfirmedTabOnly()
       if (!ownedLatest()) return false
