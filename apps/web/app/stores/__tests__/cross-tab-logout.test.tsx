@@ -77,7 +77,7 @@ vi.setConfig({ testTimeout: 15_000 })
 
 /** Shared persistence as another tab's newer account B left it. */
 async function seedNewerAccount() {
-  await secureSet('etebase_session', SESSION_B)
+  await secureSet('etebase_session', SESSION_B, { persist: true })
   await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'nb-b', itemUid: 'note-b' }, { accountEpoch: getAccountEpoch(), accountFingerprint: FP_B })
   await putMeta({ accountFingerprint: FP_B, cacheSchemaVersion: 1, lastInvalidatedAt: null })
   for (const [key, value] of Object.entries(NEWER_KEYS)) localStorage.setItem(key, value)
@@ -86,7 +86,7 @@ async function seedNewerAccount() {
 
 async function sharedPersistence() {
   return {
-    session: await secureGet('etebase_session'),
+    session: await secureGet('etebase_session', { storedOnly: true }),
     queue: (await getAll()).map((entry) => [entry.itemUid, entry.accountFingerprint]),
     meta: (await getMeta())?.accountFingerprint ?? null,
     keys: Object.fromEntries(Object.keys(NEWER_KEYS).map((key) => [key, localStorage.getItem(key)])),
@@ -180,7 +180,7 @@ beforeEach(async () => {
   // A self-hosted tab with account A's session, opened after an earlier logout generation.
   localStorage.setItem('silentsuite-server-url', CUSTOM)
   localStorage.setItem(GENERATION, OLD_GENERATION)
-  await secureSet('etebase_session', SESSION_A)
+  await secureSet('etebase_session', SESSION_A, { persist: true })
 })
 
 describe('collection and sharing writes after a logout elsewhere', () => {
@@ -259,7 +259,7 @@ describe('the receiving tab while it ends its account', () => {
       stop()
     }
 
-    expect(await secureGet('etebase_session')).toBeNull()
+    expect(await secureGet('etebase_session', { storedOnly: true })).toBeNull()
     expect(await getAll()).toEqual([])
     expect(await getMeta()).toBeNull()
     expect(useEtebaseStore.getState().account).toBeNull()
@@ -480,7 +480,7 @@ describe('explicit logout in another tab', () => {
     await openSignedInTab()
     withCalendar()
 
-    await secureSet('etebase_session', 'SYNTHETIC-ETEBASE-SESSION-A-AFTER-PASSWORD-CHANGE')
+    await secureSet('etebase_session', 'SYNTHETIC-ETEBASE-SESSION-A-AFTER-PASSWORD-CHANGE', { persist: true })
     document.dispatchEvent(new Event('visibilitychange'))
 
     expect(await useEtebaseStore.getState().createItem('calendar', EVENT_TEXT, 'tmp-1', 'cal-1')).toBe('ev-new')
@@ -496,7 +496,7 @@ describe('explicit logout in another tab', () => {
 
     expect(localStorage.getItem(GENERATION)).not.toBe(OLD_GENERATION)
     expect(localStorage.getItem(GENERATION)).not.toBeNull()
-    expect(await secureGet('etebase_session')).toBeNull()
+    expect(await secureGet('etebase_session', { storedOnly: true })).toBeNull()
     expect(await getAll()).toEqual([])
     expect(useEtebaseStore.getState().account).toBeNull()
   })

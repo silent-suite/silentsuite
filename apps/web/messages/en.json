@@ -145,7 +145,7 @@
     "deleteNotebookMessage": "{count, plural, =0 {\"{name}\" is empty and will be permanently deleted.} one {\"{name}\" and the # note in it will be permanently deleted.} other {\"{name}\" and the # notes in it will be permanently deleted.}} This cannot be undone.",
     "deleteNotebookUnsaved": "Notebook not deleted: a note in it has changes that are not on the server yet, such as a note marked Not saved. Nothing was deleted.",
     "deleteNotebookChanged": "Notebook not deleted: this browser could not confirm that it shows everything in it. Nothing was deleted.",
-    "experimentalWebOnly": "Experimental · Web app only",
+    "experimentalWebOnly": "Experimental",
     "disabledTitle": "Notes is experimental",
     "disabledDescription": "Enable Notes in Settings to use encrypted Markdown notes. Any existing notes are preserved while this feature is off.",
     "openExperimentalSettings": "Open Experimental settings",

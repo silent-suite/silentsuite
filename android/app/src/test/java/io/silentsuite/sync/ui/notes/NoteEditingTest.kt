@@ -80,7 +80,7 @@ class NoteEditingTest {
             assertNotNull("$result: the next autosave tries again", editor.beginSave())
             assertEquals(NoteEditorCore.Mode.EDITING, editor.mode)
         }
-        for (result in listOf(SaveResult.HeldChanged, SaveResult.Cleared)) {
+        for (result in listOf(SaveResult.HeldChanged, SaveResult.Cleared, SaveResult.Deleted, SaveResult.MovedAway)) {
             val editor = NoteEditorCore { 0 }
             editor.opened("T", "B")
             editor.edited(Field.BODY, 1, "", "x", "Bx")
@@ -167,6 +167,8 @@ class NoteEditingTest {
         assertEquals(SaveResult.Unreadable, one(SaveOutcome.Blocked))
         assertEquals(SaveResult.TooLarge, one(SaveOutcome.TooLarge))
         assertEquals(SaveResult.RemovalPending, one(SaveOutcome.RemovalPending))
+        assertEquals(SaveResult.Deleted, one(SaveOutcome.Deleted))
+        assertEquals("a move is told apart from a delete", SaveResult.MovedAway, one(SaveOutcome.MovedAway))
         assertEquals(SaveResult.Cleared, SaveRun.run { throw PendingNotesStore.Cleared() })
     }
 
@@ -358,7 +360,7 @@ class NoteEditingTest {
     }
 
     @Test fun `after a save that stops the editor, leaving asks without Try again`() {
-        for (stop in listOf(SaveResult.HeldChanged, SaveResult.Cleared)) {
+        for (stop in listOf(SaveResult.HeldChanged, SaveResult.Cleared, SaveResult.Deleted, SaveResult.MovedAway)) {
             core.opened("Plan", "First")
             type(Field.BODY, " typed")
             saveWith(stop)

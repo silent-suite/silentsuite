@@ -103,19 +103,66 @@ internal object NotePushPolicy {
         REJECTED,
         /** The delete onto an earlier upload of ours could not be built on this device. */
         NOT_BUILT,
+        /**
+         * A move's delete of the original ([PendingEntry.move]) met a change another client made to the original first: the
+         * original stays with that change, and the moved copy stays in the other notebook.
+         */
+        MOVED_CHANGED_ELSEWHERE,
+        /** A move's delete of the original was dropped for a reason that would drop a delete (read-only, rejected, not built): both stay. */
+        MOVED_ORIGINAL_KEPT,
+        /**
+         * A move's copy is not on the server where this account can see it (it never landed, or its notebook is deleted or gone
+         * for this account) and is no longer waiting: the move's delete was dropped, and the note shows in its old notebook again.
+         */
+        MOVE_NOT_DONE,
+        /** A move's copy was deleted on another device before the original's delete went: the original stays. */
+        MOVED_COPY_DELETED,
+        /**
+         * A move's copy is not on the server (it never landed, or was deleted on another device) after the original's delete
+         * was sent at least once ([PendingEntry.sent] holds the delete's revision): the delete was dropped, and the original
+         * may already be deleted on the server, since a send whose answer never came back may have landed.
+         */
+        MOVE_NOT_DONE_DELETE_SENT,
+        /**
+         * As [MOVED_ORIGINAL_KEPT], for a move's delete sent at least once and then dropped for a read-only notebook: the
+         * original may already be deleted on the server, since a send whose answer never came back may have landed.
+         */
+        MOVED_ORIGINAL_KEPT_DELETE_SENT,
+        /**
+         * A move's copy is not in a notebook this account can use (that notebook was deleted, or this account can no longer
+         * see it) and the copy's text is kept in holding on this device: the move's delete was dropped, the note shows in its
+         * old notebook as last synced, and the text it had in the copy, changes not synced before the move included, is in
+         * Unsynced text.
+         */
+        MOVE_NOT_DONE_TEXT_HELD,
+        /**
+         * As [MOVE_NOT_DONE_TEXT_HELD], after the original's delete was sent at least once: the original may already be deleted
+         * on the server, since a send whose answer never came back may have landed.
+         */
+        MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT,
     }
 
     /**
      * What the notebook list says about a pending delete dropped where an edit would have been held for [reason]
      * (PendingNotesStore.hold), or null when it says nothing: the notebook was deleted or this account can no
-     * longer see it, so neither it nor the note shows.
+     * longer see it, so neither it nor the note shows. [moved]: the delete was a move's ([PendingEntry.move]). [sent]: it
+     * was sent at least once. Both as the store found the delete it dropped (PendingNotesStore.HoldOutcome); [sent]
+     * changes only a move's notice for a read-only notebook.
      */
-    fun deleteNotDoneFor(reason: HeldReason): DeleteNotDone? = when (reason) {
-        HeldReason.READ_ONLY -> DeleteNotDone.READ_ONLY
-        HeldReason.REJECTED -> DeleteNotDone.REJECTED
+    fun deleteNotDoneFor(reason: HeldReason, moved: Boolean = false, sent: Boolean = false): DeleteNotDone? = when (reason) {
         HeldReason.NOTEBOOK_DELETED, HeldReason.LOST_ACCESS -> null
-        HeldReason.REPEATED_CONFLICT, HeldReason.UNREADABLE_METADATA, HeldReason.READ_BACK_FAILED,
-        HeldReason.NOT_BUILT -> DeleteNotDone.NOT_BUILT
+        // For a move, every other reason gets the one notice: the original stays in its notebook, beside the copy. A
+        // read-only notebook can stop a delete sent before with no answer to it, and that send may have landed, so then
+        // the notice says the original may already be deleted. Every other reason follows a server answer to this delete
+        // that shows the original there: a 4xx, or a 409 whose copy is not our deleted one (a landed delete ends as done).
+        else -> if (moved) {
+            if (sent && reason == HeldReason.READ_ONLY) DeleteNotDone.MOVED_ORIGINAL_KEPT_DELETE_SENT
+            else DeleteNotDone.MOVED_ORIGINAL_KEPT
+        } else when (reason) {
+            HeldReason.READ_ONLY -> DeleteNotDone.READ_ONLY
+            HeldReason.REJECTED -> DeleteNotDone.REJECTED
+            else -> DeleteNotDone.NOT_BUILT
+        }
     }
 
     /** How a failed upload of one entry is handled. */

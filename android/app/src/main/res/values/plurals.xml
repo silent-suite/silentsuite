@@ -82,4 +82,37 @@
         <item quantity="one">%d note you deleted was not deleted, because the delete could not be prepared on this device. It shows again.</item>
         <item quantity="other">%d notes you deleted were not deleted, because the delete could not be prepared on this device. They show again.</item>
     </plurals>
+    <!-- The same notice for notes the user moved to another notebook whose original a Notes sync did not delete. -->
+    <plurals name="notes_moves_not_done_changed">
+        <item quantity="one">%d note you moved was changed on another device first, so it also stays in its old notebook with that change. The moved copy is in the new notebook.</item>
+        <item quantity="other">%d notes you moved were changed on another device first, so they also stay in their old notebook with those changes. The moved copies are in the new notebook.</item>
+    </plurals>
+    <plurals name="notes_moves_not_done_kept">
+        <item quantity="one">%d note you moved also stays in its old notebook, because it could not be deleted there.</item>
+        <item quantity="other">%d notes you moved also stay in their old notebook, because they could not be deleted there.</item>
+    </plurals>
+    <plurals name="notes_moves_not_done">
+        <item quantity="one">%d note you moved is back in its old notebook, because the move could not be finished.</item>
+        <item quantity="other">%d notes you moved are back in their old notebook, because the move could not be finished.</item>
+    </plurals>
+    <plurals name="notes_moves_not_done_copy_deleted">
+        <item quantity="one">%d note you moved was deleted in its new notebook on another device before the move finished, so it stays in its old notebook.</item>
+        <item quantity="other">%d notes you moved were deleted in their new notebook on another device before the move finished, so they stay in their old notebook.</item>
+    </plurals>
+    <plurals name="notes_moves_not_done_kept_delete_sent">
+        <item quantity="one">%d note you moved may already be deleted in its old notebook, or may still be there: its delete there was sent, and that notebook is now read-only for you. Check its old notebook.</item>
+        <item quantity="other">%d notes you moved may already be deleted in their old notebooks, or may still be there: their deletes there were sent, and those notebooks are now read-only for you. Check their old notebooks.</item>
+    </plurals>
+    <plurals name="notes_moves_not_done_delete_sent">
+        <item quantity="one">%d note you moved is no longer in its new notebook, and may already be deleted in its old notebook too: its delete there was sent before the move stopped. Check its old notebook.</item>
+        <item quantity="other">%d notes you moved are no longer in their new notebooks, and may already be deleted in their old notebooks too: their deletes there were sent before the moves stopped. Check their old notebooks.</item>
+    </plurals>
+    <plurals name="notes_moves_not_done_text_held">
+        <item quantity="one">%d note you moved is back in its old notebook as it was last synced, because its new notebook was deleted or you lost access to it before the move finished. The text it had in the new notebook is kept in Unsynced text.</item>
+        <item quantity="other">%d notes you moved are back in their old notebooks as they were last synced, because their new notebooks were deleted or you lost access to them before the moves finished. The text they had in the new notebooks is kept in Unsynced text.</item>
+    </plurals>
+    <plurals name="notes_moves_not_done_text_held_delete_sent">
+        <item quantity="one">%d note you moved may already be deleted in its old notebook: its delete there was sent before the move stopped. Its new notebook was deleted or you lost access to it, and the text it had there is kept in Unsynced text. Check its old notebook.</item>
+        <item quantity="other">%d notes you moved may already be deleted in their old notebooks: their deletes there were sent before the moves stopped. Their new notebooks were deleted or you lost access to them, and the text they had there is kept in Unsynced text. Check their old notebooks.</item>
+    </plurals>
 </resources>

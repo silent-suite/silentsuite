@@ -17,7 +17,7 @@ import io.silentsuite.sync.ui.ExactAccountIdentity
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
 
 /**
- * Read-only Notes screen (experimental): notebook list, note list, note viewer. The route is
+ * Notes screen (experimental): notebook list, note list, note viewer and editor. The route is
  * exact-account bound like every other account surface, and it only exists while the account
  * has Notes enabled. Opening it triggers a Notes sync; the content itself is read from the cache.
  */

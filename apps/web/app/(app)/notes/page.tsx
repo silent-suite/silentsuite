@@ -1000,7 +1000,7 @@ function NotesPageBody() {
               <ArrowLeft className="h-5 w-5" />
             </button>
           )}
-          {/* The explicit space keeps the accessible name "Notes Experimental · Web app only";
+          {/* The explicit space keeps the accessible name "Notes Experimental";
               inline text lets the label wrap under the title on narrow phones. */}
           <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">
             {t('title')}

@@ -32,6 +32,8 @@ import java.io.IOException
  *   new version ([PendingNotesStore.HeldBack]) is the entry's storage failure, with backoff and one line in the
  *   log, and the note waits as it is;
  * - a notebook gets one confirming fetch per run after a 403 or 404, and its result is reused;
+ * - a move's delete of the original is sent only right after a fetch in the same run showed its copy alive on the
+ *   server, and then one of the copy's notebook showed it there; a run fetches each at most once per send of the delete;
  * - a connection error, a temporary server error, or a 403 on the confirming fetch ends the step, so a
  *   run waits out at most one timeout here.
  *
@@ -88,8 +90,17 @@ internal class NotePushStep(
         /** The server's current copy of the entry's note (fetch by uid), deleted or not. */
         fun fetch(entry: PendingEntry): ServerItem
 
-        /** Fetches the notebook itself, to confirm a 403 or 404 on a push. */
+        /**
+         * Fetches the notebook itself, to confirm a 403 or 404, and before a move's delete of the original. It must be that
+         * notebook, a notes one, and verify; anything else throws.
+         */
         fun fetchNotebook(notebookUid: String): NotebookCheck.Found
+
+        /**
+         * The server's copy of a move's copy ([PendingEntry.Move]): that note, fetched by uid from its notebook, deleted or
+         * not. It must be that note and verify; anything else throws, and so does a 404 (NotFoundException).
+         */
+        fun fetchMoved(move: PendingEntry.Move): ServerItem
 
         /** Writes [item], the server's copy of the entry's note, into the Etebase cache. */
         fun cache(entry: PendingEntry, item: ServerItem)
@@ -240,9 +251,10 @@ internal class NotePushStep(
         }
         // The note that ended the last push step goes last; the others by fewest failures, and among
         // those the oldest change first, so a note that was just saved does not go ahead of changes
-        // that have waited longer (design 3.8).
+        // that have waited longer (design 3.8). A move's delete of the original goes after everything else, so the
+        // copy it waits for is tried first in the same run ([confirmMove]).
         val order = compareBy<PendingNotesStore.EntryHeader>(
-            { it.noteUid == memory.endedLastStep }, { it.failureCount }, { it.version })
+            { it.noteUid == memory.endedLastStep }, { it.moved }, { it.failureCount }, { it.version })
         for (header in sendable.sortedWith(order)) {
             if (header.noteUid in settled) continue
             if (NotePushPolicy.inBackoff(header.failureCount, header.lastFailureAt, now(), userInitiated)) {
@@ -262,9 +274,10 @@ internal class NotePushStep(
         }
     }
 
-    private fun send(uid: String) {
+    /** [copyShown]: for a move's delete, the copy this run has just fetched, alive ([confirmMove]). */
+    private fun send(uid: String, copyShown: PendingEntry.Move? = null) {
         ensureCurrent()
-        val snapshot = when (val start = store.startSend(uid)) {
+        val snapshot = when (val start = store.startSend(uid, copyShown)) {
             is SendStart.Ready -> start.entry
             is SendStart.Refused -> {
                 when (start.reason) {
@@ -280,6 +293,11 @@ internal class NotePushStep(
                 settled += uid
                 return
             }
+            is SendStart.MoveUnconfirmed -> {
+                // Pointed at another copy since that fetch (the user moved the copy on): left for the next run.
+                if (copyShown == null) confirmMove(start.entry) else settled += uid
+                return
+            }
         }
         val saved = try {
             remote.upload(snapshot)
@@ -289,7 +307,7 @@ internal class NotePushStep(
         }
         ensureCurrent()
         if (!cacheFirst(snapshot, saved)) return
-        when (val outcome = store.completeSend(uid, snapshot.version, saved.revision, saved.blob)) {
+        when (val outcome = store.completeSend(uid, snapshot.version, saved.revision, saved.blob, saved.deleted)) {
             SendOutcome.Done -> Unit
             // The user changed the note during the upload: the newer change is rebased onto the item
             // that just landed (3.3 step 5). The save that made it asks for its own run.
@@ -373,7 +391,9 @@ internal class NotePushStep(
     /** A 4xx about this content: one odd answer backs off, a second in a row for the same content holds the text. */
     private fun rejected(snapshot: PendingEntry) {
         val reason = NotePushPolicy.heldReasonFor(FailureKind.REJECTED, previousFailure = snapshot.lastFailureCategory)
-        if (reason == null) fail(snapshot, FailureKind.REJECTED) else hold(snapshot.noteUid, reason, sentVersion = snapshot.version)
+        if (reason == null) fail(snapshot, FailureKind.REJECTED) else {
+            hold(snapshot.noteUid, reason, sentVersion = snapshot.version)
+        }
     }
 
     /**
@@ -394,7 +414,9 @@ internal class NotePushStep(
         }
         val again = store.snapshot { false }
         for (header in again.headers) {
-            if (header.notebookUid == notebookUid && header.state != PendingEntry.State.HELD) holdForNotebook(header.noteUid, reason)
+            if (header.notebookUid == notebookUid && header.state != PendingEntry.State.HELD) {
+                holdForNotebook(header.noteUid, reason)
+            }
         }
         // A listing can come back short and leave out this entry, which the server just refused. Not held, it would
         // wait neither held nor failed, and the run would record success.
@@ -414,11 +436,16 @@ internal class NotePushStep(
         }
     }
 
-    /** The one confirming fetch of a notebook in this run. A fetch that fails counts as that one. */
-    private fun confirm(snapshot: PendingEntry): NotebookCheck {
+    /**
+     * A fetch of the notebook [notebookUid] (the entry's own, or a move's copy's) and what it showed; one that fails in a way
+     * that says nothing about the notebook is [NotebookCheck.Unknown]. After a 403 or 404 on a push, or a 404 on a move's
+     * copy, the caller keeps the answer for the rest of the run ([notebookChecks]); a move's copy fetched alive gets a fresh
+     * fetch every time, never one kept from earlier in the run ([confirmMove]).
+     */
+    private fun confirm(snapshot: PendingEntry, notebookUid: String = snapshot.notebookUid): NotebookCheck {
         ensureCurrent()
         return try {
-            remote.fetchNotebook(snapshot.notebookUid)
+            remote.fetchNotebook(notebookUid)
         } catch (e: Exception) {
             val kind = classified(e)
             when {
@@ -472,7 +499,7 @@ internal class NotePushStep(
             // A pending delete whose note is deleted on the server is done as well: the deleted copy goes into the
             // cache, and the entry is dropped.
             ConflictOutcome.DONE, ConflictOutcome.ALREADY_DELETED -> if (cacheFirst(latest, server)) {
-                when (val outcome = store.completeSend(uid, latest.version, server.revision, server.blob)) {
+                when (val outcome = store.completeSend(uid, latest.version, server.revision, server.blob, server.deleted)) {
                     SendOutcome.Done -> Unit
                     // Saved since the read above: the newer change is rebased onto our copy, as in [send].
                     is SendOutcome.NewerLocalChange -> rebaseOntoLanded(outcome.entry, server)
@@ -500,20 +527,178 @@ internal class NotePushStep(
     /** Drops the pending delete [latest] that met another client's change, and counts it for the notebook list. */
     private fun restoreServerNote(latest: PendingEntry) {
         val uid = latest.noteUid
+        val notice = if (latest.move != null) DeleteNotDone.MOVED_CHANGED_ELSEWHERE else DeleteNotDone.CHANGED_ELSEWHERE
         val dropped = try {
             store.dropDelete(uid, latest.version)
         } catch (e: PendingNotesStore.RemovalNotSynced) {
             // The entry is gone until a power loss: the notice is written now, or never, since the next run finds nothing.
-            deleteNotDone(DeleteNotDone.CHANGED_ELSEWHERE)
+            deleteNotDone(notice)
             throw e
         }
         if (dropped) {
-            deleteNotDone(DeleteNotDone.CHANGED_ELSEWHERE)
+            deleteNotDone(notice)
         } else {
             // It moved on, or its file cannot be read now.
             failIfUnreadable(uid)
         }
         settled += uid
+    }
+
+    /**
+     * A move's delete of the original ([PendingEntry.move]). The original goes only while its copy is on the server, in a
+     * notebook that is still there, so a move does not leave the note in neither notebook, unless another device deletes
+     * the copy or its notebook between the fetches below and the delete, which no check on this device can see:
+     * - the copy still waits to be sent: the delete waits too, and nothing is recorded; the copy's own push reports;
+     * - the copy's file cannot be read: the delete waits, and the run records a storage failure;
+     * - otherwise (sent and gone from the store, held, or a pending delete of the copy) the copy is fetched, once per send.
+     *   Alive, its notebook is fetched right after, and the delete is sent at once, like any other, while that notebook
+     *   is there; deleted or gone for this account, the delete is dropped and the copy's text is kept in holding on this
+     *   device ([keepCopy]), since the move put the original's text, changes not synced before it included, into the copy.
+     *   A notebook this run's refresh shows deleted is not fetched again, but the copy is fetched from it, so a copy that
+     *   landed before a run stopped short of the delete keeps its text the same way.
+     *   Deleted (on another device: a delete of the copy on this device makes the original's an ordinary delete,
+     *   [PendingNotesStore.deleteNote]), the original stays. A 404 that a fetch of the copy's notebook confirms (the notebook
+     *   answers, or is gone), or a notebook of the copy that this run's refresh shows gone for this account, means it never
+     *   landed where this account can see it: the original stays. Either way the delete is dropped and the notebook list
+     *   says why, or, when the delete was sent before, that the original may already be deleted ([moveNotDone]). Any other
+     *   failure of either fetch is the delete's own, as a passing one with backoff (a refusal to hand over the copy says
+     *   nothing about the delete), and a 401 ends the step.
+     */
+    private fun confirmMove(entry: PendingEntry) {
+        val uid = entry.noteUid
+        val move = checkNotNull(entry.move)
+        when (val copy = store.read(move.noteUid)) {
+            is Read.Unreadable -> {
+                noteFailure(FailureKind.LOCAL)
+                settled += uid
+                return
+            }
+            is Read.Present -> if (copy.entry.state == PendingEntry.State.UPSERT) {
+                settled += uid
+                return
+            }
+            Read.Missing -> Unit
+        }
+        // A notebook this run's refresh shows deleted still hands out its notes by uid, so the copy is fetched there too: a copy
+        // that landed before a run stopped short of the delete has its text kept. One gone for this account hands out nothing.
+        val shown = remote.notebook(move.notebookUid)
+        val server: ServerItem? = when (shown) {
+            Notebook.MISSING -> null
+            Notebook.WRITABLE, Notebook.READ_ONLY, Notebook.DELETED -> {
+                ensureCurrent()
+                try {
+                    remote.fetchMoved(move)
+                } catch (e: Exception) {
+                    when (classified(e)) {
+                        FailureKind.AUTHENTICATION -> throw EndPass(Ended.NEEDS_AUTHENTICATION)
+                        // The copy, or its notebook, is not there for this account. One 404 says little on its own, so the
+                        // notebook itself is fetched first, once per run, as for a refused push; only its answer drops the
+                        // delete. A notebook that cannot be fetched leaves the delete waiting, with backoff.
+                        FailureKind.LOST_ACCESS -> when (notebookChecks[move.notebookUid]
+                            ?: confirm(entry, move.notebookUid).also { notebookChecks[move.notebookUid] = it }) {
+                            is NotebookCheck.Found, NotebookCheck.Gone -> null
+                            NotebookCheck.Unknown -> {
+                                fail(entry, FailureKind.TRANSIENT)
+                                return
+                            }
+                        }
+                        else -> {
+                            fail(entry, FailureKind.TRANSIENT)
+                            if (e is PermissionDeniedException || NotePushPolicy.endsPushStep(e)) endStep(uid, FailureKind.TRANSIENT)
+                            return
+                        }
+                    }
+                }
+            }
+        }
+        ensureCurrent()
+        when {
+            server == null -> moveNotDone(entry, DeleteNotDone.MOVE_NOT_DONE)
+            server.deleted -> moveNotDone(entry, DeleteNotDone.MOVED_COPY_DELETED)
+            // Deleted as this run's refresh shows it: the copy has no notebook to stay in, and no fetch of it is needed.
+            shown == Notebook.DELETED -> keepCopy(entry, move, server, HeldReason.NOTEBOOK_DELETED)
+            // The server takes an upload into a deleted notebook and hands out its notes by uid, so the copy counts only in a
+            // notebook that is there now: it is fetched again after the copy, never taken from this run's refresh or an
+            // earlier check. Deleted or gone keeps the original and the copy's text; a fetch that fails keeps the delete
+            // waiting, and one that ends the step or draws a 401 ends it ([confirm]).
+            else -> {
+                val notebook = confirm(entry, move.notebookUid)
+                // That fetch was a network call: a run that stopped being current meanwhile drops nothing and records nothing.
+                ensureCurrent()
+                when (notebook) {
+                    is NotebookCheck.Found ->
+                        if (notebook.deleted) keepCopy(entry, move, server, HeldReason.NOTEBOOK_DELETED) else send(uid, copyShown = move)
+                    NotebookCheck.Gone -> keepCopy(entry, move, server, HeldReason.LOST_ACCESS)
+                    NotebookCheck.Unknown -> fail(entry, FailureKind.TRANSIENT)
+                }
+            }
+        }
+    }
+
+    /**
+     * Drops the move's delete [entry], whose copy is not on the server for [reason], and counts it for the notebook list.
+     * A delete sent before ([PendingEntry.sent] holds its own revision, recorded by [PendingNotesStore.startSend]) may
+     * have landed though no answer came back, so its notice says the original may already be deleted, not that it stays.
+     * When the copy's text is in holding for a notebook deleted or gone for this account (a run held it before it was sent),
+     * a move not done says so instead. Both come from the store as it found them under the lock of the drop
+     * ([PendingNotesStore.dropMoveDelete]), never from an earlier read: the user can discard that held text meanwhile.
+     */
+    private fun moveNotDone(entry: PendingEntry, reason: DeleteNotDone) {
+        val uid = entry.noteUid
+        val outcome = try {
+            store.dropMoveDelete(uid, entry.version)
+        } catch (e: PendingNotesStore.RemovalNotSynced) {
+            // The delete is gone until a power loss: its notice is written now, or never, since the next run finds nothing.
+            e.dropped?.let { deleteNotDone(moveNotice(reason, it)) }
+            throw e
+        }
+        if (outcome is PendingNotesStore.MovedCopy.Dropped) deleteNotDone(moveNotice(reason, outcome)) else failIfUnreadable(uid)
+        settled += uid
+    }
+
+    /**
+     * A move's delete [entry] whose copy [copy] this run fetched alive, in a notebook found deleted or gone for this account
+     * ([reason]): the delete is dropped, so the original shows as last synced, and the copy's text is kept in holding first
+     * ([PendingNotesStore.keepMovedCopy]), decided under the store lock against what is there now. The notice says where the
+     * text is, and, for a delete sent before, that the original may already be deleted. A copy deleted on this device keeps
+     * nothing; an original that moved on, or a file that cannot be read, leaves everything as it is.
+     */
+    private fun keepCopy(entry: PendingEntry, move: PendingEntry.Move, copy: ServerItem, reason: HeldReason) {
+        val uid = entry.noteUid
+        val outcome = try {
+            store.keepMovedCopy(uid, entry.version, move, reason, copy.revision, copy.blob, now())
+        } catch (e: PendingNotesStore.RemovalNotSynced) {
+            // The delete is gone until a power loss, and the text was held before it: both count now, or never, since the next
+            // run finds nothing.
+            e.dropped?.let {
+                if (it.held) held++
+                deleteNotDone(moveNotice(DeleteNotDone.MOVE_NOT_DONE, it))
+            }
+            throw e
+        }
+        when (outcome) {
+            is PendingNotesStore.MovedCopy.Dropped -> {
+                if (outcome.held) held++
+                deleteNotDone(moveNotice(DeleteNotDone.MOVE_NOT_DONE, outcome))
+            }
+            // It moved on (the user moved or deleted the copy since), or its file cannot be read now.
+            PendingNotesStore.MovedCopy.NotApplied -> failIfUnreadable(uid)
+            // The copy's file may hold newer text: nothing is written over it, and the delete waits.
+            PendingNotesStore.MovedCopy.CopyUnreadable -> noteFailure(FailureKind.LOCAL)
+        }
+        settled += uid
+    }
+
+    /**
+     * The notice for a move's delete dropped for [reason], as the store answered the drop ([dropped]): for a move not done,
+     * the one that says the copy's text is held when it is; for a delete sent before, that the original may already be
+     * deleted. A copy deleted on the server keeps its own notice, whatever this device holds.
+     */
+    private fun moveNotice(reason: DeleteNotDone, dropped: PendingNotesStore.MovedCopy.Dropped): DeleteNotDone = when {
+        reason == DeleteNotDone.MOVE_NOT_DONE && dropped.textKept ->
+            if (dropped.deleteSent) DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD_DELETE_SENT else DeleteNotDone.MOVE_NOT_DONE_TEXT_HELD
+        dropped.deleteSent -> DeleteNotDone.MOVE_NOT_DONE_DELETE_SENT
+        else -> reason
     }
 
     private fun deleteNotDone(reason: DeleteNotDone) {
@@ -654,6 +839,10 @@ internal class NotePushStep(
         }
     }
 
+    /**
+     * Whether a dropped delete was a move's, and sent before, comes from the store, as the entry was when removed: the user
+     * can move the note, or delete a move's copy (which makes the original's delete plain), after this step listed the store.
+     */
     private fun hold(uid: String, reason: HeldReason, sentVersion: Long?) {
         ensureCurrent()
         val outcome = try {
@@ -661,14 +850,17 @@ internal class NotePushStep(
         } catch (e: PendingNotesStore.RemovalNotSynced) {
             // Only the drop of a pending delete removes a file here. It is gone until a power loss, so its notice is
             // written now, or never, since the next run finds nothing; the run still records the storage failure.
-            NotePushPolicy.deleteNotDoneFor(reason)?.let(::deleteNotDone)
+            NotePushPolicy.deleteNotDoneFor(reason, e.moveDelete, sent = e.deleteSent)?.let(::deleteNotDone)
             throw e
         }
         when (outcome) {
             HoldOutcome.HELD -> held++
-            // A pending delete is dropped instead of held, and the note shows again; the notebook list says why,
-            // unless the notebook itself is gone for this account.
-            HoldOutcome.DELETE_DROPPED -> NotePushPolicy.deleteNotDoneFor(reason)?.let(::deleteNotDone)
+            // A pending delete is dropped instead of held, and the note shows again; the notebook list says why, unless the
+            // notebook itself is gone for this account. A delete sent before may have landed: the policy says whether a
+            // move's notice can still say the original stays.
+            HoldOutcome.DELETE_DROPPED, HoldOutcome.SENT_DELETE_DROPPED, HoldOutcome.MOVE_DELETE_DROPPED,
+            HoldOutcome.SENT_MOVE_DELETE_DROPPED ->
+                NotePushPolicy.deleteNotDoneFor(reason, outcome.moveDelete, sent = outcome.deleteSent)?.let(::deleteNotDone)
             // Its text lives in a conflict copy now, which is held in its own right.
             HoldOutcome.UNFINISHED_ORIGINAL -> {
                 unfinishedOriginal(uid)
