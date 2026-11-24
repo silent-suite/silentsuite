@@ -74,6 +74,6 @@ That's the success state for setup. From here, see the per-section guides:
 - [Calendar](./calendar.md) — events, recurrence, timezones, import/export
 - [Contacts](./contacts.md) — vCard CRUD and import/export
 - [Tasks](./tasks.md) — priorities, due dates, ICS task export
-- [Notes](./notes.md) — encrypted Markdown notebooks and Markdown export
+- [Notes](./notes.md) — experimental encrypted Markdown notebooks and Markdown export
 - [How Encryption Works](./encryption-explained.md) — what the server can and can't see
 - [FAQ](./faq.md) — anything we get asked twice

@@ -1,6 +1,6 @@
 # Apps & Integrations
 
-SilentSuite is built on the [Etebase protocol](https://www.etebase.com/). Today you can sync calendars, contacts, and tasks through the web app, the native Android app, and supported desktop clients. Notes are available in the web app.
+SilentSuite is built on the [Etebase protocol](https://www.etebase.com/). Today you can sync calendars, contacts, and tasks through the web app, the native Android app, and supported desktop clients. Experimental Markdown notes are available in the web app and the Android app.
 
 <AppLogoStrip compact />
 
@@ -17,8 +17,8 @@ The hosted server at `server.silentsuite.io` (or your self-hosted URL) speaks th
 
 | App | Official site | Platform | Syncs |
 |---|---|---|---|
-| <img class="app-table-logo" src="/logo.svg" alt="" width="28" height="28"> [SilentSuite Web](./web.md) | [app.silentsuite.io](https://app.silentsuite.io) | Browser | Contacts, Calendars, Tasks |
-| <img class="app-table-logo" src="/logo.svg" alt="" width="28" height="28"> [SilentSuite for Android](./android.md) | [silentsuite.io](https://silentsuite.io/) | Android | Contacts, Calendars, Tasks |
+| <img class="app-table-logo" src="/logo.svg" alt="" width="28" height="28"> [SilentSuite Web](./web.md) | [app.silentsuite.io](https://app.silentsuite.io) | Browser | Contacts, Calendars, Tasks, Notes (experimental) |
+| <img class="app-table-logo" src="/logo.svg" alt="" width="28" height="28"> [SilentSuite for Android](./android.md) | [silentsuite.io](https://silentsuite.io/) | Android | Contacts, Calendars, Tasks, Notes (experimental) |
 
 ## On the Roadmap
 

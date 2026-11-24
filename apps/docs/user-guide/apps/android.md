@@ -139,32 +139,80 @@ For tasks, use:
 
 ## Notes (experimental)
 
-The app can show and edit your encrypted [notes](../notes.md). It is off by default and is turned on per account:
+The app can show and edit your encrypted [notes](../notes.md). Notes is off by default and is turned on per account:
 
 1. Open **Settings**, then **Account**.
 2. Under **Experimental**, turn on **Notes (experimental)**. The app tries to sync your notebooks right away.
-3. Open **Notes** from the navigation drawer. Tap a notebook to see its notes; touch and hold a notebook to manage sharing, or to rename or delete it.
-4. Tap a note to edit it, or tap **New note**. Notes in a read-only notebook open read-only.
+3. Open **Notes** from the navigation drawer, and tap a notebook to see its notes.
+4. Tap a note to edit it, or tap **New note**. A note opens read-only when its notebook is read-only, when its change on this device cannot be read, or when its text is kept under **Unsynced text**; in that last case an **Open Unsynced text** button takes you there.
 
-What to expect in this version:
+Turning Notes off hides it again and removes it from the sync overview. Nothing is deleted, including text that has not synced yet.
 
-- Each edit is saved on this device about a second and a half after you stop typing, and when you leave the note. Below the text the editor says "Saved on this device", then "Synced" or why the note is waiting. **Undo** and **Redo** are in the toolbar, and Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y work on a hardware keyboard.
-- If your changes cannot be saved on this device when you go back, the editor stays open, says why, and asks **Leave this note?**, with **Copy**, **Try again** when another save may work, and **Leave anyway**. If you leave anyway, the app tries one more save, and the changes may not be kept. Changes that cannot be saved may also not be kept if the note closes without you leaving it, for example when the account is removed or Android stops the app in the background.
-- An edit saved offline waits on this device until the next sync that is allowed to run. Saving a note asks for one, which follows the automatic setting below, so on mobile data it waits for Wi-Fi unless you tap **Sync now**.
-- Notes are edited as plain Markdown text; there is no formatted view yet.
-- To move a note to another notebook, open it, open the menu in the top bar and choose **Move to notebook**, then tap a notebook. Only notebooks you can write to are listed, and notebooks other people share with you are marked as shared, unless they gave you **Admin** access. The note opens in its new notebook at once, with its text and everything else stored with it, also offline, and the move is sent at the next sync allowed to run, like a saved edit. The server cannot move a note between notebooks, so the app creates the note again there and deletes the original only after it has checked that the server has the new one, in a notebook that is still there; its revision history starts over. If SilentSuite finds that the note changed after the screen showed it, nothing is moved: a message says so, and the note shows as it is now, so you can check it and move it again. If the new notebook does not take the note, the moved text is kept under **Unsynced text**, and a note that had synced before shows in its old notebook again. If another device changed the note first, or its old notebook became read-only for you, the note stays in both notebooks (if that notebook became read-only after the original's delete was already sent, the list says the note may already be deleted there); if, before that check, another device deleted it in its new notebook, it stays in its old notebook as it last synced there, and changes it had not synced before the move went with the deleted copy. If the new notebook was deleted or you lost access to it, the note also stays in its old notebook as it last synced there, and the text it had in the new notebook, those changes included, is kept under **Unsynced text**, unless you lost access after this device sent the copy and before it checked it: then those changes are only in the new notebook, which you can no longer open. If any of this happened after this device had already sent the original's delete, the note may already be deleted in its old notebook too, and the list says to check it there. The notebook list says why until you tap **Dismiss**. One case gets no message: if another device deletes the note or its new notebook, or you lose access to that notebook, in the moment between this device's check and the original's delete, the original is deleted too, and the note is in neither notebook.
-- To delete a note, open it, open the menu in the top bar and choose **Delete note**, then confirm. If the note has text on this device that has not synced, a second confirmation asks before that text is discarded. If another window of this note saved text that this screen has not shown yet, nothing is deleted: the note reloads to show it, and you can delete it again. The note leaves the list at once and is deleted on the server at the next sync allowed to run, like a saved edit. A note that never synced is only removed from this device; if it is the copy of a synced note you moved there, and the move has not synced yet, the original in its old notebook is deleted on the server at the next sync. If another device changed the note before the delete reached the server, or the notebook became read-only for you, the note is not deleted: it shows again, and the notebook list says why until you tap **Dismiss**.
-- If a note changed on another device since you started editing it, your version is kept as a separate note named "(conflicted copy)", and both versions sync.
+Not in this version: a formatted view of a note, and notebooks in the import and export options.
+
+### Notebooks
+
+- No notebook is created for you. If a sync finds none, the notebook list offers **New notebook**. **Create notebook** is always in the menu at the top of the notebook list.
+- Touch and hold a notebook to open its settings. If you are an admin of the notebook, you can manage its members, rename it or delete it there; otherwise you can leave it.
+- Shared notebooks appear with the same shared and read-only markers as other collections, and you accept notebook invitations the same way.
+- If a notebook you delete or leave holds notes that have not synced, the app says how many and offers **Sync now** first. Deleting or leaving without syncing discards them from this device, after a separate confirmation, once the server has accepted the delete or leave. If only some of the changes on this device can be read, only the readable ones are discarded. If none can be read, nothing is discarded, and the text may stay on this device without syncing.
+
+### Editing
+
+- Notes are edited as plain Markdown text.
+- Each edit is saved on this device about a second and a half after you stop typing, and when you leave the note. Below the text, the editor says "Saved on this device", then "Synced" or why the note is waiting to sync.
+- **Undo** and **Redo** are in the toolbar. On a hardware keyboard, Ctrl+Z undoes, and Ctrl+Shift+Z or Ctrl+Y redoes.
 - The note fields ask the keyboard not to learn from what you type and not to suggest words. A keyboard can ignore that request.
-- Text that cannot sync from its notebook, for example after you lose access to a shared notebook, is kept under **Unsynced text** in the notebook list, where you can copy it, send it again with **Try again**, or discard it. While a discard of all unsynced notes in **Settings**, **Unsynced Notes** has not finished, no note can be edited until you finish it there.
-- Notes sync when you tap **Sync now** or pull to refresh, on any connection. They also sync by themselves when you open the Notes screen, after you save a note, and after a calendar, contact, or task sync finishes, on Wi-Fi only. A wired (Ethernet) connection does not count as Wi-Fi. A sync you start from Android's own account settings counts as a calendar, contact, or task sync here, so notes follow it on Wi-Fi only. Coming back onto Wi-Fi does not sync notes on its own.
-- Two settings under **Settings**, **Account**, **Experimental** change which connections notes use: **Automatic Notes sync** and **Sync now for Notes**. If **Sync over WiFi only** (under **Settings**, **Sync**) is on for the account, notes sync by themselves only on Wi-Fi. If a network name is also saved there under **Saved WiFi network**, notes do not sync by themselves until you remove it, because Android does not give the app network names.
+- If your changes cannot be saved on this device when you go back, the editor stays open, says why, and asks **Leave this note?**. **Copy** copies your text, **Try again** appears when another save may work (otherwise the button is **Cancel**), and **Leave anyway** closes the note. If you leave anyway, the app tries one more save, and the changes may not be kept. Changes that cannot be saved may also be lost if the note closes without you leaving it, for example when the account is removed or Android stops the app in the background.
+
+### Move a note
+
+Open the note, open the menu in the top bar, and choose **Move to notebook**, then tap a notebook. Only notebooks you can write to are listed, and notebooks other people share with you are marked as shared, unless they gave you admin access. If no other notebook can take the note, a message says so.
+
+The app saves the note's text first. A note whose text is kept under **Unsynced text**, or whose text could not be saved, is not moved, and a message says why. If the app finds that the note changed after the screen showed it, nothing is moved either: a message says so, and the note shows as it is now, so you can check it and move it again.
+
+Otherwise the note opens in its new notebook at once, also offline. Its text, including text that has not synced yet, its title, its last-edited time and anything else another app stored with it go across unchanged. The move is sent at the next Notes sync that is allowed to run, like a saved edit.
+
+The server cannot move a note between notebooks, so the app creates the note again in the new notebook and deletes the original only after it has checked that the server has the new one, in a notebook that is still there. Its revision history starts over. If a move stops halfway, the note can show in both notebooks; the move alone never leaves it in neither. When something gets in the way, the notebook list says why until you tap **Dismiss**:
+
+- If the new notebook does not take the note, for example because it became read-only for you before the move reached the server, the moved text is kept under **Unsynced text**, and a note that had synced before shows in its old notebook again.
+- If another device changed the note first, its old notebook became read-only for you, or the server refused the original's delete, the note stays in both notebooks. If that notebook became read-only after the original's delete was already sent, the list says the note may already be deleted there.
+- If, before that check, another device deleted the note in its new notebook, the note stays in its old notebook as it last synced there, and changes it had not synced before the move went with the deleted copy.
+- If the new notebook was deleted or you lost access to it, the note stays in its old notebook as it last synced there, and the text it had in the new notebook, those changes included, is kept under **Unsynced text**. The exception is access lost after this device sent the copy and before it checked it: those changes are then only in the new notebook, which you can no longer open.
+- If any of this happened after this device had already sent the original's delete, the note may already be deleted in its old notebook too, so the list says to check it there. Text kept under **Unsynced text** stays there.
+
+One case gets no message: if another device deletes the note or its new notebook, or you lose access to that notebook, in the moment between this device's check and the original's delete, the original is deleted too, and the note is in neither notebook.
+
+### Delete a note
+
+Open the note, open the menu in the top bar, and choose **Delete note**, then confirm. If the note has text on this device that has not synced, a second confirmation asks before that text is discarded. If the note changed after the screen showed it, for example in another window of the same note, nothing is deleted: a message says so, the note reloads to show the change, and you can delete it again.
+
+The note leaves the list at once and is deleted on the server at the next Notes sync that is allowed to run, like a saved edit. A note that never synced is only removed from this device; if it is the copy of a synced note you moved there, and the move has not synced yet, the original in its old notebook is deleted on the server at the next sync. If the delete cannot be done, for example because another device changed the note first or the notebook became read-only for you, the note is not deleted: it shows again, with any change made on the other device, and the notebook list says why until you tap **Dismiss**.
+
+### Conflicts and unsynced text
+
+- If a note changed on another device since you started editing it, the other version stays, and your text is saved as a separate note whose title ends in "(conflicted copy)". Both sync. If the note was deleted on another device, your text becomes a new note with your title.
+- Text that cannot sync from its notebook, for example after you lose access to a shared notebook or when a conflicted copy conflicts again, is kept under **Unsynced text** in the notebook list. There, depending on why the text is kept, you can copy it, send it again with **Try again**, or discard it. Text that cannot be read can only be discarded together with all of the account's unsynced Notes text, in **Settings**, **Unsynced Notes**.
+- If a discard of all unsynced Notes text in **Settings**, **Unsynced Notes** did not finish, no note can be edited until you finish it there.
+- Before you sign out with **Sign out** in the app, it counts the Notes changes that have not synced and offers **Sync now**. Signing out without syncing deletes them from this device, after a separate confirmation. If the changes cannot be read at all, going on deletes nothing, and the account stays signed in.
+- Android's own account settings cannot remove the account while it has Notes changes that have not synced or cannot be read. If notifications are allowed for the app, it shows an **Account not removed** notification. **Settings**, **Unsynced Notes** lists the account until it can be removed.
+
+### How notes sync
+
+An edit or move saved offline waits on this device until the next Notes sync that is allowed to run. Two settings under **Settings**, **Account**, **Experimental** decide which connections notes use. Each can be set to **Wi-Fi only** or **Wi-Fi or mobile data**.
+
+| Setting | Covers | Default |
+|---|---|---|
+| **Automatic Notes sync** | Syncs that start by themselves: when you open the Notes screen, about 10 seconds after you save a note (at once when you leave it), and after a calendar, contact, or task sync finishes | **Wi-Fi only** |
+| **Sync now for Notes** | Syncs you start, such as **Refresh** at the top of the notebook list, pull to refresh, **Sync now** on the account screen, turning Notes on, and **Try again** under **Unsynced text** | **Wi-Fi or mobile data** |
+
+With the default settings, an edit you save on mobile data waits for Wi-Fi unless you start a sync yourself, for example with **Refresh**.
+
+- A wired (Ethernet) connection does not count as Wi-Fi.
+- A sync you start from Android's own account settings counts as a calendar, contact, or task sync here, so notes follow **Automatic Notes sync**.
+- Coming back onto Wi-Fi does not sync notes on its own, and there is no separate background schedule for notes yet. If the other services do not sync on this device, notes refresh when you open the Notes screen, save a note, pull to refresh, tap **Refresh**, or tap **Sync now** on the account screen, as the settings above allow.
+- If **Sync over WiFi only** (under **Settings**, **Sync**) is on for the account, notes sync by themselves only on Wi-Fi, whatever **Automatic Notes sync** says. If a network name is also saved there under **Saved WiFi network**, notes do not sync by themselves until you remove it, because Android does not give the app network names. Neither affects syncs you start.
 - When notes are not syncing by themselves on the connection Android reports, the notebook list says so, names the setting behind it, and says whether pulling down will try a sync.
-- There is no separate background schedule for notes yet. If the other services do not sync on this device, notes refresh when you open the Notes screen (on Wi-Fi), pull to refresh, or tap **Sync now**. Off Wi-Fi, use pull to refresh or **Sync now**.
-- Shared notebooks appear with the same shared and read-only markers as other collections. You can accept notebook invitations and manage members like any other collection.
-- No notebook is created for you. Use **New notebook** if your account has none yet.
-- Notebooks are left out of the export options for now.
-- Turning Notes off hides it again and removes it from the sync overview without deleting anything.
 
 ## Source Code
 

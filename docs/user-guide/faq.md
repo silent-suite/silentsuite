@@ -10,9 +10,9 @@ A privacy-focused, end-to-end encrypted sync service for calendar, contacts, tas
 
 The current beta covers:
 
-- **Web app** at [app.silentsuite.io](https://app.silentsuite.io) — calendar, contacts, tasks, Markdown notes, import/export, settings, admin
-- **Android** — [Google Play](https://play.google.com/store/apps/details?id=io.silentsuite.android), [F-Droid](https://f-droid.org/packages/io.silentsuite.android), Obtainium, Zapstore, and signed APKs from GitHub Releases.
-- **Desktop bridge** — CalDAV/CardDAV bridge for Thunderbird, Apple Calendar, Evolution, etc., on Linux / macOS / Windows
+- **Web app** at [app.silentsuite.io](https://app.silentsuite.io) — calendar, contacts, tasks, experimental Markdown notes, import/export, settings, admin
+- **Android** — [Google Play](https://play.google.com/store/apps/details?id=io.silentsuite.android), [F-Droid](https://f-droid.org/packages/io.silentsuite.android), Obtainium, Zapstore, and signed APKs from GitHub Releases. The app also has experimental Markdown notes.
+- **Desktop bridge** — CalDAV/CardDAV bridge for Thunderbird, Apple Calendar, Evolution, etc., on Linux / macOS / Windows; it does not sync notes
 - **Self-hosting** — two-container Docker stack (PostgreSQL + SilentSuite server)
 
 See the [v0.1.0-beta release notes](https://github.com/silent-suite/silentsuite/releases/tag/v0.1.0-beta) for the full list.
