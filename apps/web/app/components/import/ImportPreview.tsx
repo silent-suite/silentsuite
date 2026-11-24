@@ -14,6 +14,8 @@ interface ImportPreviewProps {
   onCancel: () => void
   isImporting: boolean
   importedCount: number | null
+  /** Shown while importing as "Importing X of N…"; absent keeps the plain label. */
+  progress?: { saved: number; total: number } | null
 }
 
 export default function ImportPreview({
@@ -23,6 +25,7 @@ export default function ImportPreview({
   onCancel,
   isImporting,
   importedCount,
+  progress,
 }: ImportPreviewProps) {
   if (importedCount !== null) {
     return (
@@ -67,7 +70,9 @@ export default function ImportPreview({
           className="inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
         >
           {isImporting && <Loader2 className="h-4 w-4 animate-spin" />}
-          {isImporting ? 'Importing…' : `Import ${items.length} ${type}`}
+          {isImporting
+            ? progress ? `Importing ${progress.saved} of ${progress.total}…` : 'Importing…'
+            : `Import ${items.length} ${type}`}
         </button>
         <button
           onClick={onCancel}

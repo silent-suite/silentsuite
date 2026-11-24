@@ -32,6 +32,7 @@ import {
 import { secureGet } from '@/app/lib/secure-storage'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
+import { parseVCard } from '@silentsuite/core/utils/vcard-parser'
 import {
   ensureEncryptedEnvelope as cacheEnsureEncryptedEnvelope,
   ensureFingerprint as cacheEnsureFingerprint,
@@ -2327,6 +2328,175 @@ function isDomainLoadedForBulkMutation(domainLoadState: DomainLoadState, type: C
   return domainLoadState[type] === 'loaded'
 }
 
+// ── File contact import uploads (opt-in) ──
+
+/** Attempts per batch for a file import, with 1 s, 2 s and 4 s backoff between them. */
+export const FILE_IMPORT_ATTEMPTS = 4
+/** No single file-import request (upload, collection read or page) may wait longer. */
+export const FILE_IMPORT_TIMEOUT_MS = 60_000
+
+export type FileImportOutcome = 'saved' | 'notSent' | 'refused' | 'uncertain'
+export interface FileImportResult {
+  outcome: FileImportOutcome
+  /** The SDK item created or replayed for this content, null if none was created. */
+  item: any | null
+}
+export interface FileImportUpload {
+  /** SDK items from an earlier uncertain upload, replayed as they are, by content index. */
+  replay?: ReadonlyMap<number, any>
+  onProgress?: (saved: number, total: number) => void
+  /** Receives one result per content index once the upload has settled. */
+  onSettled?: (results: FileImportResult[]) => void
+}
+
+export class FileImportTimeoutError extends Error {
+  constructor() {
+    super('Request timed out')
+    this.name = 'FileImportTimeoutError'
+  }
+}
+
+/** Rejects after `ms`; the underlying request is left to finish on its own. */
+function withFileImportTimeout<T>(request: Promise<T>, ms = FILE_IMPORT_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new FileImportTimeoutError()), ms)
+  })
+  return Promise.race([request, timeout]).finally(() => clearTimeout(timer))
+}
+
+/** A refusal the server made in full: its batch transaction did not commit, and resending
+ * the same request cannot succeed. Everything else (network, timeout, 5xx, 408, 429,
+ * unknown) may have committed and is retried. */
+function isDefinitiveRefusal(err: unknown): boolean {
+  const name = (err as { name?: unknown } | null)?.name
+  if (name === 'UnauthorizedError' || name === 'PermissionDeniedError' || name === 'ConflictError' || name === 'NotFoundError') return true
+  const status = (err as { status?: unknown } | null)?.status
+  return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+async function createItemsForFileImport(
+  get: () => EtebaseState,
+  set: (partial: Partial<EtebaseState>) => void,
+  type: CollectionTypeKey,
+  contents: { content: string; tempId: string }[],
+  collectionUid: string | undefined,
+  onCommitted: ((tempId: string, item: any) => void) | undefined,
+  upload: FileImportUpload,
+): Promise<(string | null)[]> {
+  const accountEpoch = getAccountEpoch()
+  const { account, collections, syncEngine } = get()
+  // A replayed item already had an attempt whose outcome is unknown.
+  const ambiguous = contents.map((_, index) => upload.replay?.has(index) === true)
+  const results: FileImportResult[] = contents.map((_, index) => ({
+    outcome: ambiguous[index] ? 'uncertain' : 'notSent',
+    item: upload.replay?.get(index) ?? null,
+  }))
+  const settle = () => upload.onSettled?.(results)
+  const collection = account ? resolveCollection(collections, type, collectionUid) : null
+  if (!account || !collection) {
+    settle()
+    return contents.map(() => null)
+  }
+  const noun = type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : type === 'contacts' ? 'contacts' : 'preferences'
+  syncEngine?.pause()
+  try {
+    const itemManager = account.getCollectionManager().getItemManager(collection)
+    const items: any[] = []
+    for (let i = 0; i < contents.length; i++) {
+      const item = results[i]!.item ?? await itemManager.create({}, contents[i]!.content)
+      assertCurrentAccountEpoch(accountEpoch)
+      results[i]!.item = item
+      items.push(item)
+      if (i > 0 && i % 25 === 0) {
+        await sleep(0)
+        assertCurrentAccountEpoch(accountEpoch)
+      }
+    }
+
+    let saved = 0
+    let failure: unknown = null
+    upload.onProgress?.(0, items.length)
+    batches: for (let start = 0; start < items.length; start += 20) {
+      const positions = items.slice(start, start + 20).map((_, offset) => start + offset)
+      for (let attempt = 1; ; attempt++) {
+        try {
+          assertCurrentAccountEpoch(accountEpoch)
+          await withFileImportTimeout(itemManager.batch(positions.map((position) => items[position])))
+          assertCurrentAccountEpoch(accountEpoch)
+          for (const position of positions) results[position]!.outcome = 'saved'
+          saved += positions.length
+          upload.onProgress?.(saved, items.length)
+          break
+        } catch (err) {
+          if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
+          if (isDefinitiveRefusal(err)) {
+            for (const position of positions) results[position]!.outcome = ambiguous[position] ? 'uncertain' : 'refused'
+            failure = err
+            break batches
+          }
+          for (const position of positions) {
+            ambiguous[position] = true
+            results[position]!.outcome = 'uncertain'
+          }
+          if (attempt >= FILE_IMPORT_ATTEMPTS) {
+            failure = err
+            break batches
+          }
+          logger.warn(`[etebase-store] File import batch ${start / 20 + 1} failed (attempt ${attempt}/${FILE_IMPORT_ATTEMPTS}), retrying`)
+          await sleep(1000 * 2 ** (attempt - 1))
+          assertCurrentAccountEpoch(accountEpoch)
+        }
+      }
+    }
+
+    // Publish exactly what the server acknowledged, with the content that was uploaded.
+    const itemCache = new Map(get().itemCache)
+    const itemTypeMap = new Map(get().itemTypeMap)
+    const itemCollectionMap = new Map(get().itemCollectionMap)
+    const uids: (string | null)[] = []
+    const cachedRecords: CachedItem[] = []
+    for (let i = 0; i < items.length; i++) {
+      if (results[i]!.outcome !== 'saved') {
+        uids.push(null)
+        continue
+      }
+      const item = items[i]
+      itemCache.set(item.uid, item)
+      itemTypeMap.set(item.uid, type)
+      itemCollectionMap.set(item.uid, collection.uid)
+      uids.push(item.uid)
+      cachedRecords.push({ itemUid: item.uid, collectionType: type, collectionUid: collection.uid, content: contents[i]!.content, lastModified: Date.now() })
+    }
+    assertCurrentAccountEpoch(accountEpoch)
+    set({ itemCache, itemTypeMap, itemCollectionMap })
+    for (let i = 0; i < items.length; i++) {
+      assertCurrentAccountEpoch(accountEpoch)
+      if (results[i]!.outcome === 'saved') onCommitted?.(contents[i]!.tempId, items[i])
+    }
+    if (isLocalCacheEnabled() && cachedRecords.length > 0) {
+      await displayCacheAfterAck(() => cachePutItems(cachedRecords, accountEpoch), accountEpoch)
+      assertCurrentAccountEpoch(accountEpoch)
+    }
+    if (failure) {
+      console.error('[etebase-store] File import failed', getSafeErrorDetails(failure))
+      showErrorToast(saved > 0 ? `Imported ${saved} of ${items.length} ${noun}. Please try again to import the rest.` : `Failed to import ${noun}. Please try again.`)
+    }
+    settle()
+    return uids
+  } catch (err) {
+    settle()
+    if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return contents.map(() => null)
+    console.error(`[etebase-store] Failed to file-import ${type} items`, getSafeErrorDetails(err))
+    showErrorToast(`Failed to import ${noun}. Please try again.`)
+    return contents.map(() => null)
+  } finally {
+    if (isCurrentAccountEpoch(accountEpoch) && get().syncEngine === syncEngine) syncEngine?.resume()
+  }
+}
+
 interface EtebaseState {
   // The live Account object (null until session restored)
   account: any | null
@@ -2497,7 +2667,19 @@ interface EtebaseActions {
     collectionUid?: string,
     /** Receives each acknowledged SDK item with its temp id, after it is published (#744). */
     onCommitted?: (tempId: string, item: any) => void,
+    /** File contact import only: bounded requests, retry policy, progress, per-item outcomes. */
+    options?: { fileImport?: FileImportUpload },
   ) => Promise<(string | null)[]>
+
+  /** The concrete collection uid an alias such as 'default' resolves to, or null. */
+  resolveCollectionUid: (type: CollectionTypeKey, collectionUid?: string) => string | null
+
+  /**
+   * vCard UIDs of every item in one concrete collection, read from the server with a
+   * bounded wait per request. Read-only: no store or cache writes, no cached fallback.
+   * Null on any error, timeout, unreadable item, or a changed account.
+   */
+  readCollectionVCardUids: (type: CollectionTypeKey, collectionUid: string) => Promise<Set<string> | null>
 
   /**
    * Update an existing item by UID.
@@ -3957,7 +4139,45 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
   },
 
-  createItemsBatch: async (type: CollectionTypeKey, contents: { content: string; tempId: string }[], collectionUid?: string, onCommitted?: (tempId: string, item: any) => void) => {
+  resolveCollectionUid: (type: CollectionTypeKey, collectionUid?: string) =>
+    resolveCollection(get().collections, type, collectionUid)?.uid ?? null,
+
+  readCollectionVCardUids: async (type: CollectionTypeKey, collectionUid: string) => {
+    const accountEpoch = getAccountEpoch()
+    const { account, collections } = get()
+    const collection = (collections[type] ?? []).find((candidate: any) => candidate.uid === collectionUid)
+    if (!account || !collection) return null
+    try {
+      const colManager = account.getCollectionManager()
+      const fresh = await withFileImportTimeout(colManager.fetch(collection.uid))
+      assertCurrentAccountEpoch(accountEpoch)
+      const itemManager = colManager.getItemManager(fresh)
+      const uids = new Set<string>()
+      let stoken: string | undefined
+      let done = false
+      while (!done) {
+        const page: { data: any[]; stoken: string | null; done: boolean } = await withFileImportTimeout(itemManager.list({ stoken }))
+        assertCurrentAccountEpoch(accountEpoch)
+        for (const item of page.data) {
+          if (item.isDeleted) continue
+          const raw = await item.getContent()
+          assertCurrentAccountEpoch(accountEpoch)
+          const uid = parseVCard(typeof raw === 'string' ? raw : new TextDecoder().decode(raw), { keepMissingUid: true }).uid
+          if (uid) uids.add(uid)
+        }
+        stoken = page.stoken || undefined
+        done = page.done
+      }
+      return uids
+    } catch (err) {
+      if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
+      console.error(`[etebase-store] Failed to read ${type} before import`, getSafeErrorDetails(err))
+      return null
+    }
+  },
+
+  createItemsBatch: async (type: CollectionTypeKey, contents: { content: string; tempId: string }[], collectionUid?: string, onCommitted?: (tempId: string, item: any) => void, options?: { fileImport?: FileImportUpload }) => {
+    if (options?.fileImport) return createItemsForFileImport(get, set, type, contents, collectionUid, onCommitted, options.fileImport)
     const accountEpoch = getAccountEpoch()
     const { account, collections, accountFingerprint } = get()
     const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })

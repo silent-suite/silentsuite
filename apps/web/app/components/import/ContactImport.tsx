@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { parseVCard } from '@silentsuite/core/utils/vcard-parser'
+import { parseVCard, splitVCardFile } from '@silentsuite/core/utils/vcard-parser'
 import type { VCard } from '@silentsuite/core/utils/vcard-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
@@ -16,7 +16,7 @@ import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { normalizeLabels } from '@/app/components/LabelEditor'
-import type { ImportIncompleteError } from '@/app/lib/import-outcome'
+import type { ImportIncompleteError, ImportPositionOutcome } from '@/app/lib/import-outcome'
 
 // Large address books with long notes can exceed 10 MB; each batch still uploads separately.
 export const MAX_CONTACT_IMPORT_FILE_BYTES = 50 * 1024 * 1024
@@ -44,6 +44,55 @@ function withoutImported(contacts: VCard[], existing: ReadonlySet<string>): { co
 
 function isImportIncomplete(err: unknown): err is ImportIncompleteError {
   return err instanceof Error && err.name === 'ImportIncompleteError'
+}
+
+function isReconcileFailed(err: unknown): boolean {
+  return err instanceof Error && err.name === 'ImportReconcileFailedError'
+}
+
+/** File imports: built from the existing sentences, per position outcome; skipped cards are not counted. */
+function fileIncompleteMessage(outcomes: readonly ImportPositionOutcome[]): string {
+  const saved = outcomes.filter((outcome) => outcome === 'saved').length
+  const unsaved = outcomes.filter((outcome) => outcome === 'notSent' || outcome === 'refused').length
+  const unconfirmed = outcomes.filter((outcome) => outcome === 'uncertain').length
+  const total = saved + unsaved + unconfirmed
+  if (saved === 0 && unconfirmed === 0) return `None of the ${total} contacts were saved. They're listed below so you can import them again.`
+  const parts = [`Imported ${saved} of ${total} contacts.`]
+  if (unsaved > 0) parts.push(`${unsaved} weren't saved and are listed below so you can import them again.`)
+  if (unconfirmed > 0) parts.push(`${unconfirmed} weren't confirmed as saved and are listed below. If the connection dropped, some may already be saved, so check your list before importing them again.`)
+  return parts.join(' ')
+}
+
+const UNSAFE_UID = /[\u0000-\u001f\u007f]/
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Gives every card of the selection a UID that is unique within it. The first card with an
+ * explicit (nonempty, control-free) UID keeps it; a missing or unsafe UID, or a repeat, gets
+ * `import-<sha256 of the card text>-<n>` with the smallest n no explicit or assigned UID uses,
+ * so the same file maps to the same UIDs on every import.
+ */
+async function assignImportUids(cards: { vcard: VCard; text: string }[]): Promise<VCard[]> {
+  const explicit = (uid: string) => uid !== '' && !UNSAFE_UID.test(uid)
+  const reserved = new Set(cards.map(({ vcard }) => vcard.uid).filter(explicit))
+  const assigned = new Set<string>()
+  const result: VCard[] = []
+  for (const { vcard, text } of cards) {
+    let uid = vcard.uid
+    if (!explicit(uid) || assigned.has(uid)) {
+      const hash = await sha256Hex(text)
+      let n = 1
+      while (reserved.has(`import-${hash}-${n}`) || assigned.has(`import-${hash}-${n}`)) n++
+      uid = `import-${hash}-${n}`
+    }
+    assigned.add(uid)
+    result.push({ ...vcard, uid })
+  }
+  return result
 }
 
 /** Only acknowledged contacts count as imported; an unconfirmed one may still exist remotely. */
@@ -80,30 +129,6 @@ const PLATFORM_INSTRUCTIONS = [
   },
 ]
 
-/** Split a multi-vCard file into individual vCard strings */
-function splitVCards(text: string): string[] {
-  const cards: string[] = []
-  const lines = text.split(/\r?\n/)
-  let current: string[] = []
-  let inCard = false
-
-  for (const line of lines) {
-    if (line.trim().toUpperCase() === 'BEGIN:VCARD') {
-      inCard = true
-      current = [line]
-    } else if (line.trim().toUpperCase() === 'END:VCARD') {
-      current.push(line)
-      cards.push(current.join('\r\n'))
-      inCard = false
-      current = []
-    } else if (inCard) {
-      current.push(line)
-    }
-  }
-
-  return cards
-}
-
 export default function ContactImport({ onImportComplete, heading }: ContactImportProps) {
   const [contacts, setContacts] = useState<VCard[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -111,6 +136,8 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
   const [providerNotice, setProviderNotice] = useState<string | null>(null)
+  const [unreadableNotice, setUnreadableNotice] = useState<string | null>(null)
+  const [progress, setProgress] = useState<{ saved: number; total: number } | null>(null)
   const importContacts = useContactStore((s) => s.importContacts)
   const contactLists = useContactListStore((s) => s.lists)
   const activeListId = useContactListStore((s) => s.activeListId)
@@ -133,25 +160,36 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setContacts([])
     setImportedCount(null)
     setProviderNotice(null)
+    setUnreadableNotice(null)
 
     try {
-      const allContacts: VCard[] = []
+      const readable: { vcard: VCard; text: string }[] = []
+      let unreadable = 0
       for (const file of files) {
         if (file.size > MAX_CONTACT_IMPORT_FILE_BYTES) {
           setError('File is too large. Maximum size is 50 MB.')
           return
         }
         const text = await file.text()
-        const vcardStrings = splitVCards(text)
-        for (const vcStr of vcardStrings) {
-          allContacts.push(parseVCard(vcStr, { strictTextEncoding: true }))
+        const { cards, incomplete } = splitVCardFile(text)
+        unreadable += incomplete
+        for (const card of cards) {
+          try {
+            readable.push({ vcard: parseVCard(card, { strictTextEncoding: true, keepMissingUid: true }), text: card })
+          } catch (err) {
+            // One unreadable card is skipped and counted; it never rejects the rest.
+            console.error('[contact-import] Skipped an unreadable card', getSafeErrorDetails(err))
+            unreadable++
+          }
         }
       }
-      if (allContacts.length === 0) {
-        setError('No contacts found in the selected file(s).')
+      if (readable.length === 0) {
+        setError(unreadable > 0 ? 'Failed to parse the file. Please make sure it is a valid .vcf file.' : 'No contacts found in the selected file(s).')
         return
       }
-      setContacts(allContacts)
+      const assigned = await assignImportUids(readable)
+      if (unreadable > 0) setUnreadableNotice(unreadable === 1 ? "1 contact couldn't be read." : `${unreadable} contacts couldn't be read.`)
+      setContacts(assigned)
     } catch (err) {
       console.error('[contact-import] Failed to parse VCF file', getSafeErrorDetails(err))
       setError('Failed to parse the file. Please make sure it is a valid .vcf file.')
@@ -174,7 +212,8 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setIsImporting(true)
     setError(null)
     let toImport = contacts
-    if (hasProviderContacts(contacts)) {
+    const fromFile = !hasProviderContacts(contacts)
+    if (!fromFile) {
       // Read the server first: a save whose acknowledgement was lost is there, though not shown here.
       const onServer = await serverImportSourceKeys('contacts')
       if (!onServer) {
@@ -193,6 +232,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     }
     try {
       const newContacts = toImport.map((contact) => ({
+        ...(fromFile ? { uid: contact.uid } : {}),
         displayName: contact.fn || 'Unnamed Contact',
         name: contact.n
           ? {
@@ -226,21 +266,37 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         unknownProperties: contact.unknownProperties,
         listId: selectedListId,
       }))
-      const count = await importContacts(newContacts)
-      setImportedCount(count)
-      onImportComplete(count)
+      const count = fromFile
+        ? await importContacts(newContacts, {
+            fileImport: {
+              onProgress: (saved, total) => setProgress({ saved, total }),
+              onSkipped: (skipped) => setProviderNotice(`${skipped} already imported ${skipped === 1 ? 'contact was' : 'contacts were'} skipped.`),
+            },
+          })
+        : await importContacts(newContacts)
+      if (fromFile && count === 0) {
+        // Everything was already on the server; the skipped notice says so.
+        setContacts([])
+      } else {
+        setImportedCount(count)
+        onImportComplete(count)
+      }
     } catch (err) {
       if (isImportIncomplete(err)) {
-        // Keep only the original contacts that were not acknowledged, so a retry never resends saved ones.
+        // Keep only the original contacts that were not acknowledged, so a retry never resends saved
+        // ones. Positions are original preview positions; skipped cards are never listed again.
         const unsaved = new Set(err.unsaved)
         setContacts(toImport.filter((_, position) => unsaved.has(position)))
-        setError(incompleteImportMessage(err.saved, err.unsaved.length, err.uncertain))
+        setError(fromFile && err.outcomes ? fileIncompleteMessage(err.outcomes) : incompleteImportMessage(err.saved, err.unsaved.length, err.uncertain))
+      } else if (fromFile && isReconcileFailed(err)) {
+        setError(RECONCILE_FAILED_MESSAGE)
       } else {
         console.error('[contact-import] Import failed', getSafeErrorDetails(err))
         setError('An error occurred while importing contacts. Please try again.')
       }
     } finally {
       setIsImporting(false)
+      setProgress(null)
     }
   }, [contacts, importContacts, onImportComplete, selectedListId])
 
@@ -254,6 +310,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setError(null)
     setImportedCount(null)
     setProviderNotice(null)
+    setUnreadableNotice(null)
   }, [])
 
   return (
@@ -305,6 +362,10 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{providerNotice}</p>
       )}
 
+      {unreadableNotice && (
+        <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{unreadableNotice}</p>
+      )}
+
       {error && (
         <p className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</p>
       )}
@@ -320,6 +381,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
           onCancel={handleCancel}
           isImporting={isImporting}
           importedCount={importedCount}
+          progress={progress}
         />
       )}
 

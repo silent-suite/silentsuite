@@ -222,14 +222,16 @@ describe('ContactImport categories normalization', () => {
     }
   })
 
-  it.each(['bad=QZ', 'unfinished=', 'bad=C3'])('does not offer a partial import for malformed encoding or a dangling END boundary: %s', async (value) => {
+  it.each(['bad=QZ', 'unfinished=', 'bad=C3'])('skips a card with malformed encoding or a dangling END boundary and keeps the rest: %s', async (value) => {
     const { container } = renderWithIntl(<ContactImport onImportComplete={mocks.onImportComplete} />)
     const source = `BEGIN:VCARD\nVERSION:2.1\nFN:Valid\nEND:VCARD\nBEGIN:VCARD\nVERSION:2.1\nFN;ENCODING=QUOTED-PRINTABLE:${value}\nEND:VCARD\nBEGIN:VCARD\nVERSION:2.1\nFN:Following\nEND:VCARD`
     fireEvent.change(container.querySelector('input[type="file"]')!, {
       target: { files: [new File([source], 'synthetic-invalid.vcf', { type: 'text/vcard' })] },
     })
-    expect(await screen.findByText('Failed to parse the file. Please make sure it is a valid .vcf file.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Import \d+ contacts/ })).not.toBeInTheDocument()
+    expect(await screen.findByText("1 contact couldn't be read.")).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Import 2 contacts' })).toBeInTheDocument()
+    expect(screen.getByText('Valid')).toBeInTheDocument()
+    expect(screen.getByText('Following')).toBeInTheDocument()
     expect(mocks.importContacts).not.toHaveBeenCalled()
   })
 })
@@ -258,7 +260,7 @@ describe('C3a-R6 ContactImport reports only acknowledged contacts and keeps the 
 
   it('C3a-R6 contacts: a partial unconfirmed import reports the acknowledged count, warns before retry, and retries only the rest', async () => {
     mocks.importContacts
-      .mockRejectedValueOnce(new ImportIncompleteError(1, [1], true))
+      .mockRejectedValueOnce(new ImportIncompleteError(1, [1], true, ['saved', 'uncertain']))
       .mockResolvedValueOnce(1)
     fireEvent.click(await previewContacts(['Ada One', 'Bea Two']))
 
@@ -281,7 +283,7 @@ describe('C3a-R6 ContactImport reports only acknowledged contacts and keeps the 
   })
 
   it('C3a-R6 contacts: an unconfirmed import with nothing acknowledged keeps every contact and warns they may already be saved', async () => {
-    mocks.importContacts.mockRejectedValueOnce(new ImportIncompleteError(0, [0, 1], true))
+    mocks.importContacts.mockRejectedValueOnce(new ImportIncompleteError(0, [0, 1], true, ['uncertain', 'uncertain']))
     fireEvent.click(await previewContacts(['Ada One', 'Bea Two']))
 
     const message = await screen.findByText(/Imported 0 of 2 contacts/)
@@ -293,7 +295,7 @@ describe('C3a-R6 ContactImport reports only acknowledged contacts and keeps the 
   })
 
   it('C3a-R6 contacts: an import that sent nothing says none were saved, without the may-already-be-saved caveat', async () => {
-    mocks.importContacts.mockRejectedValueOnce(new ImportIncompleteError(0, [0, 1], false))
+    mocks.importContacts.mockRejectedValueOnce(new ImportIncompleteError(0, [0, 1], false, ['notSent', 'notSent']))
     fireEvent.click(await previewContacts(['Ada One', 'Bea Two']))
 
     const message = await screen.findByText(/None of the 2 contacts were saved/i)
@@ -527,5 +529,140 @@ describe('ContactImport file size limit', () => {
     fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [sized(MAX_CONTACT_IMPORT_FILE_BYTES + 1)] } })
     expect(await screen.findByText('File is too large. Maximum size is 50 MB.')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Import 1 contacts/ })).toBeNull()
+  })
+})
+
+describe('ContactImport large-file robustness', () => {
+  const file = (text: string, name = 'contacts.vcf') => new File([text], name, { type: 'text/vcard' })
+  const select = async (...files: File[]) => {
+    const view = renderWithIntl(<ContactImport onImportComplete={mocks.onImportComplete} />)
+    fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files } })
+    return view
+  }
+  const sentUids = async (count: number) => {
+    fireEvent.click(await screen.findByRole('button', { name: `Import ${count} contacts` }))
+    await waitFor(() => expect(mocks.importContacts).toHaveBeenCalledTimes(1))
+    return (mocks.importContacts.mock.calls[0]![0] as { uid?: string }[]).map(({ uid }) => uid)
+  }
+
+  beforeEach(() => {
+    mocks.importContacts.mockReset().mockResolvedValue(1)
+    mocks.onImportComplete.mockReset()
+  })
+
+  it('keeps a card whole when a folded continuation reads BEGIN:VCARD or END:VCARD', async () => {
+    await select(file('BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada\r\nEMAIL:a@example.com\r\nNOTE:x\r\n BEGIN:VCARD\r\nNOTE:y\r\n END:VCARD\r\nTITLE:Kept\r\nEND:VCARD\r\n'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 1 contacts' }))
+    await waitFor(() => expect(mocks.importContacts).toHaveBeenCalledTimes(1))
+    const [imported] = mocks.importContacts.mock.calls[0]![0] as { displayName: string; title: string; emails: { value: string }[] }[]
+    expect(imported).toMatchObject({ displayName: 'Ada', title: 'Kept', emails: [{ value: 'a@example.com' }] })
+  })
+
+  it("re-imports the app's own serialization when a fold lands on BEGIN:VCARD", async () => {
+    const note = `${'n'.repeat(70)}BEGIN:VCARD`
+    const content = serializeContact({ id: 'x', uid: 'x', displayName: 'Folded', name: { given: 'Folded', family: '', prefix: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: note, birthday: null, photoUrl: null, categories: [], favorite: false, created_at: new Date(), updated_at: new Date() } as Contact)
+    expect(content).toContain('\r\n BEGIN:VCARD')
+    await select(file(content))
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 1 contacts' }))
+    await waitFor(() => expect(mocks.importContacts).toHaveBeenCalledTimes(1))
+    const [imported] = mocks.importContacts.mock.calls[0]![0] as { displayName: string; notes: string }[]
+    expect(imported).toMatchObject({ displayName: 'Folded', notes: note })
+  })
+
+  it('counts a final card without END and a BEGIN before an END as unreadable', async () => {
+    await select(file('BEGIN:VCARD\nFN:Open\nBEGIN:VCARD\nFN:Whole\nEND:VCARD\nBEGIN:VCARD\nFN:Tail'))
+    expect(await screen.findByText("2 contacts couldn't be read.")).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Import 1 contacts' })).toBeInTheDocument()
+  })
+
+  it('skips bad QP and ENCODING=B cards and shows how many could not be read', async () => {
+    await select(file('BEGIN:VCARD\nFN:One\nEND:VCARD\nBEGIN:VCARD\nNOTE;ENCODING=QUOTED-PRINTABLE:=G0\nFN:Bad\nEND:VCARD\nBEGIN:VCARD\nFN:Two\nNOTE;ENCODING=B:YWJj\nEND:VCARD\nBEGIN:VCARD\nFN:Three\nEND:VCARD'))
+    expect(await screen.findByText("2 contacts couldn't be read.")).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Import 2 contacts' })).toBeInTheDocument()
+  })
+
+  it('keeps the existing error when no card is readable', async () => {
+    await select(file('BEGIN:VCARD\nNOTE;ENCODING=B:YWJj\nFN:Bad\nEND:VCARD'))
+    expect(await screen.findByText('Failed to parse the file. Please make sure it is a valid .vcf file.')).toBeInTheDocument()
+  })
+
+  it('passes the file UID and the file-import options', async () => {
+    await select(file('BEGIN:VCARD\nUID:source-1\nFN:Ada\nEND:VCARD'))
+    expect(await sentUids(1)).toEqual(['source-1'])
+    expect(mocks.importContacts.mock.calls[0]![1]).toMatchObject({ fileImport: expect.any(Object) })
+  })
+
+  it('keeps a folded nonempty UID; generates UIDs for empty, unsafe and QP-payload ones', async () => {
+    const folded = 'BEGIN:VCARD\nUID:abc-\n def\nFN:Folded\nEND:VCARD'
+    const empty = 'BEGIN:VCARD\nUID:\nFN:Empty\nEND:VCARD'
+    const unsafe = 'BEGIN:VCARD\nUID:bad\u0001uid\nFN:Unsafe\nEND:VCARD'
+    const qpPayload = 'BEGIN:VCARD\nFN:Qp\nNOTE;ENCODING=QUOTED-PRINTABLE:a=\nUID:not-a-uid\nEND:VCARD'
+    await select(file([folded, empty, unsafe, qpPayload].join('\n')))
+    const uids = await sentUids(4)
+    expect(uids[0]).toBe('abc-def')
+    for (const uid of uids.slice(1)) expect(uid).toMatch(/^import-[0-9a-f]{64}-1$/)
+    expect(uids).not.toContain('not-a-uid')
+  })
+
+  it('makes UIDs unique across files and never reuses an explicit UID for a generated one', async () => {
+    const plain = 'BEGIN:VCARD\r\nFN:NoUid\r\nEND:VCARD'
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain))), (b) => b.toString(16).padStart(2, '0')).join('')
+    await select(
+      file(`BEGIN:VCARD\r\nUID:shared\r\nFN:First\r\nEND:VCARD\r\nBEGIN:VCARD\r\nUID:import-${hash}-1\r\nFN:Explicit\r\nEND:VCARD`, 'a.vcf'),
+      file(`BEGIN:VCARD\r\nUID:shared\r\nFN:Second\r\nEND:VCARD\r\n${plain}`, 'b.vcf'),
+    )
+    const uids = await sentUids(4)
+    expect(uids[0]).toBe('shared')
+    expect(uids[1]).toBe(`import-${hash}-1`)
+    expect(uids[2]).toMatch(/^import-[0-9a-f]{64}-1$/)
+    expect(uids[3]).toBe(`import-${hash}-2`)
+    expect(new Set(uids).size).toBe(4)
+  })
+
+  it('gives a card without UID the same UID on every read of the file', async () => {
+    const text = 'BEGIN:VCARD\nFN:Stable\nEND:VCARD'
+    const first = await select(file(text))
+    const [uid] = await sentUids(1)
+    first.unmount()
+    mocks.importContacts.mockClear()
+    await select(file(text))
+    expect(await sentUids(1)).toEqual([uid])
+  })
+
+  it('keeps assigned UIDs, and only unsaved original positions, for a partial retry', async () => {
+    mocks.importContacts
+      .mockRejectedValueOnce(new ImportIncompleteError(0, [1], false, ['skipped', 'refused']))
+      .mockResolvedValueOnce(1)
+    await select(file('BEGIN:VCARD\nUID:a\nFN:Already\nEND:VCARD\nBEGIN:VCARD\nFN:Refused\nEND:VCARD'))
+    const [, refusedUid] = await sentUids(2)
+    expect(await screen.findByText(/None of the 1 contacts were saved/)).toBeInTheDocument()
+    expect(screen.queryByText('Already')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Import 1 contacts' }))
+    await waitFor(() => expect(mocks.importContacts).toHaveBeenCalledTimes(2))
+    expect((mocks.importContacts.mock.calls[1]![0] as { uid?: string; displayName: string }[]).map(({ uid, displayName }) => [uid, displayName])).toEqual([[refusedUid, 'Refused']])
+  })
+
+  it('builds the message from never-sent, refused and unconfirmed counts', async () => {
+    mocks.importContacts.mockRejectedValueOnce(new ImportIncompleteError(1, [1, 2, 3], true, ['saved', 'notSent', 'refused', 'uncertain']))
+    await select(file(['A', 'B', 'C', 'D'].map((n) => `BEGIN:VCARD\nUID:${n}\nFN:${n}\nEND:VCARD`).join('\n')))
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 4 contacts' }))
+    expect(await screen.findByText(
+      "Imported 1 of 4 contacts. 2 weren't saved and are listed below so you can import them again. 1 weren't confirmed as saved and are listed below. If the connection dropped, some may already be saved, so check your list before importing them again.",
+    )).toBeInTheDocument()
+  })
+
+  it('reports skipped contacts and a failed check of what is saved', async () => {
+    mocks.importContacts.mockImplementationOnce(async (_contacts: unknown, options: { fileImport: { onSkipped: (n: number) => void } }) => {
+      options.fileImport.onSkipped(2)
+      return 0
+    })
+    await select(file('BEGIN:VCARD\nUID:a\nFN:A\nEND:VCARD\nBEGIN:VCARD\nUID:b\nFN:B\nEND:VCARD'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 2 contacts' }))
+    expect(await screen.findByText('2 already imported contacts were skipped.')).toBeInTheDocument()
+
+    mocks.importContacts.mockRejectedValueOnce(Object.assign(new Error('x'), { name: 'ImportReconcileFailedError' }))
+    fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file('BEGIN:VCARD\nUID:c\nFN:C\nEND:VCARD')] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 1 contacts' }))
+    expect(await screen.findByText(/Couldn't check what is already saved/)).toBeInTheDocument()
   })
 })
