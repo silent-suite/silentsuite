@@ -128,3 +128,12 @@ describe('splitVCardFile', () => {
     expect(parseVCard(cards[0]!).fn).toBe('Bom');
   });
 });
+
+describe('parseVCard keepMissingUid', () => {
+  it('leaves a missing or empty UID empty and keeps a folded UID exactly', () => {
+    expect(parseVCard('BEGIN:VCARD\nFN:a\nEND:VCARD', { keepMissingUid: true }).uid).toBe('');
+    expect(parseVCard('BEGIN:VCARD\nUID:\nFN:a\nEND:VCARD', { keepMissingUid: true }).uid).toBe('');
+    expect(parseVCard('BEGIN:VCARD\nUID:abc-\n def\nFN:a\nEND:VCARD', { keepMissingUid: true }).uid).toBe('abc-def');
+    expect(parseVCard('BEGIN:VCARD\nFN:a\nEND:VCARD').uid).not.toBe('');
+  });
+});

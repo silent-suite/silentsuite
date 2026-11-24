@@ -543,7 +543,7 @@ function birthdayLine(bday: string, isText: boolean): string {
 /**
  * Parse a vCard 3.0 string into a VCard object.
  */
-export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boolean } = {}): VCard {
+export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boolean; keepMissingUid?: boolean } = {}): VCard {
   const strict = options.strictTextEncoding === true;
   const unfolded = unfoldLines(vcardStr);
   const lines = unfolded.split(/\r?\n/).filter((l) => l.length > 0);
@@ -714,7 +714,8 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
   if (adrs.length > 0) vcard.adr = adrs;
 
   // Input validation
-  if (!vcard.uid) {
+  // keepMissingUid leaves a missing or empty UID empty so the caller can tell.
+  if (!vcard.uid && options.keepMissingUid !== true) {
     vcard.uid = crypto.randomUUID();
   }
   if (!vcard.fn) {
