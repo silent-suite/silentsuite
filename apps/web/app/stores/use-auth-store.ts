@@ -1055,7 +1055,7 @@ async function resetInMemoryAccountState(
         searchQuery: '',
       }),
       () => useTaskStore.setState({ tasks: [], syncStatus: 'synced' }),
-      () => useContactStore.setState({ contacts: [], syncStatus: 'synced', searchQuery: '', contactSaveStates: {} }),
+      () => useContactStore.setState({ contacts: [], syncStatus: 'synced', searchQuery: '', contactSaveStates: {}, fileImport: null }),
       // Contact draft ledgers and save chains hold draft vCards (#744).
       () => resetContactLifecycle(),
       () => useNoteStore.setState({ notes: [], syncStatus: 'synced' }),

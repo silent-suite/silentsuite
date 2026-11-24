@@ -146,6 +146,10 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const busy = isImporting || runningImport !== null
   // Each file or provider selection gets a token; a slower, older selection never replaces a newer one.
   const selection = useRef(0)
+  // The token a provider load took when it started; its result or error counts only while it is newest.
+  const providerSelection = useRef<number | null>(null)
+  const startProvider = useCallback(() => { providerSelection.current = ++selection.current }, [])
+  const providerIsCurrent = () => providerSelection.current === selection.current
   const importContacts = useContactStore((s) => s.importContacts)
   const contactLists = useContactListStore((s) => s.lists)
   const activeListId = useContactListStore((s) => s.activeListId)
@@ -210,7 +214,6 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   }, [])
 
   const handleProviderLoaded = useCallback((provider: 'Google' | 'Microsoft', loaded: VCard[]) => {
-    selection.current++
     setError(null)
     setUnreadableNotice(null)
     setImportedCount(null)
@@ -370,9 +373,9 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
 
       <FileDropZone accept=".vcf" onFiles={handleFiles} disabled={busy} />
 
-      <GoogleImportButton kind="contacts" disabled={busy} onLoaded={(loaded) => handleProviderLoaded('Google', loaded)} onError={setError} />
+      <GoogleImportButton kind="contacts" disabled={busy} onStart={startProvider} onLoaded={(loaded) => { if (providerIsCurrent()) handleProviderLoaded('Google', loaded) }} onError={(message) => { if (providerIsCurrent()) setError(message) }} />
 
-      <MicrosoftImportButton kind="contacts" disabled={busy} onLoaded={(loaded) => handleProviderLoaded('Microsoft', loaded)} onError={setError} />
+      <MicrosoftImportButton kind="contacts" disabled={busy} onStart={startProvider} onLoaded={(loaded) => { if (providerIsCurrent()) handleProviderLoaded('Microsoft', loaded) }} onError={(message) => { if (providerIsCurrent()) setError(message) }} />
 
       {runningImport && !isImporting && (
         // Reopened while an import started earlier is still running: show it instead of an idle form.

@@ -313,8 +313,10 @@ export function resetContactLifecycle(): void {
   contactChains.clear()
   pendingCreates.clear()
   contactOwners.clear()
-  // The account boundary retires retry payloads and SDK items held for an uncertain upload.
+  // The account boundary retires retry payloads and SDK items held for an uncertain upload,
+  // and the previous account's import progress.
   uncertainFileImports.clear()
+  useContactStore.setState({ fileImport: null })
 }
 
 export const useContactStore = create<ContactState & ContactActions>()(
@@ -417,7 +419,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
                   fileImport: {
                     replay,
                     onProgress: (saved) => {
-                      set({ fileImport: { saved: savedBefore + saved, total } })
+                      if (isCurrentAccountEpoch(accountEpoch)) set({ fileImport: { saved: savedBefore + saved, total } })
                       options.onProgress?.(savedBefore + saved, total)
                     },
                     onSettled: (settled) => { results = settled },
@@ -463,7 +465,9 @@ export const useContactStore = create<ContactState & ContactActions>()(
           return incomplete()
         } finally {
           for (const key of running) runningFileImportTargets.delete(key)
-          if (runningFileImportTargets.size === 0) set({ fileImport: null })
+          // Only this account's own imports keep its progress shown.
+          const ownRunning = [...runningFileImportTargets].some((key) => key.startsWith(`${accountEpoch}|`))
+          if (!ownRunning && isCurrentAccountEpoch(accountEpoch)) set({ fileImport: null })
           release()
         }
       }

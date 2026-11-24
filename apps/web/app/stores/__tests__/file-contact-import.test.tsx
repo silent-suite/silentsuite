@@ -419,3 +419,19 @@ describe('file contact import: account boundary and single flight', () => {
     again.unmount()
   })
 })
+
+describe('file contact import: account switch', () => {
+  it('a new session is not busy and shows no count while the old preflight is still pending', async () => {
+    server.listBehavior = 'hang'
+    const pending = importFile(Array.from({ length: 41 }, (_, i) => card(`P${i}`, `u${i}`))).catch(() => undefined)
+    await waitFor(() => expect(useContactStore.getState().fileImport).toEqual({ saved: 0, total: 41 }))
+    bumpAccountEpoch()
+    resetContactLifecycle()
+    expect(useContactStore.getState().fileImport).toBeNull()
+    const view = renderWithIntl(<ContactImport onImportComplete={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: /Importing/ })).toBeNull()
+    expect(view.container.querySelector('input[type="file"]')).not.toBeDisabled()
+    view.unmount()
+    void pending
+  })
+})

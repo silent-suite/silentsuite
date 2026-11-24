@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import ContactImport from '../ContactImport'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -37,9 +37,21 @@ function readGoogle(): ProviderImportVCard[] {
   ], [{ resourceName: 'contactGroups/fam', name: 'Family', groupType: 'USER_CONTACT_GROUP' }])
 }
 
+/** When `hold` is set, a click starts the load and the test settles it later. */
+const provider = vi.hoisted(() => ({ hold: false, pending: null as null | { load: () => void; fail: (message: string) => void } }))
 vi.mock('../GoogleImportButton', () => ({
-  default: (props: { onLoaded: (result: ProviderImportVCard[]) => void }) => (
-    <button type="button" onClick={() => props.onLoaded(readGoogle())}>Import from Google</button>
+  default: (props: { onStart?: () => void; onLoaded: (result: ProviderImportVCard[]) => void; onError: (message: string) => void }) => (
+    <button
+      type="button"
+      onClick={() => {
+        props.onStart?.()
+        const load = () => props.onLoaded(readGoogle())
+        if (provider.hold) provider.pending = { load, fail: props.onError }
+        else load()
+      }}
+    >
+      Import from Google
+    </button>
   ),
 }))
 
@@ -109,6 +121,8 @@ describe('Google contact import: interrupt, retry, re-import', () => {
 
 describe('Google contact import after a file selection', () => {
   beforeEach(() => {
+    provider.hold = false
+    provider.pending = null
     store.contacts = []
     store.importContacts.mockReset()
     server.keys = new Set()
@@ -141,5 +155,39 @@ describe('Google contact import after a file selection', () => {
     expect(screen.queryByText('Stale file')).toBeNull()
     expect(screen.getByRole('button', { name: 'Import 2 contacts' })).toBeInTheDocument()
     digest.mockRestore()
+  })
+})
+
+describe('Google contact load started before a file selection', () => {
+  beforeEach(() => {
+    provider.hold = true
+    provider.pending = null
+    store.contacts = []
+    store.importContacts.mockReset()
+  })
+
+  const selectFile = () => fireEvent.change(document.querySelector('input[type="file"]')!, {
+    target: { files: [new File(['BEGIN:VCARD\nUID:f\nFN:Fresh file\nEND:VCARD'], 'fresh.vcf')] },
+  })
+
+  it('a provider result that arrives after a newer file is ignored', async () => {
+    renderWithIntl(<ContactImport onImportComplete={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Import from Google' }))
+    selectFile()
+    expect(await screen.findByText('Fresh file')).toBeInTheDocument()
+    act(() => provider.pending!.load())
+    expect(screen.getByText('Fresh file')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Import 1 contacts' })).toBeInTheDocument()
+    expect(screen.queryByText('Ann')).toBeNull()
+  })
+
+  it('a provider error that arrives after a newer file is not shown', async () => {
+    renderWithIntl(<ContactImport onImportComplete={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Import from Google' }))
+    selectFile()
+    expect(await screen.findByText('Fresh file')).toBeInTheDocument()
+    act(() => provider.pending!.fail('Google import failed.'))
+    expect(screen.queryByText('Google import failed.')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Import 1 contacts' })).toBeInTheDocument()
   })
 })
