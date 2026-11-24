@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { parseVCard, splitVCardFile } from '@silentsuite/core/utils/vcard-parser'
 import type { VCard } from '@silentsuite/core/utils/vcard-parser'
@@ -48,6 +48,10 @@ function isImportIncomplete(err: unknown): err is ImportIncompleteError {
 
 function isReconcileFailed(err: unknown): boolean {
   return err instanceof Error && err.name === 'ImportReconcileFailedError'
+}
+
+function isAlreadyRunning(err: unknown): boolean {
+  return err instanceof Error && err.name === 'ImportAlreadyRunningError'
 }
 
 /** File imports: built from the existing sentences, per position outcome; skipped cards are not counted. */
@@ -137,7 +141,11 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
   const [providerNotice, setProviderNotice] = useState<string | null>(null)
   const [unreadableNotice, setUnreadableNotice] = useState<string | null>(null)
-  const [progress, setProgress] = useState<{ saved: number; total: number } | null>(null)
+  // Progress lives in the store, so a page that was left and reopened still shows the running import.
+  const runningImport = useContactStore((s) => s.fileImport) ?? null
+  const busy = isImporting || runningImport !== null
+  // Each file or provider selection gets a token; a slower, older selection never replaces a newer one.
+  const selection = useRef(0)
   const importContacts = useContactStore((s) => s.importContacts)
   const contactLists = useContactListStore((s) => s.lists)
   const activeListId = useContactListStore((s) => s.activeListId)
@@ -161,6 +169,8 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setImportedCount(null)
     setProviderNotice(null)
     setUnreadableNotice(null)
+    const token = ++selection.current
+    const current = () => token === selection.current
 
     try {
       const readable: { vcard: VCard; text: string }[] = []
@@ -171,6 +181,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
           return
         }
         const text = await file.text()
+        if (!current()) return
         const { cards, incomplete } = splitVCardFile(text)
         unreadable += incomplete
         for (const card of cards) {
@@ -188,16 +199,20 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         return
       }
       const assigned = await assignImportUids(readable)
+      if (!current()) return
       if (unreadable > 0) setUnreadableNotice(unreadable === 1 ? "1 contact couldn't be read." : `${unreadable} contacts couldn't be read.`)
       setContacts(assigned)
     } catch (err) {
+      if (!current()) return
       console.error('[contact-import] Failed to parse VCF file', getSafeErrorDetails(err))
       setError('Failed to parse the file. Please make sure it is a valid .vcf file.')
     }
   }, [])
 
   const handleProviderLoaded = useCallback((provider: 'Google' | 'Microsoft', loaded: VCard[]) => {
+    selection.current++
     setError(null)
+    setUnreadableNotice(null)
     setImportedCount(null)
     // A first look against what this device shows; the write re-checks against the server.
     const { contacts: pending, skipped } = withoutImported(loaded, importSourceKeys(useContactStore.getState().contacts))
@@ -269,7 +284,6 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
       const count = fromFile
         ? await importContacts(newContacts, {
             fileImport: {
-              onProgress: (saved, total) => setProgress({ saved, total }),
               onSkipped: (skipped) => setProviderNotice(`${skipped} already imported ${skipped === 1 ? 'contact was' : 'contacts were'} skipped.`),
             },
           })
@@ -288,6 +302,8 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         const unsaved = new Set(err.unsaved)
         setContacts(toImport.filter((_, position) => unsaved.has(position)))
         setError(fromFile && err.outcomes ? fileIncompleteMessage(err.outcomes) : incompleteImportMessage(err.saved, err.unsaved.length, err.uncertain))
+      } else if (fromFile && isAlreadyRunning(err)) {
+        setError('An import into this contact list is already running. Wait for it to finish, then try again.')
       } else if (fromFile && isReconcileFailed(err)) {
         setError(RECONCILE_FAILED_MESSAGE)
       } else {
@@ -296,7 +312,6 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
       }
     } finally {
       setIsImporting(false)
-      setProgress(null)
     }
   }, [contacts, importContacts, onImportComplete, selectedListId])
 
@@ -306,6 +321,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   }, [createCollection])
 
   const handleCancel = useCallback(() => {
+    selection.current++
     setContacts([])
     setError(null)
     setImportedCount(null)
@@ -352,11 +368,22 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         label="contact list"
       />
 
-      <FileDropZone accept=".vcf" onFiles={handleFiles} disabled={isImporting} />
+      <FileDropZone accept=".vcf" onFiles={handleFiles} disabled={busy} />
 
-      <GoogleImportButton kind="contacts" disabled={isImporting} onLoaded={(loaded) => handleProviderLoaded('Google', loaded)} onError={setError} />
+      <GoogleImportButton kind="contacts" disabled={busy} onLoaded={(loaded) => handleProviderLoaded('Google', loaded)} onError={setError} />
 
-      <MicrosoftImportButton kind="contacts" disabled={isImporting} onLoaded={(loaded) => handleProviderLoaded('Microsoft', loaded)} onError={setError} />
+      <MicrosoftImportButton kind="contacts" disabled={busy} onLoaded={(loaded) => handleProviderLoaded('Microsoft', loaded)} onError={setError} />
+
+      {runningImport && !isImporting && (
+        // Reopened while an import started earlier is still running: show it instead of an idle form.
+        <button
+          type="button"
+          disabled
+          className="inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm font-medium text-white opacity-50"
+        >
+          {`Importing ${runningImport.saved} of ${runningImport.total}…`}
+        </button>
+      )}
 
       {providerNotice && (
         <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{providerNotice}</p>
@@ -381,7 +408,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
           onCancel={handleCancel}
           isImporting={isImporting}
           importedCount={importedCount}
-          progress={progress}
+          progress={runningImport}
         />
       )}
 

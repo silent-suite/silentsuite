@@ -49,6 +49,8 @@ interface ContactState {
   syncStatus: SyncStatus
   searchQuery: string
   contactSaveStates: Record<string, ContactSaveState>
+  /** The running file contact import's progress, so a remounted import page shows it; null when none runs. */
+  fileImport: { saved: number; total: number } | null
 }
 
 interface ContactActions {
@@ -173,6 +175,16 @@ const uncertainKey = (accountEpoch: number, collectionUid: string, uid: string) 
 /** Exported for tests. */
 export function _resetUncertainFileImportsForTests(): void {
   uncertainFileImports.clear()
+}
+
+/** Account epoch and concrete collection of each running file import: one at a time per pair. */
+const runningFileImportTargets = new Set<string>()
+
+export class ImportAlreadyRunningError extends Error {
+  constructor() {
+    super('A contact import into this list is already running')
+    this.name = 'ImportAlreadyRunningError'
+  }
 }
 
 let runningFileImports = 0
@@ -301,6 +313,8 @@ export function resetContactLifecycle(): void {
   contactChains.clear()
   pendingCreates.clear()
   contactOwners.clear()
+  // The account boundary retires retry payloads and SDK items held for an uncertain upload.
+  uncertainFileImports.clear()
 }
 
 export const useContactStore = create<ContactState & ContactActions>()(
@@ -337,6 +351,11 @@ export const useContactStore = create<ContactState & ContactActions>()(
             outcomes,
           )
         }
+        // Single flight per account and list: an overlapping import could read the same absent UIDs.
+        const running = targets.flatMap(({ collectionUid }) => (collectionUid ? [`${accountEpoch}|${collectionUid}`] : []))
+        if (running.some((key) => runningFileImportTargets.has(key))) throw new ImportAlreadyRunningError()
+        for (const key of running) runningFileImportTargets.add(key)
+        set({ fileImport: { saved: 0, total: newContacts.length } })
         const release = holdLeaveGuard()
         try {
           if (!etebase.account) return incomplete()
@@ -397,7 +416,10 @@ export const useContactStore = create<ContactState & ContactActions>()(
                 {
                   fileImport: {
                     replay,
-                    onProgress: (saved) => options.onProgress?.(savedBefore + saved, total),
+                    onProgress: (saved) => {
+                      set({ fileImport: { saved: savedBefore + saved, total } })
+                      options.onProgress?.(savedBefore + saved, total)
+                    },
                     onSettled: (settled) => { results = settled },
                   },
                 },
@@ -440,6 +462,8 @@ export const useContactStore = create<ContactState & ContactActions>()(
           if (saved === total) return saved
           return incomplete()
         } finally {
+          for (const key of running) runningFileImportTargets.delete(key)
+          if (runningFileImportTargets.size === 0) set({ fileImport: null })
           release()
         }
       }
@@ -609,6 +633,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
       syncStatus: 'synced' as SyncStatus,
       searchQuery: '',
       contactSaveStates: {},
+      fileImport: null,
 
       createContact: async (newContact: NewContact) => {
         if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
-import { useContactStore, resetContactLifecycle, _resetUncertainFileImportsForTests } from '../use-contact-store'
+import { useContactStore, resetContactLifecycle, _resetUncertainFileImportsForTests, ImportAlreadyRunningError } from '../use-contact-store'
 import { useEtebaseStore, FILE_IMPORT_TIMEOUT_MS } from '../use-etebase-store'
 import { useContactListStore } from '../use-contact-list-store'
 import { useAuthStore } from '../use-auth-store'
@@ -134,7 +134,7 @@ async function outcomeOf(promise: Promise<number>): Promise<ImportIncompleteErro
 beforeEach(() => {
   resetContactLifecycle()
   _resetUncertainFileImportsForTests()
-  useContactStore.setState({ contacts: [], syncStatus: 'synced', searchQuery: '', contactSaveStates: {} })
+  useContactStore.setState({ contacts: [], syncStatus: 'synced', searchQuery: '', contactSaveStates: {}, fileImport: null })
   useContactListStore.setState({ lists: [{ id: 'col-1', name: 'A', color: '#fff', visible: true, accessLevel: 2 }, { id: 'col-2', name: 'B', color: '#fff', visible: true, accessLevel: 2 }], activeListId: 'col-1' } as any)
   useAuthStore.setState({ canWrite: () => true } as any)
   toastMock.showErrorToast.mockReset()
@@ -375,5 +375,47 @@ describe('file contact import: progress and leave guard (real stores)', () => {
         expect(after.defaultPrevented).toBe(false)
       })
     }
+  })
+})
+
+describe('file contact import: account boundary and single flight', () => {
+  it('resetContactLifecycle retires uncertain uploads, so nothing is replayed into the next session', async () => {
+    vi.useFakeTimers()
+    server.plan = ['hang', 'hang', 'hang', 'hang']
+    const first = outcomeOf(importFile([card('Ada', 'a')]))
+    await vi.advanceTimersByTimeAsync(5 * FILE_IMPORT_TIMEOUT_MS)
+    expect((await first).outcomes).toEqual(['uncertain'])
+    vi.useRealTimers()
+    resetContactLifecycle()
+    await expect(importFile([card('Ada', 'a')])).resolves.toBe(1)
+    // A fresh item, not the earlier SDK item: the retry payload was dropped at the boundary.
+    expect(server.attempts.at(-1)!.uids).not.toEqual(server.attempts[0]!.uids)
+  })
+
+  it('a remounted page shows the running import and a second import into the list is refused', async () => {
+    const vcf = new File(
+      [Array.from({ length: 41 }, (_, i) => `BEGIN:VCARD\r\nVERSION:3.0\r\nUID:p${i}\r\nFN:Person ${i}\r\nEND:VCARD`).join('\r\n')],
+      'contacts.vcf',
+      { type: 'text/vcard' },
+    )
+    server.plan = ['ok', 'park']
+    const first = renderWithIntl(<ContactImport onImportComplete={vi.fn()} />)
+    fireEvent.change(first.container.querySelector('input[type="file"]')!, { target: { files: [vcf] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 41 contacts' }))
+    expect(await screen.findByRole('button', { name: 'Importing 20 of 41…' }, { timeout: 5000 })).toBeInTheDocument()
+    first.unmount()
+
+    const again = renderWithIntl(<ContactImport onImportComplete={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Importing 20 of 41…' })).toBeDisabled()
+    expect(again.container.querySelector('input[type="file"]')).toBeDisabled()
+    const attempts = server.attempts.length
+    await expect(importFile([card('Person 40', 'p40')])).rejects.toBeInstanceOf(ImportAlreadyRunningError)
+    expect(server.attempts).toHaveLength(attempts)
+
+    await act(async () => { server.parked!(true) })
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Importing/ })).toBeNull())
+    expect(again.container.querySelector('input[type="file"]')).not.toBeDisabled()
+    expect(server.items('col-1')).toHaveLength(41)
+    again.unmount()
   })
 })

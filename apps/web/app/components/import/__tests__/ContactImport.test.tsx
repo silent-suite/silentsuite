@@ -666,3 +666,25 @@ describe('ContactImport large-file robustness', () => {
     expect(await screen.findByText(/Couldn't check what is already saved/)).toBeInTheDocument()
   })
 })
+
+describe('ContactImport selection order', () => {
+  it('a slower, older file never replaces a newer file', async () => {
+    let release!: () => void
+    const real = crypto.subtle.digest.bind(crypto.subtle)
+    const digest = vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce((...args: Parameters<typeof real>) => new Promise((resolve) => {
+      release = () => resolve(real(...args))
+    }))
+    const { container } = renderWithIntl(<ContactImport onImportComplete={vi.fn()} />)
+    const input = container.querySelector('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File(['BEGIN:VCARD\nFN:Older file\nEND:VCARD\nBEGIN:VCARD\nFN:Broken'], 'a.vcf')] } })
+    await waitFor(() => expect(digest).toHaveBeenCalled())
+    fireEvent.change(input, { target: { files: [new File(['BEGIN:VCARD\nUID:b\nFN:Newer file\nEND:VCARD'], 'b.vcf')] } })
+    expect(await screen.findByText('Newer file')).toBeInTheDocument()
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.queryByText('Older file')).toBeNull()
+    expect(screen.queryByText("1 contact couldn't be read.")).toBeNull()
+    expect(screen.getByText('Newer file')).toBeInTheDocument()
+    digest.mockRestore()
+  })
+})
