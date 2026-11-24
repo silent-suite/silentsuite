@@ -55,6 +55,22 @@ vi.mock('../GoogleImportButton', () => ({
   ),
 }))
 
+/** A held Microsoft load, so Google and Microsoft runs can overlap. */
+const microsoft = vi.hoisted(() => ({ pending: null as null | { load: () => void; fail: (message: string) => void } }))
+vi.mock('../MicrosoftImportButton', () => ({
+  default: (props: { onStart?: () => void; onLoaded: (result: ProviderImportVCard[]) => void; onError: (message: string) => void }) => (
+    <button
+      type="button"
+      onClick={() => {
+        props.onStart?.()
+        microsoft.pending = { load: () => props.onLoaded([]), fail: props.onError }
+      }}
+    >
+      Import from Microsoft
+    </button>
+  ),
+}))
+
 type Payload = { displayName: string; categories: string[]; unknownProperties?: string[] }
 
 describe('Google contact import: interrupt, retry, re-import', () => {
@@ -189,5 +205,31 @@ describe('Google contact load started before a file selection', () => {
     act(() => provider.pending!.fail('Google import failed.'))
     expect(screen.queryByText('Google import failed.')).toBeNull()
     expect(screen.getByRole('button', { name: 'Import 1 contacts' })).toBeInTheDocument()
+  })
+})
+
+describe('overlapping Google and Microsoft runs', () => {
+  beforeEach(() => {
+    provider.hold = true
+    provider.pending = null
+    microsoft.pending = null
+    store.contacts = []
+    store.importContacts.mockReset()
+  })
+
+  const selectFile = () => fireEvent.change(document.querySelector('input[type="file"]')!, {
+    target: { files: [new File(['BEGIN:VCARD\nUID:f\nFN:Fresh file\nEND:VCARD'], 'fresh.vcf')] },
+  })
+
+  it.each(['result', 'error'] as const)('Google start, file, Microsoft start, then a Google %s: the stale Google run never wins', async (ending) => {
+    renderWithIntl(<ContactImport onImportComplete={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Import from Google' }))
+    selectFile()
+    expect(await screen.findByText('Fresh file')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Import from Microsoft' }))
+    act(() => (ending === 'result' ? provider.pending!.load() : provider.pending!.fail('Google import failed.')))
+    expect(screen.queryByText('Ann')).toBeNull()
+    expect(screen.queryByText('Google import failed.')).toBeNull()
+    expect(screen.getByText('Fresh file')).toBeInTheDocument()
   })
 })

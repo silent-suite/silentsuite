@@ -144,12 +144,19 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   // Progress lives in the store, so a page that was left and reopened still shows the running import.
   const runningImport = useContactStore((s) => s.fileImport) ?? null
   const busy = isImporting || runningImport !== null
-  // Each file or provider selection gets a token; a slower, older selection never replaces a newer one.
+  // Each file selection and each provider run takes the next token when it starts; its preview,
+  // notices and errors count only while that token is still the newest, so a slower, older
+  // selection (a file, Google or Microsoft) never replaces a newer one.
   const selection = useRef(0)
-  // The token a provider load took when it started; its result or error counts only while it is newest.
-  const providerSelection = useRef<number | null>(null)
-  const startProvider = useCallback(() => { providerSelection.current = ++selection.current }, [])
-  const providerIsCurrent = () => providerSelection.current === selection.current
+  // The token of each provider's current run, never shared between providers. A provider button
+  // runs one load at a time and drops a superseded run's callbacks itself.
+  const providerRuns = useRef<Record<'Google' | 'Microsoft', number>>({ Google: -1, Microsoft: -1 })
+  const startProvider = useCallback((provider: 'Google' | 'Microsoft'): number => {
+    const token = ++selection.current
+    providerRuns.current[provider] = token
+    return token
+  }, [])
+  const providerIsCurrent = (provider: 'Google' | 'Microsoft') => providerRuns.current[provider] === selection.current
   const importContacts = useContactStore((s) => s.importContacts)
   const contactLists = useContactListStore((s) => s.lists)
   const activeListId = useContactListStore((s) => s.activeListId)
@@ -373,9 +380,9 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
 
       <FileDropZone accept=".vcf" onFiles={handleFiles} disabled={busy} />
 
-      <GoogleImportButton kind="contacts" disabled={busy} onStart={startProvider} onLoaded={(loaded) => { if (providerIsCurrent()) handleProviderLoaded('Google', loaded) }} onError={(message) => { if (providerIsCurrent()) setError(message) }} />
+      <GoogleImportButton kind="contacts" disabled={busy} onStart={() => { startProvider('Google') }} onLoaded={(loaded) => { if (providerIsCurrent('Google')) handleProviderLoaded('Google', loaded) }} onError={(message) => { if (providerIsCurrent('Google')) setError(message) }} />
 
-      <MicrosoftImportButton kind="contacts" disabled={busy} onStart={startProvider} onLoaded={(loaded) => { if (providerIsCurrent()) handleProviderLoaded('Microsoft', loaded) }} onError={(message) => { if (providerIsCurrent()) setError(message) }} />
+      <MicrosoftImportButton kind="contacts" disabled={busy} onStart={() => { startProvider('Microsoft') }} onLoaded={(loaded) => { if (providerIsCurrent('Microsoft')) handleProviderLoaded('Microsoft', loaded) }} onError={(message) => { if (providerIsCurrent('Microsoft')) setError(message) }} />
 
       {runningImport && !isImporting && (
         // Reopened while an import started earlier is still running: show it instead of an idle form.
