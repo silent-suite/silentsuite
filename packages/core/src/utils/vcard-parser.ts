@@ -129,28 +129,141 @@ function foldLine(line: string): string {
   return parts.join('\r\n');
 }
 
-function unfoldLines(text: string): string {
-  const lines: string[] = [];
+/**
+ * Whether a physical line is a card boundary: never an indented continuation,
+ * compared case-insensitively (Unicode upper-casing) after trailing whitespace.
+ * At the very start of a file one leftover U+FEFF is ignored. The importer's card
+ * splitter and the QP branch of unfoldLines share this one rule.
+ */
+export function isVCardBoundary(line: string, atFileStart = false): 'BEGIN' | 'END' | null {
+  const text = atFileStart && line.startsWith('\uFEFF') ? line.slice(1) : line;
+  if (/^[ \t]/.test(text)) return null;
+  const normalized = text.trimEnd().toUpperCase();
+  if (normalized === 'BEGIN:VCARD') return 'BEGIN';
+  if (normalized === 'END:VCARD') return 'END';
+  return null;
+}
+
+/**
+ * Split a multi-vCard file into complete cards. A BEGIN inside an open card, or
+ * the end of the file inside one, leaves that card incomplete; an END outside a
+ * card is ignored. Only cards with both boundaries are returned.
+ */
+export function splitVCardFile(text: string): { cards: string[]; incomplete: number } {
+  const cards: string[] = [];
+  let incomplete = 0;
+  let current: string[] | null = null;
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]!;
+    const line = i === 0 && raw.startsWith('\uFEFF') ? raw.slice(1) : raw;
+    const boundary = isVCardBoundary(line);
+    if (boundary === 'BEGIN') {
+      if (current) incomplete++;
+      current = [line];
+    } else if (boundary === 'END') {
+      if (!current) continue;
+      current.push(line);
+      cards.push(current.join('\r\n'));
+      current = null;
+    } else if (current) {
+      current.push(line);
+    }
+  }
+  if (current) incomplete++;
+  return { cards, incomplete };
+}
+
+/** One logical line under construction. Segments are joined once, so the work
+ * stays linear in the input however many folds a property has. */
+class LogicalLine {
+  private readonly segments: string[] = [];
+  private header = '';
+  private inQuotes = false;
+  private colonFound = false;
+  private headerQp: boolean | null = null;
+
+  append(text: string): void {
+    if (text === '') return;
+    this.segments.push(text);
+    if (this.colonFound) return;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '"') {
+        this.inQuotes = !this.inQuotes;
+      } else if (ch === ':' && !this.inQuotes) {
+        this.header += text.slice(0, i);
+        this.colonFound = true;
+        this.headerQp = null;
+        return;
+      }
+    }
+    this.header += text;
+    this.headerQp = null;
+  }
+
+  get isEmpty(): boolean {
+    return this.segments.length === 0;
+  }
+
+  endsWith(ch: string): boolean {
+    const last = this.segments[this.segments.length - 1];
+    return last !== undefined && last.endsWith(ch);
+  }
+
+  /** Drop the final character (a QP soft-break '='). */
+  dropLast(): void {
+    const index = this.segments.length - 1;
+    const last = this.segments[index]!;
+    if (last.length === 1) this.segments.pop();
+    else this.segments[index] = last.slice(0, -1);
+    if (!this.colonFound) {
+      this.header = this.header.slice(0, -1);
+      this.headerQp = null;
+    }
+  }
+
+  /** Same answer as parseProperty(joined line) for the ENCODING parameter. */
+  isQuotedPrintable(): boolean {
+    if (this.headerQp === null) {
+      const params = parseProperty(this.colonFound ? `${this.header}:` : this.header).params;
+      this.headerQp = params['ENCODING']?.toUpperCase() === 'QUOTED-PRINTABLE';
+    }
+    return this.headerQp;
+  }
+
+  toString(): string {
+    return this.segments.join('');
+  }
+}
+
+/** Exported for tests. */
+export function unfoldLines(text: string): string {
+  const lines: LogicalLine[] = [];
   for (const physical of text.split(/\r?\n/)) {
     const previous = lines[lines.length - 1];
     const folded = /^[ \t]/.test(physical);
-    const next = folded ? physical.slice(1) : physical;
-    if (previous && previous.endsWith('=') && parseProperty(previous).params['ENCODING']?.toUpperCase() === 'QUOTED-PRINTABLE') {
+    if (previous && !previous.isEmpty && previous.endsWith('=') && previous.isQuotedPrintable()) {
       // QP continuation precedes vCard unfolding: whitespace and colons are
       // payload. Only file framing is reserved; leave a dangling '=' intact
       // for strict decoding to reject (or tolerant hydration to preserve).
-      if (/^(?:BEGIN|END):VCARD$/i.test(physical.trim())) {
-        lines.push(physical);
+      if (isVCardBoundary(physical)) {
+        const line = new LogicalLine();
+        line.append(physical);
+        lines.push(line);
       } else {
-        lines[lines.length - 1] = previous.slice(0, -1) + physical;
+        previous.dropLast();
+        previous.append(physical);
       }
-    } else if (folded && previous) {
-      lines[lines.length - 1] = previous + next;
+    } else if (folded && previous && !previous.isEmpty) {
+      previous.append(physical.slice(1));
     } else {
-      lines.push(physical);
+      const line = new LogicalLine();
+      line.append(physical);
+      lines.push(line);
     }
   }
-  return lines.join('\n');
+  return lines.map((line) => line.toString()).join('\n');
 }
 
 /** Decode only declared text encodings. Fail closed rather than replacing bytes
@@ -341,8 +454,9 @@ function foldRetainedLine(line: string): string {
     start = end;
     limit = 74;
   }
-  // Same predicate as the Web importer's card splitter (trim + toUpperCase), so
-  // Unicode case mappings such as dotless ı → I are covered exactly.
+  // Stricter than isVCardBoundary (trim + toUpperCase), so even an importer that
+  // trims continuation lines never reads one as a card boundary, and Unicode
+  // case mappings such as dotless ı → I are covered exactly.
   if (parts.slice(1).some((part) => {
     const normalized = part.trim().toUpperCase();
     return normalized === 'BEGIN:VCARD' || normalized === 'END:VCARD';
@@ -429,7 +543,7 @@ function birthdayLine(bday: string, isText: boolean): string {
 /**
  * Parse a vCard 3.0 string into a VCard object.
  */
-export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boolean } = {}): VCard {
+export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boolean; keepMissingUid?: boolean } = {}): VCard {
   const strict = options.strictTextEncoding === true;
   const unfolded = unfoldLines(vcardStr);
   const lines = unfolded.split(/\r?\n/).filter((l) => l.length > 0);
@@ -600,7 +714,8 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
   if (adrs.length > 0) vcard.adr = adrs;
 
   // Input validation
-  if (!vcard.uid) {
+  // keepMissingUid leaves a missing or empty UID empty so the caller can tell.
+  if (!vcard.uid && options.keepMissingUid !== true) {
     vcard.uid = crypto.randomUUID();
   }
   if (!vcard.fn) {

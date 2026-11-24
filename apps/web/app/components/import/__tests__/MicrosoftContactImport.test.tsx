@@ -48,8 +48,9 @@ const graph = createGraphFake({
 const readMicrosoft = () => loadMicrosoftContacts({ clientId: 'client-1', fetcher: graph.fetch, sleep: async () => undefined })
 
 vi.mock('../MicrosoftImportButton', () => ({
-  default: (props: { onLoaded: (result: ProviderImportVCard[]) => void }) => (
-    <button type="button" onClick={() => { void readMicrosoft().then(props.onLoaded) }}>Import from Microsoft</button>
+  // Like ProviderImportButton, the start is reported before the load is awaited.
+  default: (props: { onStart?: () => void; onLoaded: (result: ProviderImportVCard[]) => void }) => (
+    <button type="button" onClick={() => { props.onStart?.(); void readMicrosoft().then(props.onLoaded) }}>Import from Microsoft</button>
   ),
 }))
 

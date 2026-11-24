@@ -9,12 +9,14 @@ import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard } from '@/app/lib/offline-queue-account'
 import { readOutstanding } from '@/app/lib/offline-queue'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
-import { ImportIncompleteError } from '@/app/lib/import-outcome'
+import { ImportIncompleteError, ImportReconcileFailedError, type ImportPositionOutcome } from '@/app/lib/import-outcome'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 
 interface NewContact {
+  /** The vCard UID to keep (file imports); a fresh one is generated when absent. */
+  uid?: string
   displayName: string
   name?: Partial<Contact['name']>
   phones?: Contact['phones']
@@ -47,6 +49,8 @@ interface ContactState {
   syncStatus: SyncStatus
   searchQuery: string
   contactSaveStates: Record<string, ContactSaveState>
+  /** The running file contact import's progress, so a remounted import page shows it; null when none runs. */
+  fileImport: { saved: number; total: number } | null
 }
 
 interface ContactActions {
@@ -63,7 +67,7 @@ interface ContactActions {
    * Resolves the requested count only when every contact was committed and published in the
    * origin account; otherwise rejects with ImportIncompleteError (or the account boundary error).
    */
-  importContacts: (newContacts: NewContact[]) => Promise<number>
+  importContacts: (newContacts: NewContact[], options?: { fileImport?: FileImportOptions }) => Promise<number>
   syncFromRemote: (contacts: StoredContact[]) => void
 }
 
@@ -76,7 +80,7 @@ function defaultContactListId(): string | undefined {
 function buildContact(input: NewContact, uid: string, now: Date): Contact {
   return {
     id: uid,
-    uid,
+    uid: input.uid ?? uid,
     displayName: input.displayName,
     name: {
       prefix: input.name?.prefix ?? '',
@@ -152,6 +156,52 @@ function saveStateOf(ledger: ContactLedger | undefined): ContactSaveState | unde
  * deletes of it are refused, and remote refreshes keep it until it resolves.
  */
 const pendingCreates = new Map<string, { accountEpoch: number; record: StoredContact }>()
+
+/** File contact import only: progress and the count of cards already on the server. */
+export interface FileImportOptions {
+  onProgress?: (saved: number, total: number) => void
+  onSkipped?: (count: number) => void
+}
+
+/**
+ * File-import uploads whose outcome is unknown (a write may still be in flight), by account
+ * epoch, concrete collection and vCard UID. A later import of that UID on this page replays the
+ * same SDK item, with its original ciphertext and revision, so the server's same-revision
+ * check keeps it to one item. Refused and never-sent uploads are never kept.
+ */
+const uncertainFileImports = new Map<string, { accountEpoch: number; item: unknown; payload: string }>()
+const uncertainKey = (accountEpoch: number, collectionUid: string, uid: string) => `${accountEpoch}|${collectionUid}|${uid}`
+
+/** Exported for tests. */
+export function _resetUncertainFileImportsForTests(): void {
+  uncertainFileImports.clear()
+}
+
+/** Account epoch and concrete collection of each running file import: one at a time per pair. */
+const runningFileImportTargets = new Set<string>()
+
+export class ImportAlreadyRunningError extends Error {
+  constructor() {
+    super('A contact import into this list is already running')
+    this.name = 'ImportAlreadyRunningError'
+  }
+}
+
+let runningFileImports = 0
+function warnBeforeLeaving(event: BeforeUnloadEvent): void {
+  event.preventDefault()
+  event.returnValue = ''
+}
+/** The prompt belongs to the running import, not to the page that started it. */
+function holdLeaveGuard(): () => void {
+  if (runningFileImports++ === 0 && typeof window !== 'undefined') window.addEventListener('beforeunload', warnBeforeLeaving)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    if (--runningFileImports === 0 && typeof window !== 'undefined') window.removeEventListener('beforeunload', warnBeforeLeaving)
+  }
+}
 
 /**
  * The mounted detail that owns a contact (#744 §11). A reopened detail
@@ -263,10 +313,165 @@ export function resetContactLifecycle(): void {
   contactChains.clear()
   pendingCreates.clear()
   contactOwners.clear()
+  // The account boundary retires retry payloads and SDK items held for an uncertain upload,
+  // and the previous account's import progress.
+  uncertainFileImports.clear()
+  useContactStore.setState({ fileImport: null })
 }
 
 export const useContactStore = create<ContactState & ContactActions>()(
     (set, get) => {
+      /**
+       * Imports contacts read from a file. Fixes the account and the concrete destination before
+       * reading what is already saved there, leaves out cards whose UID is on the server, and
+       * uploads the rest with bounded, retried requests. Outcomes keep original positions.
+       */
+      const importFileContacts = async (newContacts: NewContact[], options: FileImportOptions): Promise<number> => {
+        const accountEpoch = getAccountEpoch()
+        for (const [key, entry] of uncertainFileImports) if (entry.accountEpoch !== accountEpoch) uncertainFileImports.delete(key)
+        const etebase = useEtebaseStore.getState()
+        const outcomes: ImportPositionOutcome[] = newContacts.map(() => 'notSent')
+        // Concrete destinations are resolved before the first await, so the read and the write
+        // address the same collection even when the list is an alias such as 'default'.
+        const byList = new Map<string | undefined, number[]>()
+        newContacts.forEach((input, position) => {
+          const listId = input.listId ?? defaultContactListId()
+          byList.set(listId, [...(byList.get(listId) ?? []), position])
+        })
+        const targets = [...byList].map(([listId, positions]) => ({
+          listId,
+          positions,
+          collectionUid: etebase.account ? etebase.resolveCollectionUid('contacts', listId) : null,
+          onServer: new Set<string>(),
+        }))
+        const incomplete = (): never => {
+          const unsaved = outcomes.flatMap((outcome, position) => (outcome === 'notSent' || outcome === 'refused' || outcome === 'uncertain' ? [position] : []))
+          throw new ImportIncompleteError(
+            outcomes.filter((outcome) => outcome === 'saved').length,
+            unsaved,
+            outcomes.includes('uncertain'),
+            outcomes,
+          )
+        }
+        // Single flight per account and list: an overlapping import could read the same absent UIDs.
+        const running = targets.flatMap(({ collectionUid }) => (collectionUid ? [`${accountEpoch}|${collectionUid}`] : []))
+        if (running.some((key) => runningFileImportTargets.has(key))) throw new ImportAlreadyRunningError()
+        for (const key of running) runningFileImportTargets.add(key)
+        set({ fileImport: { saved: 0, total: newContacts.length } })
+        const release = holdLeaveGuard()
+        try {
+          if (!etebase.account) return incomplete()
+          const { serializeContact, deserializeContact, savedRevisionOf } = await import('@silentsuite/core')
+          if (!isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
+          for (const target of targets) {
+            if (!target.collectionUid) continue
+            const onServer = await useEtebaseStore.getState().readCollectionVCardUids('contacts', target.collectionUid)
+            if (!isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
+            if (!onServer) throw new ImportReconcileFailedError()
+            target.onServer = onServer
+          }
+          let skipped = 0
+          for (const target of targets) {
+            for (const position of target.positions) {
+              const uid = newContacts[position]!.uid
+              if (!uid || !target.onServer.has(uid)) continue
+              outcomes[position] = 'skipped'
+              skipped++
+              if (target.collectionUid) uncertainFileImports.delete(uncertainKey(accountEpoch, target.collectionUid, uid))
+            }
+          }
+          if (skipped > 0) options.onSkipped?.(skipped)
+          const total = outcomes.filter((outcome) => outcome !== 'skipped').length
+          let savedBefore = 0
+          const now = new Date()
+          for (const target of targets) {
+            const positions = target.positions.filter((position) => outcomes[position] !== 'skipped')
+            // A destination that vanished during the read gets nothing sent.
+            if (positions.length === 0 || !target.collectionUid) continue
+            if (useEtebaseStore.getState().resolveCollectionUid('contacts', target.collectionUid) !== target.collectionUid) continue
+            const collectionUid = target.collectionUid
+            const replay = new Map<number, unknown>()
+            const drafts = positions.map((position, index) => {
+              const input = newContacts[position]!
+              const tempId = crypto.randomUUID()
+              const built = buildContact(input, tempId, now)
+              const entry = uncertainFileImports.get(uncertainKey(accountEpoch, collectionUid, built.uid))
+              if (entry) replay.set(index, entry.item)
+              // A replay uploads its original payload, so the record shows that payload.
+              const contact: StoredContact = entry
+                ? { ...deserializeContact(entry.payload), id: tempId, listId: built.listId, revision: null }
+                : { ...built, revision: null }
+              return { position, tempId, contact, content: entry ? entry.payload : serializeContact(built) }
+            })
+            for (const { tempId, contact } of drafts) pendingCreates.set(tempId, { accountEpoch, record: contact })
+            set((state) => ({ contacts: [...state.contacts, ...drafts.map(({ contact }) => contact)] }))
+            const committed = new Map<string, string | null>()
+            let results: { outcome: 'saved' | 'notSent' | 'refused' | 'uncertain'; item: unknown }[] = []
+            try {
+              const uids = await useEtebaseStore.getState().createItemsBatch(
+                'contacts',
+                drafts.map(({ tempId, content }) => ({ content, tempId })),
+                collectionUid,
+                (tempId, item) => {
+                  if (isCurrentAccountEpoch(accountEpoch)) committed.set(tempId, savedRevisionOf(item))
+                },
+                {
+                  fileImport: {
+                    replay,
+                    onProgress: (saved) => {
+                      if (isCurrentAccountEpoch(accountEpoch)) set({ fileImport: { saved: savedBefore + saved, total } })
+                      options.onProgress?.(savedBefore + saved, total)
+                    },
+                    onSettled: (settled) => { results = settled },
+                  },
+                },
+              )
+              if (!isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
+              const committedRecords = new Map<StoredContact, StoredContact>()
+              drafts.forEach(({ position, tempId, contact, content }, index) => {
+                const outcome = results[index]?.outcome ?? 'notSent'
+                const key = uncertainKey(accountEpoch, collectionUid, contact.uid)
+                const itemUid = uids[index]
+                if (outcome === 'saved' && itemUid && committed.has(tempId)) {
+                  committedRecords.set(contact, { ...contact, id: itemUid, revision: committed.get(tempId) ?? null })
+                  outcomes[position] = 'saved'
+                  uncertainFileImports.delete(key)
+                } else if (outcome === 'uncertain' && results[index]?.item) {
+                  outcomes[position] = 'uncertain'
+                  uncertainFileImports.set(key, { accountEpoch, item: results[index]!.item, payload: content })
+                } else {
+                  outcomes[position] = outcome === 'saved' ? 'uncertain' : outcome
+                  if (outcome !== 'uncertain') uncertainFileImports.delete(key)
+                }
+              })
+              savedBefore += committedRecords.size
+              // Unacknowledged temp records of this import leave the list; acknowledged ones are replaced.
+              const temps = new Set(drafts.filter(({ position }) => outcomes[position] !== 'saved').map(({ contact }) => contact))
+              set((state) => ({
+                contacts: state.contacts
+                  .filter((record) => !temps.has(record))
+                  .map((record) => committedRecords.get(record) ?? record),
+              }))
+              if (committedRecords.size > 0) {
+                void useLabelSuggestionsStore.getState().recordUsage('contacts', [...committedRecords.values()].flatMap((contact) => contact.categories ?? []))
+              }
+            } finally {
+              for (const { tempId, contact } of drafts) if (pendingCreates.get(tempId)?.record === contact) pendingCreates.delete(tempId)
+            }
+            if (outcomes.some((outcome) => outcome === 'refused' || outcome === 'uncertain')) break
+          }
+          const saved = outcomes.filter((outcome) => outcome === 'saved').length
+          if (saved === total) return saved
+          return incomplete()
+        } finally {
+          for (const key of running) runningFileImportTargets.delete(key)
+          // Only this account's own imports keep its progress shown.
+          const ownRunning = [...runningFileImportTargets].some((key) => key.startsWith(`${accountEpoch}|`))
+          if (!ownRunning && isCurrentAccountEpoch(accountEpoch)) set({ fileImport: null })
+          release()
+        }
+      }
+
       const publishSaveState = (id: string) => {
         const next = saveStateOf(liveLedger(id))
         set((state) => {
@@ -432,6 +637,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
       syncStatus: 'synced' as SyncStatus,
       searchQuery: '',
       contactSaveStates: {},
+      fileImport: null,
 
       createContact: async (newContact: NewContact) => {
         if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
@@ -533,9 +739,10 @@ export const useContactStore = create<ContactState & ContactActions>()(
 
       setSearchQuery: (query: string) => set({ searchQuery: query }),
 
-      importContacts: async (newContacts: NewContact[]) => {
+      importContacts: async (newContacts: NewContact[], options?: { fileImport?: FileImportOptions }) => {
         if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         if (newContacts.length === 0) return 0
+        if (options?.fileImport) return importFileContacts(newContacts, options.fileImport)
         // The origin account is fixed before the first await.
         const accountEpoch = getAccountEpoch()
         const now = new Date()

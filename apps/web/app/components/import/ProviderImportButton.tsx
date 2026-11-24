@@ -13,7 +13,14 @@ import type { ProviderImportVCard } from '@/app/lib/google-import/contact-mapper
 
 export type ProviderImportButtonProps =
   | { kind: 'calendar'; disabled?: boolean; onLoaded: (result: GoogleCalendarImport) => void; onError: (message: string) => void }
-  | { kind: 'contacts'; disabled?: boolean; onLoaded: (result: ProviderImportVCard[]) => void; onError: (message: string) => void }
+  | {
+      kind: 'contacts'
+      disabled?: boolean
+      /** Called when the user starts a load, before any await, so the caller can order it against other selections. */
+      onStart?: () => void
+      onLoaded: (result: ProviderImportVCard[]) => void
+      onError: (message: string) => void
+    }
 
 /** What a provider's importer module offers the button. */
 export interface ProviderImporter {
@@ -65,6 +72,7 @@ export default function ProviderImportButton({ provider, ...props }: ProviderImp
     const controller = new AbortController()
     const current: { controller: AbortController; importer: ProviderImporter | null } = { controller, importer: null }
     run.current = current
+    if (props.kind === 'contacts') props.onStart?.()
     setBusy(true)
     try {
       const importer = await provider.load()
