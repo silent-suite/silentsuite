@@ -560,7 +560,7 @@ def test_commit_refuses_a_name_held_by_another_user_at_any_age(client, user_fact
 def test_commit_may_take_a_name_after_an_operator_released_it(client, user_factory, signing_key):
     first = user_factory(username="freed@example.com", email="freed@example.com")
     rename(client, first, signing_key, "first-new@example.com")
-    call_command("release_held_username", "freed@example.com", stdout=StringIO())
+    call_command("release_held_username", "freed@example.com", "--confirm-old-devices-retired", stdout=StringIO())
     second = user_factory(username="taker@example.com", email="taker@example.com")
 
     result = rename(client, second, signing_key, "freed@example.com")
@@ -686,7 +686,7 @@ def test_rename_back_consumes_the_hold_and_repeated_renames_reuse_hold_rows(clie
 def test_another_users_held_name_reused_after_release_replaces_the_hold_row(client, user_factory, signing_key):
     first = user_factory(username="shared@example.com", email="shared@example.com")
     rename(client, first, signing_key, "first-new@example.com")
-    call_command("release_held_username", "shared@example.com", stdout=StringIO())
+    call_command("release_held_username", "shared@example.com", "--confirm-old-devices-retired", stdout=StringIO())
     second = user_factory(username="second@example.com", email="second@example.com")
 
     rename(client, second, signing_key, "shared@example.com")
@@ -791,8 +791,12 @@ def test_released_name_is_found_again_and_can_be_signed_up(client, user_factory,
     while_held = msgpack_post(client, f"{AUTH_PREFIX}/signup/", body)
     assert while_held.status_code == 409
 
+    with pytest.raises(CommandError):
+        call_command("release_held_username", "Release@Example.com", stdout=StringIO())
+    assert HeldUsername.objects.filter(name="release@example.com", user=user).exists()
+
     stdout = StringIO()
-    call_command("release_held_username", "Release@Example.com", stdout=stdout)
+    call_command("release_held_username", "Release@Example.com", "--confirm-old-devices-retired", stdout=stdout)
     signup = msgpack_post(client, f"{AUTH_PREFIX}/signup/", body)
     lookup, _ = login_challenge(client, "release@example.com")
 
@@ -900,3 +904,64 @@ def test_wired_rename_keeps_sessions_data_and_invitations(client, user_factory, 
     )
     assert accepted_invite.status_code < 300, accepted_invite.content[:300]
     assert models.CollectionMember.objects.filter(user=user, collection=shared).exists()
+
+
+# ---------------------------------------------------------------------------
+# Holds outlive their user
+# ---------------------------------------------------------------------------
+
+
+def test_deleting_the_holder_keeps_the_name_reserved_for_everyone(
+    client, user_factory, signing_key, login_pubkey, user_salt
+):
+    holder = user_factory(username="orphan@example.com", email="orphan@example.com")
+    rename(client, holder, signing_key, "holder-new@example.com")
+    User.objects.get(pk=holder.pk).delete()
+    mover = user_factory(username="mover@example.com", email="mover@example.com")
+    body = {
+        "user": {"username": "orphan@example.com", "email": "orphan@example.com"},
+        "salt": user_salt,
+        "loginPubkey": login_pubkey,
+        "pubkey": login_pubkey,
+        "encryptedContent": b"\x00" * 64,
+    }
+
+    signup = msgpack_post(client, f"{AUTH_PREFIX}/signup/", body)
+    renamed = commit(client, accepted_change(client, mover, signing_key, "orphan@example.com")["grant"])
+    lookup, _ = login_challenge(client, "orphan@example.com")
+
+    hold = HeldUsername.objects.get(name="orphan@example.com")
+    assert hold.user_id is None
+    assert signup.status_code == 409
+    assert_refused(renamed, "taken")
+    assert lookup.status_code == 401
+
+
+def test_release_of_a_deleted_holders_name_needs_no_flag(client, user_factory, signing_key):
+    holder = user_factory(username="gone-holder@example.com", email="gone-holder@example.com")
+    rename(client, holder, signing_key, "gone-holder-new@example.com")
+    User.objects.get(pk=holder.pk).delete()
+    stdout = StringIO()
+
+    call_command("release_held_username", "gone-holder@example.com", stdout=stdout)
+
+    assert stdout.getvalue() == "Released held name gone-holder@example.com.\n"
+    assert not HeldUsername.objects.exists()
+    mover = user_factory(username="mover@example.com", email="mover@example.com")
+    assert rename(client, mover, signing_key, "gone-holder@example.com")["newUsername"] == "gone-holder@example.com"
+
+
+def test_release_is_refused_while_the_holder_exists_unless_confirmed(client, user_factory, signing_key):
+    holder = user_factory(username="live-holder@example.com", email="live-holder@example.com")
+    rename(client, holder, signing_key, "live-holder-new@example.com")
+    refused_out, confirmed_out = StringIO(), StringIO()
+
+    with pytest.raises(CommandError, match="--confirm-old-devices-retired"):
+        call_command("release_held_username", "live-holder@example.com", stdout=refused_out)
+    assert refused_out.getvalue() == ""
+    assert HeldUsername.objects.filter(name="live-holder@example.com", user=holder).exists()
+
+    call_command("release_held_username", "live-holder@example.com", "--confirm-old-devices-retired", stdout=confirmed_out)
+
+    assert confirmed_out.getvalue() == "Released held name live-holder@example.com.\n"
+    assert not HeldUsername.objects.exists()

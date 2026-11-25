@@ -352,14 +352,15 @@ class LoginEmailChange(models.Model):
 
 
 class HeldUsername(models.Model):
-    """A login name a user renamed away from, reserved for that user for good.
+    """A login name a user renamed away from, reserved for good.
 
     Nobody else can sign up with, rename to or be found by a held name. Renaming back to your own
     held name ends the hold; a later departure from the same name reuses (upserts) the one row.
-    Only an operator can release a hold (`manage.py release_held_username`).
+    Deleting the user keeps the hold with user null: then the name is held for everyone. Only an
+    operator can release a hold (`manage.py release_held_username`).
     """
 
     name = models.CharField(max_length=150, unique=True)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
 
     objects: models.manager.BaseManager["HeldUsername"]

@@ -123,7 +123,10 @@ def normalize_login_name(name: str) -> str:
 
 
 def name_is_held(name: str, exclude_user: t.Optional[UserType] = None) -> bool:
-    """Whether a renamed-away name is held (holds never expire), optionally ignoring one user's holds."""
+    """Whether a renamed-away name is held (holds never expire), optionally ignoring one user's own holds.
+
+    A hold whose user was deleted (user null) is held for everyone.
+    """
     held = HeldUsername.objects.filter(name=normalize_login_name(name))
     if exclude_user is not None:
         held = held.exclude(user=exclude_user)
