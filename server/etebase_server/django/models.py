@@ -14,6 +14,7 @@
 
 import hashlib
 import typing as t
+import uuid
 from pathlib import Path
 
 from django.conf import settings
@@ -294,8 +295,70 @@ class UserInfo(models.Model):
     pubkey = models.BinaryField(editable=True, blank=False, null=False)
     encryptedContent = models.BinaryField(editable=True, blank=False, null=False)
     salt = models.BinaryField(editable=True, blank=False, null=False)
+    # Bumped by every committed login rename, in the same transaction as the username, so an
+    # identity snapshot (username, login_version) read in one query is never mixed.
+    login_version = models.PositiveIntegerField(default=0)
 
     objects: models.manager.BaseManager["UserInfo"]
 
     def __str__(self):
         return "UserInfo<{}>".format(self.owner)
+
+
+def sha256_hex(value: t.Union[str, bytes]) -> str:
+    if isinstance(value, str):
+        value = value.encode("utf-8")
+    return hashlib.sha256(value).hexdigest()
+
+
+class LoginEmailChange(models.Model):
+    """One hosted request to rename an account's login (username and email) to a new address.
+
+    Bearer values (challenge, handoff, grant) are stored only as SHA-256 digests.
+    pending -> accepted -> committed, or an end state: superseded, expired, cancelled, refused.
+    """
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    COMMITTED = "committed"
+    SUPERSEDED = "superseded"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+    REFUSED = "refused"
+    OPEN_STATUSES = (PENDING, ACCEPTED)
+    STATUS_CHOICES = [
+        (x, x) for x in (PENDING, ACCEPTED, COMMITTED, SUPERSEDED, EXPIRED, CANCELLED, REFUSED)
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    old_username = models.CharField(max_length=150)
+    new_username = models.CharField(max_length=150)
+    from_version = models.PositiveIntegerField()
+    login_pubkey_hash = models.CharField(max_length=64)
+    challenge_hash = models.CharField(max_length=64, unique=True)
+    handoff_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    grant_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=PENDING, db_index=True)
+    refusal = models.CharField(max_length=32, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    expires_at = models.DateTimeField(db_index=True)
+    ended_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    committed_version = models.PositiveIntegerField(null=True, blank=True)
+    committed_at = models.DateTimeField(null=True, blank=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+
+    objects: models.manager.BaseManager["LoginEmailChange"]
+
+
+class HeldUsername(models.Model):
+    """A login name a user renamed away from, kept out of reach of others until held_until.
+
+    One row per name: a later departure from the same name reuses (upserts) it.
+    """
+
+    name = models.CharField(max_length=150, unique=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    held_until = models.DateTimeField(db_index=True)
+
+    objects: models.manager.BaseManager["HeldUsername"]

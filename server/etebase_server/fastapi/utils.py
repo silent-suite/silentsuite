@@ -1,16 +1,21 @@
 import base64
 import dataclasses
 import typing as t
+import unicodedata
 
 import msgpack
-from django.core.exceptions import ObjectDoesNotExist
+from django.contrib.auth.validators import UnicodeUsernameValidator
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.validators import validate_email
+from django.db import connection, transaction
 from django.db.models import Model, QuerySet
+from django.utils import timezone
 from fastapi import Depends, Query, status
 from pydantic import BaseModel as PyBaseModel
 from typing_extensions import Literal
 
 from etebase_server.django import app_settings
-from etebase_server.django.models import AccessLevels
+from etebase_server.django.models import AccessLevels, HeldUsername
 from etebase_server.myauth.models import UserType, get_typed_user_model
 
 from .exceptions import HttpError, HttpErrorOut
@@ -98,6 +103,10 @@ def get_user_by_username_or_email(queryset: QuerySet[UserType], username: str) -
     raises User.DoesNotExist, the same as no match, instead of letting
     MultipleObjectsReturned surface as a server error.
     """
+    if name_is_held(username):
+        # A name its owner renamed away from stays unreachable until its hold ends, so old
+        # clients and invitations can't resolve it to anyone (including the owner's new login).
+        raise User.DoesNotExist("User matching query does not exist.")
     try:
         try:
             return queryset.get(**{User.USERNAME_FIELD + "__iexact": username.lower()})
@@ -107,6 +116,77 @@ def get_user_by_username_or_email(queryset: QuerySet[UserType], username: str) -
             return queryset.get(**{User.EMAIL_FIELD + "__iexact": username.lower()})
     except User.MultipleObjectsReturned:
         raise User.DoesNotExist("User matching query does not exist.")
+
+
+def normalize_login_name(name: str) -> str:
+    """The form login names are stored and compared in: NFKC, lower case (as usernames are stored)."""
+    return User.normalize_username(name)
+
+
+def name_is_held(name: str, exclude_user: t.Optional[UserType] = None) -> bool:
+    """Whether a renamed-away name is still held (unexpired), optionally ignoring one user's holds."""
+    held = HeldUsername.objects.filter(name=normalize_login_name(name), held_until__gt=timezone.now())
+    if exclude_user is not None:
+        held = held.exclude(user=exclude_user)
+    return held.exists()
+
+
+def claim_names(names: t.Iterable[str]) -> None:
+    """Serialize every transaction that may take one of these login names until it ends.
+
+    PostgreSQL: transaction-scoped advisory locks on the normalized names, taken in sorted order
+    so two claimers never deadlock. SQLite (the default self-host backend) allows one writer at a
+    time and a transaction that read before another's commit fails to upgrade (database is
+    locked) instead of writing stale data, so this is a no-op there. Call inside an atomic block,
+    before the collision checks.
+    """
+    if connection.vendor != "postgresql":
+        return
+    keys = sorted({normalize_login_name(name) for name in names if name})
+    with connection.cursor() as cursor:
+        for key in keys:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ["etebase-login-name:" + key])
+
+
+MAX_LOGIN_NAME_LENGTH = 150
+_username_validator = UnicodeUsernameValidator()
+
+
+def canonical_login_email(raw: t.Any) -> t.Optional[str]:
+    """The canonical login form of an email address, or None if it can't be a login email.
+
+    Trimmed, NFKC, lower case; at most 150 characters; a valid Etebase username that is already in
+    its normalized form; and shaped like an email address.
+    """
+    if not isinstance(raw, str):
+        return None
+    candidate = unicodedata.normalize("NFKC", raw.strip()).lower()
+    if not candidate or len(candidate) > MAX_LOGIN_NAME_LENGTH or normalize_login_name(candidate) != candidate:
+        return None
+    if candidate.count("@") != 1:
+        return None
+    try:
+        _username_validator(candidate)
+        validate_email(candidate)
+    except ValidationError:
+        return None
+    return candidate
+
+
+def identity_user(user_id: int) -> UserType:
+    """The user and its UserInfo read in one query, so username and login_version come from one snapshot."""
+    with transaction.atomic():
+        return User.objects.select_related("userinfo").get(pk=user_id)
+
+
+def identity_of(user: UserType) -> t.Dict[str, t.Any]:
+    info = getattr(user, "userinfo", None)
+    return {"id": user.pk, "username": user.username, "loginVersion": info.login_version if info else 0}
+
+
+def identity_snapshot(user_id: int) -> t.Dict[str, t.Any]:
+    """`{id, username, loginVersion}` of one consistent read (see identity_user)."""
+    return identity_of(identity_user(user_id))
 
 
 PERMISSIONS_READ = [Depends(x) for x in app_settings.API_PERMISSIONS_READ]
