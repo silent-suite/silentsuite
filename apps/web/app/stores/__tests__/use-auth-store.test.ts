@@ -1685,7 +1685,7 @@ describe('useAuthStore', () => {
     const KEY = 'silentsuite-server-url'
     const customUrl = 'https://dav.example.test'
     const identity = { id: 7, loginVersion: 2, username: 'new@example.com' }
-    const signedIn = (etebasePrincipal: number | null) => useAuthStore.setState({
+    const signedIn = (etebasePrincipal: string | null | 'malformed') => useAuthStore.setState({
       user: { id: 'user-1', email: 'old@example.com', planId: 'pro', isAdmin: false, onboardedAt: null, etebasePrincipal },
       isAuthenticated: true,
     })
@@ -1699,13 +1699,13 @@ describe('useAuthStore', () => {
       const { secureSet } = await import('@/app/lib/secure-storage')
       vi.mocked(etebaseLogIn).mockClear()
       principalCheck.verify.mockResolvedValueOnce({ ok: true, identity })
-      signedIn(7)
+      signedIn('7')
       localStorage.setItem(KEY, customUrl)
 
       await useAuthStore.getState().unlockEtebaseSession('new@example.com', 'password123')
 
       expect(etebaseLogIn).toHaveBeenCalledWith('new@example.com', 'password123', undefined)
-      expect(principalCheck.verify).toHaveBeenCalledWith('mock-saved-session', 7)
+      expect(principalCheck.verify).toHaveBeenCalledWith('mock-saved-session', '7')
       expect(secureStore.etebase_session).toBe('mock-saved-session')
       expect(vi.mocked(secureSet).mock.calls.at(-1)?.[2]).toMatchObject({ owner: 'user-1', identity })
       expect(localStorage.getItem(KEY)).toBeNull()
@@ -1715,7 +1715,7 @@ describe('useAuthStore', () => {
 
     it.each(['mismatch', 'unavailable'] as const)('stores nothing when the principal check reports %s', async (reason) => {
       principalCheck.verify.mockResolvedValueOnce({ ok: false, reason })
-      signedIn(7)
+      signedIn('7')
       localStorage.setItem(KEY, 'https://server.silentsuite.io')
 
       await useAuthStore.getState().unlockEtebaseSession('someone@example.com', 'password123')
@@ -1727,7 +1727,7 @@ describe('useAuthStore', () => {
       expect(useAuthStore.getState().error).toBeTruthy()
     })
 
-    it.each([7, null])('refuses a custom server for a hosted owner (principal %s), even one that would answer the same id', async (principal) => {
+    it.each(['7', null])('refuses a custom server for a hosted owner (principal %s), even one that would answer the same id', async (principal) => {
       const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
       vi.mocked(etebaseLogIn).mockClear()
       principalCheck.verify.mockResolvedValue({ ok: true, identity })
@@ -1753,8 +1753,44 @@ describe('useAuthStore', () => {
       expect(principalCheck.verify).not.toHaveBeenCalled()
     })
 
-    it('records etebasePrincipal from the token exchange and ignores malformed values', async () => {
-      for (const [value, expected] of [[42, 42], ['42', null], [0, null], [null, null]] as const) {
+    it('fails closed for a malformed principal: no sign-in, nothing stored', async () => {
+      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      vi.mocked(etebaseLogIn).mockClear()
+      signedIn('malformed')
+      localStorage.setItem(KEY, 'https://server.silentsuite.io')
+
+      await useAuthStore.getState().unlockEtebaseSession('old@example.com', 'password123')
+
+      expect(etebaseLogIn).not.toHaveBeenCalled()
+      expect(principalCheck.verify).not.toHaveBeenCalled()
+      expect(secureStore.etebase_session).toBeUndefined()
+      expect(localStorage.getItem(KEY)).toBe('https://server.silentsuite.io')
+      expect(useAuthStore.getState().error).toBeTruthy()
+    })
+
+    it('a string principal from Billing reaches the whoami binding end to end', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'user-1', email: 'old@example.com', planId: 'pro', isAdmin: false, etebasePrincipal: '0042' }),
+      } as Response)
+      await useAuthStore.getState().login('old@example.com', 'password123')
+      expect(useAuthStore.getState().user?.etebasePrincipal).toBe('42')
+      delete secureStore.etebase_session
+      principalCheck.verify.mockResolvedValueOnce({ ok: true, identity: { id: 42, loginVersion: 1, username: 'new@example.com' } })
+
+      await useAuthStore.getState().unlockEtebaseSession('new@example.com', 'password123')
+
+      expect(principalCheck.verify).toHaveBeenCalledWith('mock-saved-session', '42')
+      expect(secureStore.etebase_session).toBe('mock-saved-session')
+      expect(useAuthStore.getState().error).toBeNull()
+    })
+
+    it('records etebasePrincipal from the token exchange: strings and integers kept, anything else malformed', async () => {
+      for (const [value, expected] of [
+        ['42', '42'], [42, '42'], ['007', '7'], [undefined, null], [null, null],
+        ['0', 'malformed'], [0, 'malformed'], ['-1', 'malformed'], ['4.2', 'malformed'], [' 42', 'malformed'], [true, 'malformed'], [{}, 'malformed'],
+      ] as const) {
         resetStore()
         vi.mocked(fetch).mockResolvedValueOnce({
           ok: true,

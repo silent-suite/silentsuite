@@ -111,6 +111,23 @@ describe.each([
     expect(await savedUsername()).toEqual(before)
   })
 
+  it('aligns a stale live account name when another tab already stored the rename', async () => {
+    // Another tab stored the rename: session and identity both carry the new name.
+    await secureSet('etebase_session', session('new@example.test'), {
+      persist: remembered, owner: 'billing-1', identity: { id: 7, loginVersion: 1, username: 'new@example.test' },
+    })
+    state.live = { authToken: 'tok-saved', user: { username: 'old@example.test' } }
+    whoami({ id: 7, loginVersion: 1, username: 'new@example.test' })
+    await syncLoginIdentity()
+    expect(state.live.user.username).toBe('new@example.test')
+
+    // A live account of another session (other token) is never touched.
+    state.live = { authToken: 'tok-other', user: { username: 'old@example.test' } }
+    whoami({ id: 7, loginVersion: 1, username: 'new@example.test' })
+    await syncLoginIdentity()
+    expect(state.live.user.username).toBe('old@example.test')
+  })
+
   it('offline rename then restore: the first answer already carries the new name', async () => {
     whoami({ id: 7, loginVersion: 1, username: 'renamed@example.test' })
     await syncLoginIdentity()
@@ -227,7 +244,7 @@ describe('confirmLoginEmailChange', () => {
 describe('verifySessionPrincipal (unlock)', () => {
   it('accepts only a whoami id equal to the principal, using the fresh session token', async () => {
     whoami({ id: 7, loginVersion: 1, username: 'new@example.test' })
-    expect(await verifySessionPrincipal(session('new@example.test', 'tok-fresh'), 7)).toEqual({ ok: true, identity: { id: 7, loginVersion: 1, username: 'new@example.test' } })
+    expect(await verifySessionPrincipal(session('new@example.test', 'tok-fresh'), '7')).toEqual({ ok: true, identity: { id: 7, loginVersion: 1, username: 'new@example.test' } })
     expect(fetchMock).toHaveBeenCalledWith('https://server.test/api/v1/authentication/whoami/', { headers: { Authorization: 'Token tok-fresh' } })
     expect(core.logout).not.toHaveBeenCalled()
   })
@@ -238,7 +255,7 @@ describe('verifySessionPrincipal (unlock)', () => {
     ['a network failure', () => fetchMock.mockRejectedValueOnce(new TypeError('network')), 'unavailable'],
   ])('refuses %s and logs the fresh session out', async (_label, arrange, reason) => {
     arrange()
-    expect(await verifySessionPrincipal(session('x@example.test', 'tok-fresh'), 7)).toEqual({ ok: false, reason })
+    expect(await verifySessionPrincipal(session('x@example.test', 'tok-fresh'), '7')).toEqual({ ok: false, reason })
     expect(core.logout).toHaveBeenCalledTimes(1)
     expect((core.logout.mock.calls[0] as any[])[0]).toMatchObject({ authToken: 'tok-fresh' })
   })
