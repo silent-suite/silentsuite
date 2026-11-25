@@ -46,7 +46,7 @@ describe('Change email button', () => {
     mocks.request.mockResolvedValueOnce(result)
     render(<ChangeLoginEmail />)
     fireEvent.click(screen.getByRole('button', { name: 'Change email' }))
-    expect(screen.getByText(/Phones and the desktop Bridge that are signed in keep syncing\. To use the new email there, sign out and sign in again\./)).toBeInTheDocument()
+    expect(screen.getByText(/Phones and the desktop Bridge that are signed in keep syncing\. They keep showing your old email\. Before you sign out on a device to use the new email there, open it and make sure everything has synced: signing out of the Android app removes its local copy of your calendars, contacts and tasks, and the desktop Bridge keeps unsynced changes only under the old account\./)).toBeInTheDocument()
     expect(screen.getByText(/Card receipts/)).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('New email'), { target: { value: 'new@example.test' } })
     fireEvent.change(screen.getByLabelText('Current password'), { target: { value: 'pw' } })

@@ -26,7 +26,7 @@ describe('confirm login email page', () => {
     expect(await screen.findByText('new@example.test')).toBeInTheDocument()
     expect(confirm).toHaveBeenCalledWith('secret-token-value')
     expect(screen.getByText('Billing emails now go to this address too.')).toBeInTheDocument()
-    expect(screen.getByText(/Phones and the desktop Bridge that are signed in keep syncing/)).toBeInTheDocument()
+    expect(screen.getByText(/They keep showing your old email\. Before you sign out on a device to use the new email there, open it and make sure everything has synced: signing out of the Android app removes its local copy of your calendars, contacts and tasks, and the desktop Bridge keeps unsynced changes only under the old account\./)).toBeInTheDocument()
   })
 
   it.each([

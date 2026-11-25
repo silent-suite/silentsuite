@@ -17,7 +17,7 @@ function takeTokenFromFragment(): string | null {
   return token && token.trim() ? token.trim() : null
 }
 
-const DEVICE_NOTE = 'Phones and the desktop Bridge that are signed in keep syncing. To use the new email there, sign out and sign in again.'
+const DEVICE_NOTE = 'Phones and the desktop Bridge that are signed in keep syncing. They keep showing your old email. Before you sign out on a device to use the new email there, open it and make sure everything has synced: signing out of the Android app removes its local copy of your calendars, contacts and tasks, and the desktop Bridge keeps unsynced changes only under the old account.'
 
 function contactLine(contactState: string): string {
   switch (contactState) {
