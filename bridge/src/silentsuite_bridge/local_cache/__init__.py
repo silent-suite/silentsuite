@@ -1141,6 +1141,8 @@ class Etebase:
         membership while it still has unsynced edits) does not stop the
         others. Its edits stay pending, and the first failure is raised once
         every collection has had its turn so the cycle is reported as failed.
+        A refused session (HTTP 401) is raised in preference to earlier
+        failures so the account is reported as needing a new sign-in.
         """
         logger.info("=== Starting full sync cycle ===")
         failures = []
@@ -1163,7 +1165,10 @@ class Etebase:
                 "Sync cycle left %d collection operation(s) unsynchronized",
                 len(failures),
             )
-            raise failures[0]
+            raise next(
+                (failure for failure in failures if is_session_refused(failure)),
+                failures[0],
+            )
         unresolved = (
             models.DavUnresolvedItem.select()
             .join(models.CollectionEntity)

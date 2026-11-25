@@ -630,6 +630,60 @@ def test_dashboard_sync_request_reports_generation_completion(monkeypatch):
     assert "account@example.com" not in body.decode()
 
 
+@pytest.mark.parametrize(
+    "error_code, expected_flag",
+    [("ReauthRequired", True), ("ConnectionError", False), ("SyncTimeout", False)],
+)
+def test_dashboard_sync_request_flags_refused_session(
+    monkeypatch, error_code, expected_flag
+):
+    web_module._sync_requests.clear()
+    monkeypatch.setattr(
+        accounts, "list_accounts", lambda: ["refused@example.com", "fine@example.com"]
+    )
+    refused = MagicMock()
+    refused.is_alive.return_value = True
+    refused.force_sync.return_value = 3
+    refused.generation_status.return_value = {
+        "generation": 3,
+        "state": "failed",
+        "started_at": 100.0,
+        "completed_at": 101.0,
+        "error_code": error_code,
+    }
+    fine = MagicMock()
+    fine.is_alive.return_value = True
+    fine.force_sync.return_value = 4
+    fine.generation_status.return_value = {
+        "generation": 4,
+        "state": "succeeded",
+        "started_at": 100.0,
+        "completed_at": 101.0,
+        "error_code": None,
+    }
+    monkeypatch.setattr(
+        storage,
+        "_sync_threads",
+        {"refused@example.com": refused, "fine@example.com": fine},
+    )
+    web = Web.__new__(Web)
+    _, _, post_body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token), "", "/.web/api/sync", None
+    )
+    request_id = json.loads(post_body)["request_id"]
+
+    status, _, body = web.get(_get_environ(), "", f"/.web/api/sync/{request_id}", None)
+
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["state"] == "partial_failure"
+    assert payload["reauth_required"] is expected_flag
+    assert "refused@example.com" not in body.decode()
+    # The terminal result is kept, flag included, for later polls.
+    _, _, again = web.get(_get_environ(), "", f"/.web/api/sync/{request_id}", None)
+    assert json.loads(again)["reauth_required"] is expected_flag
+
+
 def test_dashboard_sync_waits_for_all_configured_accounts(monkeypatch):
     web_module._sync_requests.clear()
     monkeypatch.setattr(
@@ -1196,6 +1250,44 @@ global.window = {SILENTSUITE_DASHBOARD_CSRF: 'csrf-test'};
         assert.equal(box.checked, !ok);
         assert.equal(box.disabled, false);
         assert.equal(status.textContent, ok ? 'Saved' : 'Not saved: write failed');
+    }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run([NODE, "-e", functions + harness], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required to execute dashboard JavaScript")
+def test_open_dashboard_reloads_after_sync_attempt_with_refused_session(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    html = _render_dashboard()
+    functions = _extract_js_function(html, "pollSyncRequest")
+    harness = r"""
+const assert = require('node:assert/strict');
+const cases = [
+    [{state: 'failed', reauth_required: true}, 'Sync failed', 1],
+    [{state: 'partial_failure', reauth_required: true}, 'Partially failed', 1],
+    [{state: 'failed', reauth_required: false}, 'Sync failed', 0],
+    [{state: 'partial_failure'}, 'Partially failed', 0],
+    [{state: 'timed_out', reauth_required: false}, 'Timed out', 0],
+];
+(async () => {
+    for (const [data, label, reloads] of cases) {
+        let reloaded = 0;
+        global.location = {reload: () => { reloaded += 1; }};
+        global.setTimeout = (fn) => { fn(); };
+        global.fetch = async (url) => {
+            assert.equal(url, '/.web/api/sync/request-1');
+            return {ok: true, json: async () => data};
+        };
+        const btn = {textContent: '', disabled: true};
+        pollSyncRequest('request-1', btn);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(btn.textContent, label);
+        assert.equal(btn.disabled, false);
+        assert.equal(reloaded, reloads, JSON.stringify(data));
     }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """

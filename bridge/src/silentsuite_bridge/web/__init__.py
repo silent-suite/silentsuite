@@ -92,6 +92,7 @@ def _sync_request_status(request_id):
         "failed": 0,
         "timed_out": 0,
     }
+    reauth_required = False
     for target in targets:
         if target["thread"] is None:
             state = "failed"
@@ -105,6 +106,12 @@ def _sync_request_status(request_id):
             state = status["state"] if status is not None else "failed"
             if state in {"pending", "running"} and not target["thread"].is_alive():
                 state = "failed"
+            if (
+                state == "failed"
+                and status is not None
+                and status.get("error_code") == REAUTH_REQUIRED
+            ):
+                reauth_required = True
         counts[state] += 1
 
     active = counts["pending"] + counts["running"]
@@ -125,6 +132,9 @@ def _sync_request_status(request_id):
         "requested_at": requested_at,
         "deadline": deadline,
         "accounts": counts,
+        # Tells the open dashboard to reload so the account card shows the
+        # sign-in-again notice; which account is never named here.
+        "reauth_required": reauth_required,
     }
     with _sync_requests_lock:
         request = _sync_requests.get(request_id)
@@ -1286,6 +1296,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                 btn.textContent = 'Sync failed';
                             }
                             btn.disabled = false;
+                            if (data.reauth_required === true) {
+                                setTimeout(function() { location.reload(); }, 750);
+                            }
                         } else {
                             btn.textContent = data.state === 'running' ? 'Syncing...' : 'Queued...';
                             setTimeout(function() { pollSyncRequest(requestId, btn); }, 750);
