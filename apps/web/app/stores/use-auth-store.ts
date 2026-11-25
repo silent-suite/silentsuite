@@ -2112,6 +2112,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       syncAdminCookie(isAdmin, rememberDevice)
       markHostedValidation(data.id, rememberDevice)
       set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true, ...tupleForIdentity(get().user, data.id) })
+      // Learn a login name changed elsewhere; never blocks or fails the refresh.
+      void import('@/app/lib/login-email-change').then((m) => m.syncLoginIdentity()).catch(() => undefined)
       return true
     } catch (err) {
       logger.warn('[auth-store] Session refresh failed (network), leaving session intact:', err)

@@ -122,4 +122,27 @@ describe('experimental preferences', () => {
     useExperimentalStore.getState().hydrate()
     expect(planningDurationFor(useExperimentalStore.getState(), 'account-a')).toBe(30)
   })
+
+  it('keeps the login email change choice per account under its own key, off by default', () => {
+    const loginKey = 'silentsuite-experimental-login-email-change-v1'
+    useExperimentalStore.setState({ hydrated: false, notesAccounts: [], birthdayAccounts: [], loginEmailChangeAccounts: [] })
+    useExperimentalStore.getState().hydrate()
+    expect(useExperimentalStore.getState().loginEmailChangeAccounts).toEqual([])
+    useExperimentalStore.getState().setLoginEmailChangeEnabled('account-a', true)
+    useExperimentalStore.getState().setLoginEmailChangeEnabled('account-b', true)
+    useExperimentalStore.getState().setLoginEmailChangeEnabled('account-b', false)
+    expect(JSON.parse(localStorage.getItem(loginKey)!)).toEqual(['account-a'])
+    expect(localStorage.getItem(key)).toBeNull()
+    expect(localStorage.getItem(birthdaysKey)).toBeNull()
+    useExperimentalStore.setState({ hydrated: false, loginEmailChangeAccounts: [] })
+    useExperimentalStore.getState().hydrate()
+    expect(useExperimentalStore.getState().loginEmailChangeAccounts).toEqual(['account-a'])
+  })
+
+  it.each(['not-json', 'true', '{}', '[true]', '[""]'])('fails closed for malformed login email change storage %s', (value) => {
+    localStorage.setItem('silentsuite-experimental-login-email-change-v1', value)
+    useExperimentalStore.setState({ hydrated: false, loginEmailChangeAccounts: [] })
+    useExperimentalStore.getState().hydrate()
+    expect(useExperimentalStore.getState()).toMatchObject({ hydrated: true, loginEmailChangeAccounts: [] })
+  })
 })

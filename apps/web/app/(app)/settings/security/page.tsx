@@ -252,7 +252,10 @@ function ChangePasswordSection() {
 
     try {
       const { user } = useAuthStore.getState()
-      const email = user?.email
+      // Re-authenticate with the login name of this session (what the server
+      // knows), never the Billing contact email, which can differ after a login change.
+      const liveUsername = (useEtebaseStore.getState().account as { user?: { username?: unknown } } | null)?.user?.username
+      const email = user && typeof liveUsername === 'string' && liveUsername ? liveUsername : null
       if (!email) {
         throw new Error('Unable to determine your account email. Please sign in again.')
       }

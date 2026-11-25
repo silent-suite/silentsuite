@@ -3,10 +3,12 @@
 import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { useBirthdaysEnabled } from '@/app/hooks/use-birthdays-enabled'
+import { useLoginEmailChangeEnabled } from '@/app/hooks/use-login-email-change-enabled'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
 import { usePlanningDisposition, usePlanningDuration, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
+import { isSelfHosted } from '@/app/lib/self-hosted'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { isValidPlanningDuration, PLANNING_DURATION_MAX, PLANNING_DURATION_MIN, useExperimentalStore, type PlanningDisposition } from '@/app/stores/use-experimental-store'
@@ -87,6 +89,7 @@ function ExperimentalSettings() {
       </div>
       <BirthdaysSetting />
       <PlanningSetting />
+      {!isSelfHosted && <LoginEmailChangeSetting />}
       <LanguageSetting />
     </section>
   )
@@ -129,6 +132,46 @@ function BirthdaysSetting() {
       <p id="birthdays-experiment-description" className="text-sm text-[rgb(var(--muted))]">
         Adds a Birthdays calendar made from your contacts&rsquo; birthdays. You can turn it on in the calendar list.
         This choice is saved for this account in this browser, not synced to other devices.
+      </p>
+      {error && <p role="alert" className="text-sm text-[rgb(var(--foreground))]">{error}</p>}
+    </div>
+  )
+}
+
+function LoginEmailChangeSetting() {
+  const enabled = useLoginEmailChangeEnabled()
+  const fingerprint = useEtebaseStore((state) => state.accountFingerprint)
+  const hydrated = useExperimentalStore((state) => state.hydrated)
+  const [error, setError] = useState('')
+
+  const toggle = () => {
+    if (!fingerprint || !hydrated) return
+    setError('')
+    try {
+      useExperimentalStore.getState().setLoginEmailChangeEnabled(fingerprint, !enabled)
+    } catch {
+      setError('Could not save this setting. Check that browser storage is available and try again.')
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor="enable-login-email-change" className="font-medium text-[rgb(var(--foreground))]">Change login email</label>
+        <input
+          id="enable-login-email-change"
+          type="checkbox"
+          role="switch"
+          checked={enabled}
+          disabled={!fingerprint || !hydrated}
+          onChange={toggle}
+          aria-describedby="login-email-change-experiment-description"
+          className="h-5 w-5 shrink-0 accent-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+        />
+      </div>
+      <p id="login-email-change-experiment-description" className="text-sm text-[rgb(var(--muted))]">
+        Adds a Change email button to Settings &gt; Account for accounts on silentsuite.io, so you can sign in with a
+        different email address. This choice is saved for this account in this browser, not synced to other devices.
       </p>
       {error && <p role="alert" className="text-sm text-[rgb(var(--foreground))]">{error}</p>}
     </div>

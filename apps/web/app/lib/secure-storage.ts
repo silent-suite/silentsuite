@@ -22,7 +22,7 @@
  */
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { readLogoutGeneration } from '@/app/lib/account-epoch'
-import { getDeviceOwner, getSessionScope, readTabSession, removeTabSession, setSessionScope, tabSessionChangeCount, writeTabSession } from '@/app/lib/session-scope'
+import { getDeviceOwner, getSessionScope, isSessionIdentity, readTabSession, readTabSessionWithIdentity, removeTabSession, setSessionScope, tabSessionChangeCount, writeTabSession, type SessionIdentity } from '@/app/lib/session-scope'
 
 const DB_NAME = 'silentsuite-secure'
 const DB_VERSION = 1
@@ -30,6 +30,8 @@ const STORE_NAME = 'keyval'
 const SESSION_KEY = 'etebase_session'
 /** The Billing user a durable hosted session was saved for (absent for self-hosted). */
 export const SESSION_OWNER_KEY = 'etebase_session_owner'
+/** The server identity (`whoami`) the durable session was last confirmed for. */
+const SESSION_IDENTITY_KEY = 'etebase_session_identity'
 /** The non-extractable AES-GCM key the durable session copy is wrapped with. */
 const SESSION_WRAP_KEY = 'etebase_session_key'
 
@@ -45,6 +47,7 @@ interface StoredSessionSnapshot {
   record: unknown
   key: unknown
   owner: unknown
+  identity: unknown
 }
 
 /** Sensitive localStorage keys that were migrated — cleared on first load. */
@@ -174,7 +177,8 @@ async function readStoredSnapshotNow(): Promise<StoredSessionSnapshot> {
     const record = store.get(SESSION_KEY)
     const key = store.get(SESSION_WRAP_KEY)
     const owner = store.get(SESSION_OWNER_KEY)
-    tx.oncomplete = () => resolve({ record: record.result, key: key.result, owner: owner.result })
+    const identity = store.get(SESSION_IDENTITY_KEY)
+    tx.oncomplete = () => resolve({ record: record.result, key: key.result, owner: owner.result, identity: identity.result })
     tx.onerror = () => reject(tx.error)
     tx.onabort = () => reject(tx.error)
   })
@@ -201,6 +205,7 @@ function deleteStoredSession(store: IDBObjectStore): void {
   store.delete(SESSION_KEY)
   store.delete(SESSION_OWNER_KEY)
   store.delete(SESSION_WRAP_KEY)
+  store.delete(SESSION_IDENTITY_KEY)
 }
 
 /**
@@ -298,6 +303,25 @@ export async function secureGet(key: string, options: StoredOnlyOptions = {}): P
   }
 }
 
+/**
+ * The session this tab may read (same rules as secureGet) together with the
+ * identity saved beside it in the same record or transaction, or null.
+ */
+export async function secureGetSessionWithIdentity(): Promise<{ session: string; identity: SessionIdentity | null } | null> {
+  if (getSessionScope() !== 'device') return readTabSessionWithIdentity()
+  try {
+    const snapshot = await readStoredSessionSnapshot()
+    if (snapshot.record === undefined) return null
+    const owner = getDeviceOwner()
+    if (owner !== null && snapshot.owner !== owner) return null
+    const session = await storedPlaintext(snapshot.record, snapshot.key)
+    if (!session) return null
+    return { session, identity: isSessionIdentity(snapshot.identity) ? snapshot.identity : null }
+  } catch {
+    return null
+  }
+}
+
 export interface SecureSetOptions {
   /**
    * Etebase session only. `true` stores it in IndexedDB; use it only when
@@ -314,6 +338,11 @@ export interface SecureSetOptions {
    * can refuse a copy saved for someone else.
    */
   owner?: string | null
+  /**
+   * Etebase session only: the server identity confirmed for this session,
+   * stored with it (same record or transaction). Omitted: none is kept.
+   */
+  identity?: SessionIdentity | null
 }
 
 /**
@@ -325,7 +354,7 @@ export interface SecureSetOptions {
  * copy it was meant to replace is deleted as well (best effort, and only while
  * it is still that copy). Never stores plaintext.
  */
-function writeWrappedSession(value: string, owner: string | null, generation: string | null | undefined): Promise<WrappedSession | null> {
+function writeWrappedSession(value: string, owner: string | null, identity: SessionIdentity | null, generation: string | null | undefined): Promise<WrappedSession | null> {
   return serialized(async () => {
     let replaced: unknown
     try {
@@ -342,6 +371,8 @@ function writeWrappedSession(value: string, owner: string | null, generation: st
         store.put(key, SESSION_WRAP_KEY)
         if (owner) store.put(owner, SESSION_OWNER_KEY)
         else store.delete(SESSION_OWNER_KEY)
+        if (identity) store.put(identity, SESSION_IDENTITY_KEY)
+        else store.delete(SESSION_IDENTITY_KEY)
         written = true
       })
       return written ? record : null
@@ -356,12 +387,12 @@ function writeWrappedSession(value: string, owner: string | null, generation: st
   })
 }
 
-function writeTabOnlySession(value: string, owner: string | null): void {
+function writeTabOnlySession(value: string, owner: string | null, identity: SessionIdentity | null = null): void {
   // Decide the scope first: reads now never reach IndexedDB, and a failed tab
   // write leaves no readable session (unlock then asks again).
   setSessionScope('tab')
   try {
-    writeTabSession(value, owner)
+    writeTabSession(value, owner, identity)
   } catch (err) {
     console.error('[secure-storage] Failed to write the tab session', getSafeErrorDetails(err))
   }
@@ -387,12 +418,12 @@ function asOwnTabSessionChange(change: () => void): void {
   }
 }
 
-async function setSession(value: string, persist: boolean, owner: string | null): Promise<void> {
-  if (!persist) return writeTabOnlySession(value, owner)
+async function setSession(value: string, persist: boolean, owner: string | null, identity: SessionIdentity | null): Promise<void> {
+  if (!persist) return writeTabOnlySession(value, owner, identity)
   // Write before removing the tab copy, so a concurrent read always finds one.
   const changesBefore = laterTabSessionChanges()
   const generationBefore = readLogoutGeneration()
-  const record = await writeWrappedSession(value, owner, generationBefore)
+  const record = await writeWrappedSession(value, owner, identity, generationBefore)
   // A later operation on this tab's session (a tab-only sign-in, a clear or
   // removal), or a logout anywhere, while this one was being saved: that one
   // wins, and this save is taken back.
@@ -404,7 +435,7 @@ async function setSession(value: string, persist: boolean, owner: string | null)
     // Not remembered (no WebCrypto, or IndexedDB failed): the session still
     // works in this tab until the page reloads. The copy this save was meant
     // to replace was deleted if that was possible.
-    asOwnTabSessionChange(() => writeTabOnlySession(value, owner))
+    asOwnTabSessionChange(() => writeTabOnlySession(value, owner, identity))
     return
   }
   setSessionScope('device', owner)
@@ -416,7 +447,7 @@ async function setSession(value: string, persist: boolean, owner: string | null)
  * SecureSetOptions).
  */
 export async function secureSet(key: string, value: string, options: SecureSetOptions = {}): Promise<void> {
-  if (key === SESSION_KEY) return setSession(value, options.persist === true, options.owner ?? null)
+  if (key === SESSION_KEY) return setSession(value, options.persist === true, options.owner ?? null, options.identity ?? null)
   try {
     await withStore('readwrite', (store) => store.put(value, key))
   } catch (err) {
