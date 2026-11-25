@@ -2002,6 +2002,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return
     }
     const currentEmail = unlockingUser?.email
+    if (hostedOwner && principal === null && !currentEmail) {
+      // Neither binding is known (e.g. the outage-recovery profile has no
+      // contact email and no principal): nothing ties a sign-in to this
+      // Billing owner, so refuse before signing in or storing anything.
+      set({ isLoading: false, error: 'We could not confirm which account is signed in here. Please sign in again.' })
+      return
+    }
     if (principal === null && currentEmail && currentEmail.toLowerCase() !== email.toLowerCase()) {
       set({
         isLoading: false,

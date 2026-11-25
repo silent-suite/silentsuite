@@ -1768,6 +1768,26 @@ describe('useAuthStore', () => {
       expect(useAuthStore.getState().error).toBeTruthy()
     })
 
+    it('refuses the outage-recovery profile (no contact email, no principal) before any sign-in', async () => {
+      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      vi.mocked(etebaseLogIn).mockClear()
+      // Same shape the degraded restore publishes while Billing is unreachable.
+      useAuthStore.setState({
+        user: { id: 'user-1', email: '', planId: 'unknown', isAdmin: false, rememberDevice: false, onboardedAt: new Date().toISOString() },
+        isAuthenticated: true,
+      })
+      localStorage.setItem(KEY, 'https://server.silentsuite.io')
+
+      await useAuthStore.getState().unlockEtebaseSession('someone@example.com', 'password123')
+
+      expect(etebaseLogIn).not.toHaveBeenCalled()
+      expect(principalCheck.verify).not.toHaveBeenCalled()
+      expect(secureStore.etebase_session).toBeUndefined()
+      expect(localStorage.getItem(KEY)).toBe('https://server.silentsuite.io')
+      expect(offlineQueueClearAll).not.toHaveBeenCalled()
+      expect(useAuthStore.getState().error).toMatch(/sign in again/i)
+    })
+
     it('a string principal from Billing reaches the whoami binding end to end', async () => {
       vi.mocked(fetch).mockResolvedValueOnce({
         ok: true,
