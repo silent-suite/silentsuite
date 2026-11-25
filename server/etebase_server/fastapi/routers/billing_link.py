@@ -265,7 +265,8 @@ def login_email_request(
             user.refresh_from_db(fields=["username"])
             try:
                 validate_login_request(response_data, data, user, "changeLoginEmail", host)
-            except CustomHttpException:
+            except (CustomHttpException, ValueError, TypeError):
+                # nacl raises ValueError for a signature of the wrong length.
                 return invalid_signature
             if LoginEmailChange.objects.filter(challenge_hash=challenge_hash).exists():
                 return invalid_signature

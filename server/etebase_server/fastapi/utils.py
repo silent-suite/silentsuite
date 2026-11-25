@@ -133,6 +133,16 @@ def name_is_held(name: str, exclude_user: t.Optional[UserType] = None) -> bool:
     return held.exists()
 
 
+def name_lock_keys(names: t.Iterable[str]) -> t.List[str]:
+    """The sorted advisory-lock keys for stored login names.
+
+    Callers pass the values exactly as stored (username and email after the storage normalization).
+    Keys fold case and NFKC like the case-insensitive collision checks, so names that collide share
+    one key.
+    """
+    return sorted({normalize_login_name(name) for name in names if name})
+
+
 def claim_names(names: t.Iterable[str]) -> None:
     """Serialize every transaction that may take one of these login names until it ends.
 
@@ -144,7 +154,7 @@ def claim_names(names: t.Iterable[str]) -> None:
     """
     if connection.vendor != "postgresql":
         return
-    keys = sorted({normalize_login_name(name) for name in names if name})
+    keys = name_lock_keys(names)
     with connection.cursor() as cursor:
         for key in keys:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ["etebase-login-name:" + key])

@@ -253,6 +253,16 @@ def test_request_refuses_wrong_action_wrong_key_wrong_user_and_garbage(client, u
         msgpack_encode({"response": b"x"}),
     ]
 
+    short_signature = build_signed_response(
+        username=user.username,
+        challenge_bytes=login_challenge(client, user.username)[1]["challenge"],
+        signing_key=signing_key,
+        action="changeLoginEmail",
+        extra={"newUsername": "new@example.com"},
+    )
+    short_signature["signature"] = short_signature["signature"][:10]
+    attempts.append(msgpack_encode(short_signature))
+
     for body in attempts:
         response = post_request(client, token, body)
         assert response.status_code == 401, response.content[:300]
@@ -728,6 +738,33 @@ def test_sqlite_signup_succeeds_through_claim_names(client, monkeypatch, login_p
     assert response.status_code in (200, 201), response.content[:300]
     assert calls == [["fresh@example.com", "fresh@example.com"]]
     assert User.objects.filter(username="fresh@example.com").exists()
+
+
+def test_signup_locks_the_stored_values_that_a_rename_to_the_same_address_locks(
+    client, monkeypatch, login_pubkey, encryption_pubkey, user_salt
+):
+    from etebase_server.fastapi.routers import authentication
+    from etebase_server.fastapi.utils import name_lock_keys
+
+    calls = []
+    monkeypatch.setattr(authentication, "claim_names", lambda names: calls.append(list(names)))
+    body = {
+        "user": {"username": "Spaced@Example.com", "email": "  Spaced@Example.COM  "},
+        "salt": user_salt,
+        "loginPubkey": login_pubkey,
+        "pubkey": encryption_pubkey,
+        "encryptedContent": b"\x00" * 64,
+    }
+
+    response = msgpack_post(client, f"{AUTH_PREFIX}/signup/", body)
+
+    assert response.status_code in (200, 201), response.content[:300]
+    stored = User.objects.get(username="spaced@example.com")
+    assert calls == [[stored.username, stored.email]]
+    assert stored.email == "Spaced@example.com"
+    # Commit claims the canonical destination: the same key as this signup's stored values.
+    assert name_lock_keys(calls[0]) == name_lock_keys([canonical_login_email(" Spaced@Example.COM ")])
+    assert name_lock_keys(calls[0]) == ["spaced@example.com"]
 
 
 # ---------------------------------------------------------------------------

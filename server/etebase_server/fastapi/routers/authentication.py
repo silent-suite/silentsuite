@@ -361,8 +361,10 @@ def _signup_save_atomic(data: SignupIn, request: Request) -> UserType:
                     status.HTTP_403_FORBIDDEN,
                 )
 
-        # Serializes against renames and other signups claiming the same names (PostgreSQL).
-        claim_names([user_data.username, user_data.email])
+        # Serializes against renames and other signups claiming the same names (PostgreSQL). Lock the
+        # values create_user stores (normalized username, normalized and trimmed email), so a signup
+        # and a rename claiming the same stored address always take the same lock.
+        claim_names([User.normalize_username(user_data.username), User.objects.normalize_email(user_data.email)])
         user_queryset = get_user_queryset(User.objects.all(), CallbackContext(request.path_params))
         if signup_identity_taken(user_queryset, user_data):
             raise HttpError("user_exists", "User already exists", status_code=status.HTTP_409_CONFLICT)

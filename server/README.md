@@ -83,6 +83,31 @@ Container deployments can invoke the same management command through their
 server container. The command is idempotent and reports the number of rows it
 deleted.
 
+### Releasing a held login name
+
+When an account changes its login email, the server keeps the old address
+reserved. Nobody else can sign up with it or rename to it, and it can't be used
+to sign in. The reservation stays when the account is later deleted.
+
+Release a held name only when the owner has approved that specific case, and
+only after written confirmation from the account holder (or from whoever
+controlled a deleted account) that no phone or desktop Bridge is still signed in
+under the old address and that no Bridge still keeps its cache. Without that
+confirmation, leave the hold in place.
+
+```bash
+cd /path/to/silentsuite/server && .venv/bin/python manage.py release_held_username old@example.com --confirm-old-devices-retired
+```
+
+The command prints one line saying whether it released a hold. It refuses
+without `--confirm-old-devices-retired`, and it refuses a name that is some
+account's current username.
+
+Some risk remains after a release. If a phone, desktop Bridge or Bridge cache
+that still uses the old name was missed, it now points at whoever holds the name
+next. A successful sign-in on it with the new holder's password, or reopening
+that Bridge cache, can then reach the new holder's account.
+
 ## Configuration
 
 Copy `etebase-server.ini.example` to `etebase-server.ini` and configure:

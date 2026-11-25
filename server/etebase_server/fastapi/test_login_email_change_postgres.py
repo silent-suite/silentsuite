@@ -93,7 +93,7 @@ def signup_body(username, email, login_pubkey, user_salt):
     }
 
 
-@pytest.mark.parametrize("as_field", ["username", "email"])
+@pytest.mark.parametrize("as_field", ["username", "email", "email-with-whitespace"])
 def test_rename_first_then_signup_claiming_the_destination_is_refused(
     client, user_factory, signing_key, login_pubkey, user_salt, monkeypatch, as_field
 ):
@@ -101,7 +101,12 @@ def test_rename_first_then_signup_claiming_the_destination_is_refused(
 
     user = user_factory(username="mover@example.com", email="mover@example.com")
     grant = accepted_change(client, user, signing_key, "dest@example.com")["grant"]
-    username, email = ("dest@example.com", "a@example.com") if as_field == "username" else ("other", "dest@example.com")
+    # " dest@example.com" is stored trimmed, so it must take the same name lock as the rename.
+    username, email = {
+        "username": ("dest@example.com", "a@example.com"),
+        "email": ("other", "dest@example.com"),
+        "email-with-whitespace": ("other", " dest@example.com"),
+    }[as_field]
 
     committed, signed_up = overlap(
         monkeypatch,
