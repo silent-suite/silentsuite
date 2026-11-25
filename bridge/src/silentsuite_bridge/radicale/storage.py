@@ -775,6 +775,10 @@ class EteSyncItem(Item):
 # --- Radicale Collection ---
 
 
+class UnreadableDavItemError(RuntimeError):
+    """A stored item could not be parsed into a DAV object."""
+
+
 class CollectionDeleteNotAllowed(PermissionError):
     """A DAV client asked to delete a whole collection this account does not administer."""
 
@@ -1040,11 +1044,34 @@ class Collection(BaseCollection):
             )
             yield href_mapper.href
 
+    def _readable_items(self, hrefs):
+        """Yield (href, item) pairs, leaving out stored items that cannot be parsed.
+
+        One unreadable card must not fail a whole listing, multiget or
+        sync-collection response. It is omitted rather than reported as
+        missing: a 404 would make clients delete their local copy. The stored
+        item is not changed. Count only: no href, UID or content is logged.
+        """
+        skipped = 0
+        try:
+            for href in hrefs:
+                try:
+                    item = self._get(href)
+                except UnreadableDavItemError:
+                    skipped += 1
+                    continue
+                yield href, item
+        finally:
+            if skipped:
+                logger.warning(
+                    "DAV response left out %d unreadable item(s)", skipped
+                )
+
     def get_multi(self, hrefs):
-        return ((href, self._get(href)) for href in hrefs)
+        return self._readable_items(hrefs)
 
     def get_all(self):
-        return (self._get(href) for href in self._list())
+        return (item for _href, item in self._readable_items(self._list()))
 
     def has_uid(self, uid):
         for item in self.get_all():
@@ -1104,7 +1131,7 @@ class Collection(BaseCollection):
                 item.add("fn").value = _fallback_contact_fn(item)
 
         except Exception:
-            raise RuntimeError("Failed to parse DAV item") from None
+            raise UnreadableDavItemError("Failed to parse DAV item") from None
 
         mtime_ms = etesync_item.meta.get("mtime", 0)
         last_modified = email.utils.formatdate(mtime_ms / 1000, usegmt=True)
@@ -1420,8 +1447,8 @@ class Storage(BaseStorage):
                     self, posixpath.join(path, dav_collection_path(attributes[0], journal.uid))
                 )
         elif len(attributes) == 2:
-            for href in collection._list():
-                yield collection._get(href)
+            for _href, item in collection._readable_items(collection._list()):
+                yield item
         elif len(attributes) > 2:
             raise RuntimeError(
                 "Found more than one attribute. Shouldn't happen"
