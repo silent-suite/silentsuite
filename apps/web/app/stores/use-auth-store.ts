@@ -40,6 +40,11 @@ export interface User {
   emailVerified?: boolean
   rememberDevice?: boolean
   /**
+   * The Etebase server account id Billing has bound this user to (hosted
+   * only); null or absent while Billing has none recorded.
+   */
+  etebasePrincipal?: number | null
+  /**
    * Legacy account metadata from the old first-run onboarding flow. The web app
    * no longer shows an onboarding window at startup, but we still hydrate the
    * field for backward compatibility with existing billing API responses.
@@ -120,6 +125,11 @@ function parseHostedAccess(value: unknown): HostedAccess | null {
 let subscriptionRequestSequence = 0
 
 /** Publishing a different identity clears the previous account's tuple in the same update. */
+/** Billing's `etebasePrincipal`: a positive integer, anything else is none. */
+function parseEtebasePrincipal(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
 function tupleForIdentity(previous: User | null, nextId: string | undefined) {
   return previous?.id === nextId ? {} : { subscriptionStatus: null, hostedAccess: null, ...clearedAccountNotice }
 }
@@ -1951,7 +1961,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       markHostedValidation(data.id, confirmedRememberDevice)
       clearSignupInProgressMarker()
       set({
-        user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice: data.rememberDevice === true, onboardedAt: data.onboardedAt ?? null },
+        user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice: data.rememberDevice === true, etebasePrincipal: parseEtebasePrincipal(data.etebasePrincipal), onboardedAt: data.onboardedAt ?? null },
         isAuthenticated: true,
         isLoading: false,
         ...tupleForIdentity(get().user, data.id),
@@ -1964,20 +1974,46 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   unlockEtebaseSession: async (email: string, password: string, serverUrl?: string) => {
     set({ isLoading: true, error: null })
-    const currentEmail = get().user?.email
-    if (currentEmail && currentEmail.toLowerCase() !== email.toLowerCase()) {
+    const unlockingUser = get().user
+    // A Billing user's session lives on the hosted server only; a custom
+    // server could hold an unrelated account under the same name or id.
+    const hostedOwner = !isSelfHosted && !!unlockingUser && unlockingUser.id !== 'self-hosted'
+    if (hostedOwner && isCustomServer(serverUrl)) {
+      set({ isLoading: false, error: 'This account signs in on silentsuite.io. Leave the server field empty and try again.' })
+      return
+    }
+    // With a recorded principal the server proves the account (whoami), so the
+    // login name may differ from the Billing contact email. Without one, the
+    // typed email must match the signed-in account as before.
+    const principal = hostedOwner ? unlockingUser?.etebasePrincipal ?? null : null
+    const currentEmail = unlockingUser?.email
+    if (principal === null && currentEmail && currentEmail.toLowerCase() !== email.toLowerCase()) {
       set({
         isLoading: false,
         error: 'Please unlock this browser with the email address already signed in on this device.',
       })
       return
     }
-    const unlockingUser = get().user
     const unlockEpoch = getAccountEpoch()
     const unlockGeneration = readLogoutGeneration()
     try {
       const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
-      const { savedSession } = await etebaseLogIn(email, password, serverUrl)
+      const { savedSession } = await etebaseLogIn(email, password, hostedOwner ? undefined : serverUrl)
+      let identity: import('@/app/lib/session-scope').SessionIdentity | null = null
+      if (principal !== null) {
+        const { verifySessionPrincipal } = await import('@/app/lib/login-email-change')
+        const verified = await verifySessionPrincipal(savedSession, principal)
+        if (!verified.ok) {
+          set({
+            isLoading: false,
+            error: verified.reason === 'mismatch'
+              ? 'Please unlock this browser with the email address of the account signed in on this device.'
+              : 'We could not confirm this account right now. Please try again.',
+          })
+          return
+        }
+        identity = verified.identity
+      }
       // The account changed while signing in (logout, another account): this
       // session belongs to nobody here any more.
       if (get().user !== unlockingUser || getAccountEpoch() !== unlockEpoch || readLogoutGeneration() !== unlockGeneration) {
@@ -1990,6 +2026,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await secureSet('etebase_session', savedSession, {
         persist: keepsSessionOnDevice(serverUrl, unlockingUser?.rememberDevice),
         owner: unlockingUser?.id ?? null,
+        ...(identity ? { identity } : {}),
       })
       // Save the server selection only now that it has been verified.
       if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
@@ -2111,7 +2148,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       syncAdminCookie(isAdmin, rememberDevice)
       markHostedValidation(data.id, rememberDevice)
-      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true, ...tupleForIdentity(get().user, data.id) })
+      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, etebasePrincipal: parseEtebasePrincipal(data.etebasePrincipal), onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true, ...tupleForIdentity(get().user, data.id) })
+      // Learn a login name changed elsewhere; never blocks or fails the refresh.
+      void import('@/app/lib/login-email-change').then((m) => m.syncLoginIdentity()).catch(() => undefined)
       return true
     } catch (err) {
       logger.warn('[auth-store] Session refresh failed (network), leaving session intact:', err)
@@ -2257,6 +2296,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             isAdmin,
             emailVerified: data.emailVerified ?? false,
             rememberDevice,
+            etebasePrincipal: parseEtebasePrincipal(data.etebasePrincipal),
             onboardedAt: data.onboardedAt ?? null,
           },
           isAuthenticated: true,
@@ -2462,7 +2502,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       syncAdminCookie(isAdmin, rememberDevice)
       markHostedValidation(refreshData.id, rememberDevice)
       set({
-        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin, emailVerified: refreshData.emailVerified ?? false, rememberDevice, onboardedAt: refreshData.onboardedAt ?? null },
+        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin, emailVerified: refreshData.emailVerified ?? false, rememberDevice, etebasePrincipal: parseEtebasePrincipal(refreshData.etebasePrincipal), onboardedAt: refreshData.onboardedAt ?? null },
         isAuthenticated: true,
         subscriptionStatus: subData.status,
         hostedAccess: parseHostedAccess(subData.hostedAccess),

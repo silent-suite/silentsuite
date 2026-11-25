@@ -97,6 +97,46 @@ export async function changePassword(
   await account.changePassword(newPassword);
 }
 
+/** The signed request the server's login email change route expects. */
+export interface LoginEmailChangeSignature {
+  response: Uint8Array;
+  signature: Uint8Array;
+}
+
+/**
+ * Sign a request to change this account's login to `newUsername` with the
+ * current login key. Only fetches a login challenge; the caller posts the result.
+ */
+export async function signLoginEmailChange(
+  account: Etebase.Account,
+  newUsername: string,
+): Promise<LoginEmailChangeSignature> {
+  return await account.signLoginEmailChange(newUsername);
+}
+
+function msgpackBin(bytes: Uint8Array): number[] {
+  const n = bytes.length;
+  if (n < 0x100) return [0xc4, n];
+  if (n < 0x10000) return [0xc5, n >> 8, n & 0xff];
+  return [0xc6, (n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
+}
+
+function msgpackFixstr(value: string): number[] {
+  return [0xa0 | value.length, ...Array.from(value, (c) => c.charCodeAt(0))];
+}
+
+/**
+ * Msgpack body `{response, signature}` (both binary), the same encoding the
+ * SDK uses for change_password, for posting a signed login email change.
+ */
+export function encodeLoginEmailChangeRequest(signed: LoginEmailChangeSignature): Uint8Array {
+  return Uint8Array.from([
+    0x82,
+    ...msgpackFixstr('response'), ...msgpackBin(signed.response), ...signed.response,
+    ...msgpackFixstr('signature'), ...msgpackBin(signed.signature), ...signed.signature,
+  ]);
+}
+
 /**
  * Log out and invalidate the session.
  */

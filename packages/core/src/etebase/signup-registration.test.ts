@@ -213,3 +213,45 @@ describe('signup-scoped registration token through the real SDK transport', () =
     expect(requests).toHaveLength(0);
   });
 });
+
+describe('login email change signature through the real SDK', () => {
+  it('signs changeLoginEmail with the current login key and only fetches a challenge', async () => {
+    const account = await core.signUp(SERVER_URL, 'synthetic@example.invalid', PASSWORD);
+    requests.length = 0;
+
+    const signed = await core.signLoginEmailChange(account, 'renamed@example.invalid');
+
+    expect(requests.map((r) => new URL(r.url).pathname)).toEqual(['/api/v1/authentication/login_challenge/']);
+    expect(codec.msgpackDecode(requests[0].body!)).toEqual({ username: 'synthetic@example.invalid' });
+    const decoded = codec.msgpackDecode(signed.response);
+    expect(Object.keys(decoded).sort()).toEqual(['action', 'challenge', 'host', 'newUsername', 'username']);
+    expect(decoded).toMatchObject({
+      username: 'synthetic@example.invalid',
+      host: 'umbrel.test.invalid',
+      action: 'changeLoginEmail',
+      newUsername: 'renamed@example.invalid',
+    });
+    expect(Array.from(decoded.challenge)).toEqual(Array.from(new Uint8Array(32)));
+    const { LoginCryptoManager } = require('etebase/dist/lib-cjs/Crypto.js');
+    expect(LoginCryptoManager.verifyDetached(signed.response, signed.signature, signupBody.loginPubkey)).toBe(true);
+    // The account itself is untouched: same login name, still usable.
+    expect(account.user.username).toBe('synthetic@example.invalid');
+
+    const body = core.encodeLoginEmailChangeRequest(signed);
+    const decodedBody = codec.msgpackDecode(body);
+    expect(Object.keys(decodedBody).sort()).toEqual(['response', 'signature']);
+    expect(Array.from(decodedBody.response)).toEqual(Array.from(signed.response));
+    expect(Array.from(decodedBody.signature)).toEqual(Array.from(signed.signature));
+    // Same encoding the SDK itself produces for change_password-style bodies.
+    expect(Array.from(body)).toEqual(Array.from(codec.msgpackEncode({ response: signed.response, signature: signed.signature })));
+  }, 60_000);
+
+  it('encodes long binary values with the right msgpack length headers', () => {
+    for (const size of [10, 300, 70_000]) {
+      const response = new Uint8Array(size).fill(7);
+      const signature = new Uint8Array(64).fill(9);
+      const body = core.encodeLoginEmailChangeRequest({ response, signature });
+      expect(Array.from(body)).toEqual(Array.from(codec.msgpackEncode({ response, signature })));
+    }
+  });
+});

@@ -408,7 +408,9 @@ describe('Security page account action on the hosted frontend with a self-hosted
   })
 })
 
-const LIVE_ACCOUNT = { fixture: 'live-etebase-account' }
+// The session's login name differs from the Billing contact email on purpose:
+// re-authentication must use the login name (after a login email change they can differ).
+const LIVE_ACCOUNT = { fixture: 'live-etebase-account', user: { username: 'login@example.test' } }
 const TEST_ACCOUNT = { fixture: 'verification-session' }
 const PASSWORD_PATCH_URL = 'https://api.silentsuite.io/account/password'
 const SUCCESS_TEXT = 'Password updated successfully. Other sessions have been signed out.'
@@ -445,7 +447,7 @@ describe('Security page password change billing boundary', () => {
     submitPasswordChange()
 
     expect(await screen.findByText(SUCCESS_TEXT)).toBeInTheDocument()
-    expect(mocks.core.logIn).toHaveBeenCalledWith('https://server.silentsuite.io', 'fixture@example.test', 'OldPassw0rd')
+    expect(mocks.core.logIn).toHaveBeenCalledWith('https://server.silentsuite.io', 'login@example.test', 'OldPassw0rd')
     expect(mocks.core.changePassword).toHaveBeenCalledWith(LIVE_ACCOUNT, 'NewPassw0rd')
     // Hosted user without "Keep me signed in": the new session stays in the tab.
     expect(mocks.secureStorage.secureSet).toHaveBeenCalledWith('etebase_session', 'saved-session', { persist: false, owner: 'hosted-user-1' })
@@ -465,7 +467,7 @@ describe('Security page password change billing boundary', () => {
     submitPasswordChange()
 
     expect(await screen.findByText(BILLING_WARNING)).toBeInTheDocument()
-    expect(mocks.core.logIn).toHaveBeenCalledWith(CUSTOM_SERVER_URL, 'fixture@example.test', 'OldPassw0rd')
+    expect(mocks.core.logIn).toHaveBeenCalledWith(CUSTOM_SERVER_URL, 'login@example.test', 'OldPassw0rd')
     expect(mocks.core.changePassword).toHaveBeenCalledWith(LIVE_ACCOUNT, 'NewPassw0rd')
     // A custom server always keeps the session on the device.
     expect(mocks.secureStorage.secureSet).toHaveBeenCalledWith('etebase_session', 'saved-session', { persist: true, owner: null })
@@ -482,7 +484,7 @@ describe('Security page password change billing boundary', () => {
     submitPasswordChange()
 
     expect(await screen.findByText(SUCCESS_TEXT)).toBeInTheDocument()
-    expect(mocks.core.logIn).toHaveBeenCalledWith('https://server.silentsuite.io', 'fixture@example.test', 'OldPassw0rd')
+    expect(mocks.core.logIn).toHaveBeenCalledWith('https://server.silentsuite.io', 'login@example.test', 'OldPassw0rd')
     expect(mocks.core.changePassword).toHaveBeenCalledWith(LIVE_ACCOUNT, 'NewPassw0rd')
     expect(passwordPatchCalls()).toEqual([])
   })

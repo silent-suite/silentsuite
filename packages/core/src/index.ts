@@ -9,8 +9,11 @@ export {
   saveSession,
   getAccountFingerprint,
   changePassword,
+  signLoginEmailChange,
+  encodeLoginEmailChangeRequest,
   logout,
 } from './etebase/client.js';
+export type { LoginEmailChangeSignature } from './etebase/client.js';
 
 // Etebase constants
 export {
