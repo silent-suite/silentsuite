@@ -23,6 +23,7 @@ from etebase_server.fastapi.utils import identity_snapshot
 from etebase_server.myauth.models import get_typed_user_model
 
 pytestmark = [
+    pytest.mark.postgres_only,
     pytest.mark.django_db(transaction=True),
     pytest.mark.skipif(connection.vendor != "postgresql", reason="needs PostgreSQL row and advisory locks"),
 ]
