@@ -74,11 +74,12 @@ export type PrincipalCheck =
  * recorded (whoami id == principal). On any refusal the fresh session is
  * logged out, so nothing from it survives.
  */
-export async function verifySessionPrincipal(savedSession: string, principal: number): Promise<PrincipalCheck> {
+export async function verifySessionPrincipal(savedSession: string, principal: string): Promise<PrincipalCheck> {
   const core = await import('@silentsuite/core')
   const account = await core.restoreSession(ETEBASE_SERVER_URL, savedSession)
   const answer = account.authToken ? await fetchWhoami(account.serverUrl, account.authToken) : null
-  if (answer && answer.id === principal) return { ok: true, identity: answer }
+  // Billing sends the principal as a decimal string; whoami sends a number.
+  if (answer && String(answer.id) === principal) return { ok: true, identity: answer }
   try {
     await core.logout(account)
   } catch {
@@ -117,7 +118,12 @@ async function runIdentitySync(): Promise<void> {
   const answer = await fetchWhoami(account.serverUrl, token)
   if (!answer || !current()) return
   const next = nextSessionIdentity(saved.identity, answer)
-  if (!next) return
+  if (!next) {
+    // Storage is already current (e.g. another tab stored this rename), but
+    // this tab's live account may still carry the old name.
+    if (saved.identity && saved.identity.id === answer.id) setLiveUsername(token, saved.identity.username)
+    return
+  }
 
   account.user.username = next.username
   const updated = await core.saveSession(account)
@@ -129,8 +135,13 @@ async function runIdentitySync(): Promise<void> {
     await secureRemoveIfEqual('etebase_session', updated)
     return
   }
+  setLiveUsername(token, next.username)
+}
+
+/** Align the live account of the same session (same token) with the stored name. */
+function setLiveUsername(token: string, username: string): void {
   const live = useEtebaseStore.getState().account as { authToken?: string | null; user?: { username?: string } } | null
-  if (live?.user && live.authToken === token) live.user.username = next.username
+  if (live?.user && live.authToken === token && live.user.username !== username) live.user.username = username
 }
 
 /** The login name of the saved session (the name the server knows), or null. */

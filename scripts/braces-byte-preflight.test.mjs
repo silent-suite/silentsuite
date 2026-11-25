@@ -30,7 +30,7 @@ const walkerGuard = [
 // The pinned etebase SDK patch, the only patch allowed beside braces.
 const etebaseKey = 'etebase@0.43.1'
 const etebasePatch = 'patches/etebase@0.43.1.patch'
-const etebaseDigest = '78084d835e90b41b34784e7f037bfa8ca5ee715d614a39d2779539293a8fcb02'
+const etebaseDigest = 'ed9318d4a1ed8315fbdae808f01f5af710a05dbe7de8dd571352a77a16119601'
 const etebaseLockEntry = `  ${etebaseKey}:\n    hash: ${etebaseDigest}\n    path: ${etebasePatch}\n`
 
 const temps = []

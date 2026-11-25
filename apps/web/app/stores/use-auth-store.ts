@@ -41,9 +41,11 @@ export interface User {
   rememberDevice?: boolean
   /**
    * The Etebase server account id Billing has bound this user to (hosted
-   * only); null or absent while Billing has none recorded.
+   * only), as a canonical decimal string; null or absent while Billing has
+   * none recorded; 'malformed' when Billing sent something else (unlock then
+   * fails closed).
    */
-  etebasePrincipal?: number | null
+  etebasePrincipal?: string | null | 'malformed'
   /**
    * Legacy account metadata from the old first-run onboarding flow. The web app
    * no longer shows an onboarding window at startup, but we still hydrate the
@@ -125,9 +127,17 @@ function parseHostedAccess(value: unknown): HostedAccess | null {
 let subscriptionRequestSequence = 0
 
 /** Publishing a different identity clears the previous account's tuple in the same update. */
-/** Billing's `etebasePrincipal`: a positive integer, anything else is none. */
-function parseEtebasePrincipal(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+/**
+ * Billing's `etebasePrincipal` (a decimal string; a positive integer is also
+ * accepted) as a canonical decimal string. Absent or null: none recorded.
+ * Anything else: 'malformed', never treated as none.
+ */
+export function parseEtebasePrincipal(value: unknown): string | null | 'malformed' {
+  if (value === undefined || value === null) return null
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? String(value) : 'malformed'
+  if (typeof value !== 'string' || !/^[0-9]{1,30}$/.test(value)) return 'malformed'
+  const canonical = BigInt(value).toString()
+  return canonical === '0' ? 'malformed' : canonical
 }
 
 function tupleForIdentity(previous: User | null, nextId: string | undefined) {
@@ -1986,6 +1996,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // login name may differ from the Billing contact email. Without one, the
     // typed email must match the signed-in account as before.
     const principal = hostedOwner ? unlockingUser?.etebasePrincipal ?? null : null
+    if (principal === 'malformed') {
+      // Fail closed before any sign-in: no fresh session exists, nothing is stored.
+      set({ isLoading: false, error: 'We could not confirm this account right now. Please try again.' })
+      return
+    }
     const currentEmail = unlockingUser?.email
     if (principal === null && currentEmail && currentEmail.toLowerCase() !== email.toLowerCase()) {
       set({

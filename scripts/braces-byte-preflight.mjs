@@ -60,7 +60,7 @@ export function packageRootOf(entry, name) {
 // The only patch allowed beside braces: the pinned etebase SDK patch, bound by the same lock-hash rule.
 const etebaseKey = 'etebase@0.43.1'
 const etebasePatchPath = 'patches/etebase@0.43.1.patch'
-const etebasePatchDigest = '78084d835e90b41b34784e7f037bfa8ca5ee715d614a39d2779539293a8fcb02'
+const etebasePatchDigest = 'ed9318d4a1ed8315fbdae808f01f5af710a05dbe7de8dd571352a77a16119601'
 const lockBinding = (key, path, digest) => `  ${key}:\n    hash: ${digest}\n    path: ${path}\n`
 
 function checkBinding(root, failures) {
