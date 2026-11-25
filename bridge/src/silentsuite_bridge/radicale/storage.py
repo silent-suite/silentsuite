@@ -1103,8 +1103,10 @@ class Collection(BaseCollection):
         if etesync_item is None:
             return None
 
+        # Reading decrypts the item: backend and decryption failures propagate.
+        stored_content = etesync_item.content
         try:
-            item = vobject.readOne(etesync_item.content)
+            item = vobject.readOne(stored_content)
 
             # vCard 4.0 -> 3.0 compatibility for broader client support
             if (
@@ -1114,8 +1116,8 @@ class Collection(BaseCollection):
                 if hasattr(item, "kind") and item.kind.value.lower() == "group":
                     pass
                 else:
-                    content = _vcard4_media_to_3(etesync_item.content)
-                    if content != etesync_item.content:
+                    content = _vcard4_media_to_3(stored_content)
+                    if content != stored_content:
                         item = vobject.readOne(content)
 
                     item.contents["version"][0].value = "3.0"
@@ -1130,8 +1132,14 @@ class Collection(BaseCollection):
             if item.name == "VCARD" and not hasattr(item, "fn"):
                 item.add("fn").value = _fallback_contact_fn(item)
 
+        except MemoryError:
+            raise
         except Exception:
-            raise UnreadableDavItemError("Failed to parse DAV item") from None
+            # Only contact listings leave an unparseable card out; events and
+            # tasks keep failing the request.
+            if self.content_suffix == ".vcf":
+                raise UnreadableDavItemError("Failed to parse DAV item") from None
+            raise RuntimeError("Failed to parse DAV item") from None
 
         mtime_ms = etesync_item.meta.get("mtime", 0)
         last_modified = email.utils.formatdate(mtime_ms / 1000, usegmt=True)

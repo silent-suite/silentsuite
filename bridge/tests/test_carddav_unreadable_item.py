@@ -1,8 +1,9 @@
 """One stored card the Bridge cannot parse must not fail a whole CardDAV response."""
 import logging
 import xml.etree.ElementTree as ET
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock
 
+import pytest
 from playhouse.sqlite_ext import SqliteExtDatabase
 
 from silentsuite_bridge import config
@@ -45,7 +46,7 @@ def _good_content(uid):
     return f"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:{uid}\r\nFN:Name {uid}\r\nEND:VCARD"
 
 
-def _dav_setup(tmp_path, monkeypatch):
+def _dav_setup(tmp_path, monkeypatch, col_type="etebase.vcard", suffix=".vcf", bad_content=BAD_CONTENT):
     app = _application(tmp_path, monkeypatch)
     database = SqliteExtDatabase(config.DATABASE_FILE, pragmas={"foreign_keys": 1})
     db.database_proxy.initialize(database)
@@ -71,11 +72,11 @@ def _dav_setup(tmp_path, monkeypatch):
     )
 
     items = {}
-    for uid, content in [(uid, _good_content(uid)) for uid in GOOD_UIDS] + [(BAD_UID, BAD_CONTENT)]:
+    for uid, content in [(uid, _good_content(uid)) for uid in GOOD_UIDS] + [(BAD_UID, bad_content)]:
         cache_item = models.ItemEntity.create(
             collection=cache_col, uid=uid, remote_uid=f"remote-{uid}", eb_item=b"item-cache"
         )
-        models.HrefMapper.create(content=cache_item, href=f"{uid}.vcf")
+        models.HrefMapper.create(content=cache_item, href=f"{uid}{suffix}")
         item = MagicMock()
         item.item.uid = uid
         item.cache_item = cache_item
@@ -87,7 +88,7 @@ def _dav_setup(tmp_path, monkeypatch):
 
     cached_collection = MagicMock()
     cached_collection.cache_col = cache_col
-    cached_collection.col_type = "etebase.vcard"
+    cached_collection.col_type = col_type
     cached_collection.stoken = "remote-stoken"
     cached_collection.list.return_value = list(items.values())
     cached_collection.get.side_effect = items.get
@@ -210,10 +211,57 @@ def test_direct_get_of_unreadable_card_fails_alone(tmp_path, monkeypatch):
     status, _headers, _body = _request(
         app, f"/{USERNAME}/contacts/{BAD_UID}.vcf", method="GET", depth=None, auth=_basic_auth()
     )
-    assert status.startswith("5")
+    # Storage.discover already turns a failed single-item read into "not found".
+    assert status == "404 Not Found"
 
     status, _headers, body = _request(
         app, f"/{USERNAME}/contacts/", body=PROPFIND_ETAGS, depth="1", auth=_basic_auth()
     )
     assert status == "207 Multi-Status"
     assert {f"{uid}.vcf" for uid in GOOD_UIDS} <= set(_responses(body))
+
+
+class _DecryptError(Exception):
+    """Stands in for an Etebase decryption or backend failure."""
+
+
+def _make_content_raise(item, error):
+    type(item).content = PropertyMock(side_effect=error)
+
+
+def test_content_read_failure_fails_listing_instead_of_omitting(tmp_path, monkeypatch, caplog):
+    app, _cache_col, items, direct_collection = _dav_setup(tmp_path, monkeypatch)
+    _make_content_raise(items[BAD_UID], _DecryptError("decrypt failed"))
+    caplog.set_level(logging.WARNING)
+
+    with pytest.raises(_DecryptError):
+        list(direct_collection.get_multi([f"{uid}.vcf" for uid in (*GOOD_UIDS, BAD_UID)]))
+
+    status, _headers, _body = _request(
+        app, f"/{USERNAME}/contacts/", body=PROPFIND_ETAGS, depth="1", auth=_basic_auth()
+    )
+    assert status.startswith("5")
+    assert "unreadable item" not in caplog.text
+
+
+def test_memory_error_while_reading_or_parsing_propagates(tmp_path, monkeypatch):
+    _app, _cache_col, items, direct_collection = _dav_setup(tmp_path, monkeypatch)
+    _make_content_raise(items[BAD_UID], MemoryError())
+    with pytest.raises(MemoryError):
+        list(direct_collection.get_multi([f"{BAD_UID}.vcf"]))
+
+    monkeypatch.setattr(bridge_storage.vobject, "readOne", MagicMock(side_effect=MemoryError()))
+    with pytest.raises(MemoryError):
+        list(direct_collection.get_multi([f"{GOOD_UIDS[0]}.vcf"]))
+
+
+def test_unparseable_calendar_item_still_fails_listing(tmp_path, monkeypatch):
+    _app, _cache_col, _items, direct_collection = _dav_setup(
+        tmp_path, monkeypatch, col_type="etebase.vevent", suffix=".ics", bad_content="not a calendar"
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        list(direct_collection.get_multi([f"{BAD_UID}.ics"]))
+
+    assert type(error.value) is RuntimeError
+    assert not isinstance(error.value, bridge_storage.UnreadableDavItemError)
