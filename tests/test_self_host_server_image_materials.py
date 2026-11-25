@@ -189,9 +189,11 @@ def test_the_lock_documents_which_environment_each_hash_serves():
 def test_the_glibc_ci_job_installs_the_same_lock_under_the_same_rules():
     workflow = (ROOT / ".github/workflows/ci-server.yml").read_text(encoding="utf-8")
     install = [line for line in workflow.splitlines() if "-r requirements.txt" in line]
-    assert len(install) == 1, install
-    assert "--require-hashes" in install[0]
-    assert "--only-binary=:all:" in install[0]
+    # One per server test job (SQLite and PostgreSQL); every one must use the same locked rules.
+    assert install, "no server job installs requirements.txt"
+    for line in install:
+        assert "--require-hashes" in line, line
+        assert "--only-binary=:all:" in line, line
 
 
 def test_the_server_test_job_runs_the_interpreter_the_lock_was_built_for():
