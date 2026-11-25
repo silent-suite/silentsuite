@@ -61,12 +61,32 @@ export function setSessionScope(scope: SessionScope, owner: string | null = null
   }
 }
 
+/**
+ * The server identity a saved session was last confirmed for (server `whoami`),
+ * kept with the session in the same place and replaced or removed with it.
+ */
+export interface SessionIdentity {
+  id: number
+  loginVersion: number
+  username: string
+}
+
+export function isSessionIdentity(value: unknown): value is SessionIdentity {
+  const v = value as Partial<SessionIdentity> | null
+  return typeof v === 'object' && v !== null
+    && Number.isSafeInteger(v.id) && (v.id as number) > 0
+    && Number.isSafeInteger(v.loginVersion) && (v.loginVersion as number) >= 0
+    && typeof v.username === 'string' && v.username.length > 0
+}
+
 interface TabSessionRecord {
   /** The logout generation when it was written; any later logout voids it. */
   generation: string | null
   /** The Billing user this copy was confirmed for; null until confirmed. */
   owner: string | null
   session: string
+  /** Absent until the first confirmed `whoami` for this session. */
+  identity?: SessionIdentity
 }
 
 /** The current logout generation, or undefined when it can't be read. */
@@ -117,7 +137,8 @@ function readTabRecord(): TabSessionRecord | null {
     if (typeof record.session === 'string' && record.session
       && generation !== undefined && record.generation === generation
       && (record.owner === null || typeof record.owner === 'string')) {
-      return { generation: record.generation, owner: record.owner, session: record.session }
+      const identity = isSessionIdentity(record.identity) ? { identity: record.identity } : {}
+      return { generation: record.generation, owner: record.owner, session: record.session, ...identity }
     }
   } catch {
     // Unreadable: treated as stale below.
@@ -135,6 +156,12 @@ export function readTabSession(): string | null {
   return readTabRecord()?.session ?? null
 }
 
+/** This tab's session copy together with the identity saved beside it. */
+export function readTabSessionWithIdentity(): { session: string; identity: SessionIdentity | null } | null {
+  const record = readTabRecord()
+  return record ? { session: record.session, identity: record.identity ?? null } : null
+}
+
 /** The Billing user this tab's copy was confirmed for, or null. */
 export function readTabSessionOwner(): string | null {
   return readTabRecord()?.owner ?? null
@@ -144,13 +171,13 @@ export function readTabSessionOwner(): string | null {
  * Write this tab's copy, replacing any earlier one. The old copy is removed
  * first, so a failed write never leaves it readable.
  */
-export function writeTabSession(value: string, owner: string | null = null): void {
+export function writeTabSession(value: string, owner: string | null = null, identity: SessionIdentity | null = null): void {
   removeTabSession()
   const storage = tabStorage()
   if (!storage) throw new Error('Tab storage is not available')
   const generation = currentLogoutGeneration()
   if (generation === undefined) throw new Error('The logout generation is not readable')
-  const record: TabSessionRecord = { generation, owner, session: value }
+  const record: TabSessionRecord = { generation, owner, session: value, ...(identity ? { identity } : {}) }
   storage.setItem(TAB_SESSION_KEY, JSON.stringify(record))
 }
 

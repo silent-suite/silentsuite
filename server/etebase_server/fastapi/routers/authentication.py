@@ -12,14 +12,16 @@ import nacl.signing
 from django.conf import settings
 from django.contrib.auth import user_logged_in, user_logged_out
 from django.core import exceptions as django_exceptions
-from django.db import transaction
+from django.db import OperationalError, transaction
 from django.db.models import Q
+from django.utils import timezone
 from django.utils.functional import cached_property
 from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import JSONResponse
 from typing_extensions import Literal
 
 from etebase_server.django import app_settings, models
-from etebase_server.django.models import UserInfo
+from etebase_server.django.models import HeldUsername, LoginEmailChange, UserInfo
 from etebase_server.django.signals import user_signed_up
 from etebase_server.django.token_auth.models import AuthToken
 from etebase_server.django.utils import CallbackContext, create_user, get_user_queryset
@@ -28,7 +30,16 @@ from etebase_server.myauth.models import UserType, get_typed_user_model
 from ..dependencies import AuthData, get_auth_data, get_authenticated_user
 from ..exceptions import AuthenticationFailed, HttpError, transform_validation_error
 from ..msgpack import AuthMsgpackRoute, MsgpackResponse
-from ..utils import BaseModel, get_user_by_username_or_email, msgpack_decode, msgpack_encode, permission_responses
+from ..utils import (
+    BaseModel,
+    claim_names,
+    get_user_by_username_or_email,
+    identity_snapshot,
+    msgpack_decode,
+    msgpack_encode,
+    normalize_login_name,
+    permission_responses,
+)
 from .owner import owner_mode_enabled, signup_grant_valid
 
 User = get_typed_user_model()
@@ -50,7 +61,7 @@ class LoginResponse(BaseModel):
     username: str
     challenge: bytes
     host: str
-    action: Literal["login", "changePassword"]
+    action: Literal["login", "changePassword", "changeLoginEmail"]
 
 
 class UserOut(BaseModel):
@@ -108,6 +119,19 @@ class ChangePassword(Authentication):
     def response_data(self) -> ChangePasswordResponse:
         try:
             return ChangePasswordResponse(**msgpack_decode(self.response))
+        except (msgpack.UnpackException, ValueError, TypeError):
+            raise HttpError("invalid_response", "Invalid authentication response.") from None
+
+
+class ChangeLoginEmailResponse(LoginResponse):
+    newUsername: str
+
+
+class ChangeLoginEmail(Authentication):
+    @cached_property
+    def response_data(self) -> ChangeLoginEmailResponse:
+        try:
+            return ChangeLoginEmailResponse(**msgpack_decode(self.response))
         except (msgpack.UnpackException, ValueError, TypeError):
             raise HttpError("invalid_response", "Invalid authentication response.") from None
 
@@ -237,6 +261,16 @@ def change_password(data: ChangePassword, request: Request, auth_data: AuthData 
         validate_login_request(data.response_data, data, user, "changePassword", host)
         save_changed_password(data, user)
         AuthToken.objects.filter(user=user).exclude(pk=auth_data.token.pk).delete()
+        # A login change signed with the old credentials must not commit after a password change.
+        LoginEmailChange.objects.filter(user=user, status__in=LoginEmailChange.OPEN_STATUSES).update(
+            status=LoginEmailChange.SUPERSEDED, ended_at=timezone.now()
+        )
+
+
+@authentication_router.get("/whoami/", responses=permission_responses)
+def whoami(user: UserType = Depends(get_authenticated_user)):
+    """The caller's current identity `{id, username, loginVersion}` from one consistent read (JSON)."""
+    return JSONResponse(identity_snapshot(user.pk))
 
 
 @authentication_router.post("/dashboard_url/", responses=permission_responses)
@@ -294,12 +328,28 @@ def signup_identity_taken(user_queryset, user_data: UserSignup) -> bool:
         taken |= Q(**{User.EMAIL_FIELD + "__iexact": username})
     if email:
         taken |= Q(**{User.USERNAME_FIELD + "__iexact": email}) | Q(**{User.EMAIL_FIELD + "__iexact": email})
-    return user_queryset.filter(taken).exists()
+    if user_queryset.filter(taken).exists():
+        return True
+    # Checked after the users: a rename that commits in between is then seen by one of the two
+    # reads (the old name is either still a username or already held).
+    held_names = {normalize_login_name(username)} | ({normalize_login_name(email)} if email else set())
+    return HeldUsername.objects.filter(name__in=held_names).exists()
 
 
 def signup_save(data: SignupIn, request: Request) -> UserType:
     user_data = data.user
     check_registration_token(request, user_data.username)
+    try:
+        return _signup_save_atomic(data, request)
+    except OperationalError:
+        # SQLite: a concurrent writer claimed the database between our checks and our insert.
+        raise HttpError(
+            "try_again", "The server is busy. Please try again.", status.HTTP_503_SERVICE_UNAVAILABLE
+        ) from None
+
+
+def _signup_save_atomic(data: SignupIn, request: Request) -> UserType:
+    user_data = data.user
     with transaction.atomic():
         bootstrap_token = settings.ETEBASE_BOOTSTRAP_ADMIN_TOKEN
         if bootstrap_token and not models.UserInfo.objects.exists():
@@ -311,6 +361,10 @@ def signup_save(data: SignupIn, request: Request) -> UserType:
                     status.HTTP_403_FORBIDDEN,
                 )
 
+        # Serializes against renames and other signups claiming the same names (PostgreSQL). Lock the
+        # values create_user stores (normalized username, normalized and trimmed email), so a signup
+        # and a rename claiming the same stored address always take the same lock.
+        claim_names([User.normalize_username(user_data.username), User.objects.normalize_email(user_data.email)])
         user_queryset = get_user_queryset(User.objects.all(), CallbackContext(request.path_params))
         if signup_identity_taken(user_queryset, user_data):
             raise HttpError("user_exists", "User already exists", status_code=status.HTTP_409_CONFLICT)
@@ -330,6 +384,8 @@ def signup_save(data: SignupIn, request: Request) -> UserType:
             transform_validation_error("user", e)
         except django_exceptions.PermissionDenied as e:
             raise HttpError("signup_disabled", str(e), status.HTTP_403_FORBIDDEN) from None
+        except OperationalError:
+            raise
         except Exception:
             logger.exception("Unexpected signup error while creating user")
             raise HttpError("generic", "An error occurred during signup. Please try again.")

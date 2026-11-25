@@ -50,7 +50,7 @@ export const ROUTE_TEMPLATES = [
   '/settings', '/settings/account', '/settings/desktop', '/settings/experimental', '/settings/export',
   '/settings/import', '/settings/mobile', '/settings/report', '/settings/security', '/settings/sharing',
   '/settings/subscription',
-  '/login', '/verify-email', '/offline',
+  '/login', '/verify-email', '/confirm-login-email', '/offline',
   '/signup', '/signup/plan', '/signup/verify-email', '/signup/pending-payment', '/signup/success', '/signup/cancel',
   'other',
 ] as const

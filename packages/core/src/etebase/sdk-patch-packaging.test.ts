@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 // The etebase SDK is consumed through a pnpm patch (patches/etebase@0.43.1.patch).
@@ -29,6 +30,15 @@ describe('etebase SDK patch packaging contract', () => {
         depsStage.some((line) => new RegExp(`^COPY\\s+${dir}/?\\s+${dir}/?$`).test(line.trim())),
         `Dockerfile.web must COPY ${dir}/ before pnpm install --frozen-lockfile`,
       ).toBe(true);
+    }
+  });
+
+  it('patches every shipped SDK build with signLoginEmailChange', () => {
+    const sdkRoot = resolve(dirname(createRequire(import.meta.url).resolve('etebase')), '../..');
+    for (const build of ['dist/lib/Etebase.js', 'dist/lib-cjs/Etebase.js', 'dist/umd/Etebase.js']) {
+      const source = readFileSync(resolve(sdkRoot, build), 'utf8');
+      expect(source.match(/signLoginEmailChange\(/g)?.length, build).toBe(1);
+      expect(source, build).toContain('"changeLoginEmail"');
     }
   });
 });

@@ -140,7 +140,7 @@ def test_consume_requires_correct_machine_key_without_burning_proof(user_factory
 
     response = consume(client, proof)
     assert response.status_code == 200
-    assert response.json() == {"username": "proof-user", "email": "proof@example.com"}
+    assert response.json() == {"username": "proof-user", "email": "proof@example.com", "id": user.pk, "loginVersion": 0}
 
 
 def test_consumption_is_one_time(user_factory, monkeypatch):
@@ -332,7 +332,7 @@ def test_status_proof_issue_requires_authenticated_user():
     assert BillingLinkProof.objects.count() == 0
 
 
-def test_status_proof_consume_returns_only_the_username(user_factory, monkeypatch):
+def test_status_proof_consume_returns_only_the_username_and_identity_version(user_factory, monkeypatch):
     monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
     user = user_factory(username="proof-user", email="proof@example.com")
     _, client = make_client(user)
@@ -341,7 +341,7 @@ def test_status_proof_consume_returns_only_the_username(user_factory, monkeypatc
     response = consume_status(client, proof)
 
     assert response.status_code == 200
-    assert response.json() == {"username": "proof-user"}
+    assert response.json() == {"username": "proof-user", "id": user.pk, "loginVersion": 0}
     assert BillingLinkProof.objects.get().consumed_at is not None
 
 
@@ -390,7 +390,7 @@ def test_status_issue_does_not_disturb_an_outstanding_login_proof(user_factory, 
     assert BillingLinkProof.objects.filter(user=user, audience="billing", consumed_at__isnull=True).count() == 1
     response = consume(client, login_proof)
     assert response.status_code == 200
-    assert response.json() == {"username": "proof-user", "email": "proof@example.com"}
+    assert response.json() == {"username": "proof-user", "email": "proof@example.com", "id": user.pk, "loginVersion": 0}
 
 
 def test_login_issue_is_not_rate_limited_by_a_fresh_status_proof(user_factory):

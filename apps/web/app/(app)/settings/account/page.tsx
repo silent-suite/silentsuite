@@ -10,6 +10,7 @@ import { createAuthenticatedPaymentFetch } from '@/app/lib/authenticated-payment
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import type { DayBoundaryHour, DefaultReminder } from '@silentsuite/core'
+import { ChangeLoginEmail } from './change-login-email'
 
 interface AccountDetails {
   id: string
@@ -118,6 +119,9 @@ export default function AccountPage() {
               <div>
                 <p className="text-xs text-[rgb(var(--muted))]">Email address</p>
                 <p className="text-sm text-[rgb(var(--foreground))]">{email}</p>
+                <div className="mt-2">
+                  <ChangeLoginEmail />
+                </div>
               </div>
 
               <div>

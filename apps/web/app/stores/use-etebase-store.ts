@@ -2845,6 +2845,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ account, accountFingerprint })
       establishLogoutGeneration(logoutGenerationAtStart)
       logger.debug('[etebase-store] Session restored')
+      // Learn a login name changed elsewhere (hosted only; never blocks the restore).
+      void import('@/app/lib/login-email-change').then((m) => m.syncLoginIdentity()).catch(() => undefined)
 
       // Local-cache fingerprint check: if a different account previously
       // hydrated this browser, wipe before reseeding. Belt-and-braces against

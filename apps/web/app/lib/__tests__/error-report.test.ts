@@ -129,6 +129,17 @@ describe('error report contract (client rebuild)', () => {
     expect(routeTemplate(`/settings/${CANARY}`)).toBe('/settings')
     expect(routeTemplate(`/${CANARY}`)).toBe('other')
     expect(routeTemplate('/signup/plan')).toBe('/signup/plan')
+    expect(routeTemplate('/confirm-login-email')).toBe('/confirm-login-email')
+  })
+
+  it('never carries the login email change token from the link fragment', () => {
+    const url = `${ORIGIN}/confirm-login-email#token=${CANARY}`
+    const report = buildErrorReport(
+      canaryEvent({ request: { url }, transaction: url }),
+      context(new URL(url).pathname),
+    )
+    expect(report?.route).toBe('/confirm-login-email')
+    expect(JSON.stringify(report)).not.toContain(CANARY)
   })
 
   it('reduces the user agent to a browser family', () => {
