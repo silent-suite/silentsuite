@@ -28,6 +28,15 @@ from . import report as _report
 
 logger = logging.getLogger("silentsuite-bridge.web")
 
+# Status code the sync worker records when the server refused an account's
+# stored session (HTTP 401), and the dashboard text shown for that account.
+REAUTH_REQUIRED = "ReauthRequired"
+REAUTH_REQUIRED_TEXT = (
+    "This account needs you to sign in again. If you changed your login email, "
+    "sign in with the new email. Keep this account until you have checked that "
+    "its changes are synced."
+)
+
 # Global sync log (thread-safe deque)
 _sync_log = deque(maxlen=50)
 _bridge_status = {
@@ -83,6 +92,7 @@ def _sync_request_status(request_id):
         "failed": 0,
         "timed_out": 0,
     }
+    reauth_required = False
     for target in targets:
         if target["thread"] is None:
             state = "failed"
@@ -96,6 +106,12 @@ def _sync_request_status(request_id):
             state = status["state"] if status is not None else "failed"
             if state in {"pending", "running"} and not target["thread"].is_alive():
                 state = "failed"
+            if (
+                state == "failed"
+                and status is not None
+                and status.get("error_code") == REAUTH_REQUIRED
+            ):
+                reauth_required = True
         counts[state] += 1
 
     active = counts["pending"] + counts["running"]
@@ -116,6 +132,9 @@ def _sync_request_status(request_id):
         "requested_at": requested_at,
         "deadline": deadline,
         "accounts": counts,
+        # Tells the open dashboard to reload so the account card shows the
+        # sign-in-again notice; which account is never named here.
+        "reauth_required": reauth_required,
     }
     with _sync_requests_lock:
         request = _sync_requests.get(request_id)
@@ -1277,6 +1296,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                 btn.textContent = 'Sync failed';
                             }
                             btn.disabled = false;
+                            if (data.reauth_required === true) {
+                                setTimeout(function() { location.reload(); }, 750);
+                            }
                         } else {
                             btn.textContent = data.state === 'running' ? 'Syncing...' : 'Queued...';
                             setTimeout(function() { pollSyncRequest(requestId, btn); }, 750);
@@ -1631,6 +1653,11 @@ def _render_dashboard():
         account_cols = dict(_bridge_status.get("collections_by_account", {}))
         collections_scope = _bridge_status.get("collections_scope") or "all configured accounts"
         status_error = _bridge_status.get("error")
+        reauth_users = {
+            account
+            for account, entry in _bridge_status.get("account_states", {}).items()
+            if entry.get("state") == "error" and entry.get("error") == REAUTH_REQUIRED
+        }
 
     if not users:
         state = "disconnected"
@@ -1752,9 +1779,17 @@ def _render_dashboard():
                 if config.EXPERIMENTAL_BIRTHDAYS is True
                 else ""
             )
+            reauth_html = (
+                '<div style="font-size:13px;color:#f59e0b;margin:6px 0;">'
+                f'{esc(REAUTH_REQUIRED_TEXT)}'
+                '</div>'
+                if user in reauth_users
+                else ""
+            )
             account_html += (
                 '<div class="account-card">'
                 f'<h4>{esc(user)}</h4>'
+                f'{reauth_html}'
                 f'<div class="account-meta">Server: <code>{esc(server_url)}</code></div>'
                 f'{fingerprint_html}'
                 f'{dav_url_html}'

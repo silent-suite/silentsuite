@@ -82,7 +82,8 @@
         "cache_backfill_integrity_error", "cache_pull_item_integrity_error",
         "cache_revision_integrity_error", "cache_schema_remote_uid_integrity_error",
         "cache_schema_token_revision_integrity_error", "cache_sync_token_integrity_error",
-        "cache_unresolved_retry_integrity_error", "sync_timeout", "sync_stopped", "other"
+        "cache_unresolved_retry_integrity_error", "sync_timeout", "sync_stopped",
+        "reauth_required", "other"
       ]
     },
     "webFields": {

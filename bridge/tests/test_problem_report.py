@@ -156,7 +156,8 @@ def test_error_code_table_matches_bounded_codes_and_schema_enum():
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     enum = set(schema["$defs"]["bridgeErrorCode"]["enum"])
     assert set(report._ERROR_CODES) == (
-        set(privacy_logging._BOUNDED_DIAGNOSTIC_CODES) | {"SyncTimeout", "SyncStopped"}
+        set(privacy_logging._BOUNDED_DIAGNOSTIC_CODES)
+        | {"SyncTimeout", "SyncStopped", web_module.REAUTH_REQUIRED}
     )
     assert report.ERROR_CODES == enum
     assert set(schema["$defs"]["bridgeFields"]["properties"]) == set(report._FIELD_KEYS)
@@ -211,6 +212,17 @@ def test_bounded_diagnostic_code_maps_by_table_lookup():
         account=PRIVATE_EMAIL,
     )
     assert web_module._report_diagnostics()["error_codes"] == ["cache_revision_integrity_error"]
+
+
+def test_reauth_required_status_reports_its_own_code():
+    update_status("error", error=web_module.REAUTH_REQUIRED, account=PRIVATE_EMAIL)
+    update_status("error", error="ConnectionError", account=PRIVATE_USER)
+
+    diagnostics = web_module._report_diagnostics()
+
+    assert report.error_code_for("ReauthRequired") == "reauth_required"
+    assert diagnostics["error_codes"] == ["other", "reauth_required"]
+    assert diagnostics["sync_status"] == "error"
 
 
 def test_unknown_state_and_unmapped_codes_become_other_and_unknown():

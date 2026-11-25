@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from etebase import etebase_python
+
 from silentsuite_bridge.radicale.storage import (
     SyncThread,
     refresh_sync_thread,
@@ -329,6 +331,80 @@ class TestSyncThreadRun:
         finally:
             t.stop()
             t.join(1)
+
+
+def _run_one_failed_generation(mock_status, mock_etesync_ctx, error):
+    mock_etesync = MagicMock()
+    mock_etesync.sync.side_effect = error
+    mock_etesync_ctx.return_value.__enter__ = MagicMock(
+        return_value=(mock_etesync, False)
+    )
+    mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+    t = SyncThread("user@test.com", daemon=True)
+    t.interval = 300
+    generation = t.force_sync()
+
+    t.start()
+    try:
+        assert t.wait_for_generation(generation, timeout=2) is True
+        status = t.generation_status(generation)
+        assert status["state"] == "failed"
+        assert mock_status.call_args.args == ("error",)
+        assert mock_status.call_args.kwargs["account"] == "user@test.com"
+        return status["error_code"], mock_status.call_args.kwargs["error"]
+    finally:
+        t.stop()
+        t.join(1)
+
+
+class TestSyncAuthRefusal:
+    """A 401 on sync records ReauthRequired; every other failure keeps its code."""
+
+    @pytest.mark.parametrize(
+        "detail",
+        [
+            "Invalid token.",
+            "Malformed Authorization header.",
+            "User inactive or deleted.",
+            "Unauthorized",
+        ],
+    )
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.update_status")
+    @patch("silentsuite_bridge.radicale.storage.log_sync_event")
+    def test_session_refused_records_reauth_required(
+        self, mock_log, mock_status, mock_etesync_ctx, detail
+    ):
+        generation_code, status_code = _run_one_failed_generation(
+            mock_status, mock_etesync_ctx, etebase_python.Error(detail)
+        )
+        assert generation_code == "ReauthRequired"
+        assert status_code == "ReauthRequired"
+        assert detail not in str(mock_log.call_args_list)
+        assert detail not in str(mock_status.call_args_list)
+
+    @pytest.mark.parametrize(
+        "error, expected",
+        [
+            (etebase_python.Error("You do not have permission to perform this action."), "Error"),
+            (etebase_python.Error("Wrong password for user."), "Error"),
+            (etebase_python.Error("Temporary server error"), "Error"),
+            (etebase_python.Error("invalid token."), "Error"),
+            (RuntimeError("Invalid token."), "RuntimeError"),
+            (ConnectionError("Unauthorized"), "ConnectionError"),
+        ],
+    )
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.update_status")
+    @patch("silentsuite_bridge.radicale.storage.log_sync_event")
+    def test_other_sync_errors_keep_their_class_code(
+        self, mock_log, mock_status, mock_etesync_ctx, error, expected
+    ):
+        generation_code, status_code = _run_one_failed_generation(
+            mock_status, mock_etesync_ctx, error
+        )
+        assert generation_code == expected
+        assert status_code == expected
 
 
 class TestStartSyncThread:
