@@ -219,6 +219,52 @@ def test_successful_account_does_not_clear_another_account_failure():
     assert _bridge_status["error"] == "One or more configured accounts failed to sync"
 
 
+def _account_card(page, username):
+    start = page.index(f"<h4>{username}</h4>")
+    return page[start:page.index('<div class="account-actions">', start)]
+
+
+def test_reauth_required_account_shows_sign_in_again_notice(tmp_path, monkeypatch):
+    _reset_status()
+    monkeypatch.setitem(_bridge_status, "account_states", {})
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, _username: None)
+    creds = Credentials()
+    creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
+    creds.set_etebase("bob@example.com", "bob-session", "https://server-b.test")
+    creds.set_etebase("carol@example.com", "carol-session", "https://server-c.test")
+    creds.save()
+    notice = (
+        "This account needs you to sign in again. If you changed your login email, "
+        "sign in with the new email. Keep this account until you have checked that "
+        "its changes are synced."
+    )
+    assert web_module.REAUTH_REQUIRED_TEXT == notice
+
+    update_status("error", error=web_module.REAUTH_REQUIRED, account="alice@example.com")
+    update_status("error", error="ConnectionError", account="bob@example.com")
+    update_status(
+        "connected",
+        collections={"calendars": 1, "contacts": 0, "tasks": 0},
+        account="carol@example.com",
+    )
+    page = _render_dashboard()
+
+    assert page.count(notice) == 1
+    assert notice in _account_card(page, "alice@example.com")
+    assert notice not in _account_card(page, "bob@example.com")
+    assert notice not in _account_card(page, "carol@example.com")
+    assert _bridge_status["account_states"]["bob@example.com"]["error"] == "ConnectionError"
+    assert _bridge_status["error"] == "One or more configured accounts failed to sync"
+
+    update_status(
+        "connected",
+        collections={"calendars": 1, "contacts": 0, "tasks": 0},
+        account="alice@example.com",
+    )
+    assert notice not in _render_dashboard()
+
+
 def test_render_dashboard_uses_https_urls_when_ssl_enabled(tmp_path, monkeypatch):
     """AC 11: with SSL enabled, account DAV URLs use https://."""
     _reset_status()

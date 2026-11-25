@@ -28,6 +28,15 @@ from . import report as _report
 
 logger = logging.getLogger("silentsuite-bridge.web")
 
+# Status code the sync worker records when the server refused an account's
+# stored session (HTTP 401), and the dashboard text shown for that account.
+REAUTH_REQUIRED = "ReauthRequired"
+REAUTH_REQUIRED_TEXT = (
+    "This account needs you to sign in again. If you changed your login email, "
+    "sign in with the new email. Keep this account until you have checked that "
+    "its changes are synced."
+)
+
 # Global sync log (thread-safe deque)
 _sync_log = deque(maxlen=50)
 _bridge_status = {
@@ -1631,6 +1640,11 @@ def _render_dashboard():
         account_cols = dict(_bridge_status.get("collections_by_account", {}))
         collections_scope = _bridge_status.get("collections_scope") or "all configured accounts"
         status_error = _bridge_status.get("error")
+        reauth_users = {
+            account
+            for account, entry in _bridge_status.get("account_states", {}).items()
+            if entry.get("state") == "error" and entry.get("error") == REAUTH_REQUIRED
+        }
 
     if not users:
         state = "disconnected"
@@ -1752,9 +1766,17 @@ def _render_dashboard():
                 if config.EXPERIMENTAL_BIRTHDAYS is True
                 else ""
             )
+            reauth_html = (
+                '<div style="font-size:13px;color:#f59e0b;margin:6px 0;">'
+                f'{esc(REAUTH_REQUIRED_TEXT)}'
+                '</div>'
+                if user in reauth_users
+                else ""
+            )
             account_html += (
                 '<div class="account-card">'
                 f'<h4>{esc(user)}</h4>'
+                f'{reauth_html}'
                 f'<div class="account-meta">Server: <code>{esc(server_url)}</code></div>'
                 f'{fingerprint_html}'
                 f'{dav_url_html}'

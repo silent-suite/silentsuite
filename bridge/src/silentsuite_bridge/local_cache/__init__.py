@@ -22,6 +22,7 @@ import msgpack
 import peewee as pw
 import vobject
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
+from etebase import etebase_python as _etebase_sdk
 
 from .. import birthdays, config
 from ..privacy_logging import BoundedDiagnosticError, bounded_exception_class
@@ -876,6 +877,31 @@ def _log_collection_failure(stage, error):
         "%s failed; other collections continue (%s)",
         stage,
         bounded_exception_class(error),
+    )
+
+
+# The etebase SDK raises one exception type, ``etebase_python.Error``, for
+# every failure: the Rust error variant (Unauthorized, PermissionDenied, ...)
+# and the HTTP status are dropped and ``str(error)`` is the server's ``detail``.
+# An HTTP 401 from the server's token check carries one of these details
+# (server/etebase_server/fastapi/dependencies.py); a 401 without a readable
+# detail becomes "Unauthorized" in the SDK. Exact comparison only: the text is
+# never logged or stored.
+_SESSION_REFUSED_DETAILS = frozenset(
+    {
+        "Invalid token.",
+        "Malformed Authorization header.",
+        "User inactive or deleted.",
+        "Unauthorized",
+    }
+)
+
+
+def is_session_refused(error):
+    """Return True when the server refused this account's stored session (401)."""
+    return (
+        isinstance(error, _etebase_sdk.Error)
+        and str(error) in _SESSION_REFUSED_DETAILS
     )
 
 

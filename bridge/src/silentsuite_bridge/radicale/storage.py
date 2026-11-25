@@ -38,6 +38,7 @@ from ..local_cache import (
     db,
     ensure_dav_href,
     is_safe_dav_href,
+    is_session_refused,
     opaque_dav_href,
     record_dav_change,
     resolve_dav_collection_uid,
@@ -53,7 +54,7 @@ from ..local_cache.models import (
     ItemEntity,
 )
 from ..privacy_logging import BoundedDiagnosticError, bounded_exception_class
-from ..web import log_sync_event, update_status
+from ..web import REAUTH_REQUIRED, log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
 
 logger = logging.getLogger("silentsuite-bridge.storage")
@@ -399,7 +400,11 @@ class SyncThread(threading.Thread):
                     logger.info("Stopped account sync discarded its late result")
                 else:
                     state = "failed"
-                    error_code = bounded_exception_class(e)
+                    error_code = (
+                        REAUTH_REQUIRED
+                        if is_session_refused(e)
+                        else bounded_exception_class(e)
+                    )
                     logger.warning(
                         "Sync failed for configured account (%s)",
                         error_code,
