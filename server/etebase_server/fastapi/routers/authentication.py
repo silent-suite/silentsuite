@@ -333,7 +333,7 @@ def signup_identity_taken(user_queryset, user_data: UserSignup) -> bool:
     # Checked after the users: a rename that commits in between is then seen by one of the two
     # reads (the old name is either still a username or already held).
     held_names = {normalize_login_name(username)} | ({normalize_login_name(email)} if email else set())
-    return HeldUsername.objects.filter(name__in=held_names, held_until__gt=timezone.now()).exists()
+    return HeldUsername.objects.filter(name__in=held_names).exists()
 
 
 def signup_save(data: SignupIn, request: Request) -> UserType:

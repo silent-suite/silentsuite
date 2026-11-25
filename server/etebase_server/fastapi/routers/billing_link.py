@@ -191,7 +191,6 @@ LOGIN_EMAIL_HANDOFF_TTL_SECONDS = 120
 # so a confirmation made just before Billing's expiry still commits.
 LOGIN_EMAIL_ACCEPTED_TTL = timedelta(hours=25)
 LOGIN_EMAIL_REQUESTS_PER_HOUR = 5
-HELD_USERNAME_TTL = timedelta(days=30)
 
 
 def login_email_error(status_code: int, code: str, **extra: t.Any) -> JSONResponse:
@@ -374,7 +373,7 @@ def login_email_cancel(payload: LoginEmailChangeIdIn, x_etebase_billing_key: str
 
 
 def destination_taken(name: str, user: UserType) -> bool:
-    """Another user's username or email (case-insensitive), or another user's unexpired hold."""
+    """Another user's username or email (case-insensitive), or another user's hold."""
     others = User.objects.exclude(pk=user.pk)
     if others.filter(Q(username__iexact=name) | Q(email__iexact=name)).exists():
         return True
@@ -436,11 +435,9 @@ def login_email_commit(payload: LoginEmailCommitIn, x_etebase_billing_key: str |
                 return refuse(row, "taken")
             info.login_version = row.from_version + 1
             info.save(update_fields=["login_version"])
-            # Returning to a name you hold ends that hold; the name you leave is held for you.
+            # Returning to a name you hold ends that hold; the name you leave is held for you for good.
             HeldUsername.objects.filter(name=row.new_username, user=user).delete()
-            HeldUsername.objects.update_or_create(
-                name=row.old_username, defaults={"user": user, "held_until": now + HELD_USERNAME_TTL}
-            )
+            HeldUsername.objects.update_or_create(name=row.old_username, defaults={"user": user})
             row.status = LoginEmailChange.COMMITTED
             row.committed_version = info.login_version
             row.committed_at = now

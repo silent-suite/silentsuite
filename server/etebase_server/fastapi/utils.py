@@ -9,7 +9,6 @@ from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.validators import validate_email
 from django.db import connection, transaction
 from django.db.models import Model, QuerySet
-from django.utils import timezone
 from fastapi import Depends, Query, status
 from pydantic import BaseModel as PyBaseModel
 from typing_extensions import Literal
@@ -104,8 +103,8 @@ def get_user_by_username_or_email(queryset: QuerySet[UserType], username: str) -
     MultipleObjectsReturned surface as a server error.
     """
     if name_is_held(username):
-        # A name its owner renamed away from stays unreachable until its hold ends, so old
-        # clients and invitations can't resolve it to anyone (including the owner's new login).
+        # A name its owner renamed away from stays unreachable, so old clients and invitations
+        # can't resolve it to anyone (including the owner's new login).
         raise User.DoesNotExist("User matching query does not exist.")
     try:
         try:
@@ -124,8 +123,8 @@ def normalize_login_name(name: str) -> str:
 
 
 def name_is_held(name: str, exclude_user: t.Optional[UserType] = None) -> bool:
-    """Whether a renamed-away name is still held (unexpired), optionally ignoring one user's holds."""
-    held = HeldUsername.objects.filter(name=normalize_login_name(name), held_until__gt=timezone.now())
+    """Whether a renamed-away name is held (holds never expire), optionally ignoring one user's holds."""
+    held = HeldUsername.objects.filter(name=normalize_login_name(name))
     if exclude_user is not None:
         held = held.exclude(user=exclude_user)
     return held.exists()

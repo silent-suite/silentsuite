@@ -15,6 +15,7 @@ from io import StringIO
 import nacl.signing
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connection
 from django.db.migrations.loader import MigrationLoader
 from django.test.utils import CaptureQueriesContext
@@ -463,7 +464,6 @@ def test_commit_renames_login_bumps_version_and_holds_the_old_name(client, user_
     assert UserInfo.objects.get(owner=user).login_version == 1
     hold = HeldUsername.objects.get()
     assert (hold.name, hold.user_id) == ("old@example.com", user.pk)
-    assert timedelta(days=29) < hold.held_until - timezone.now() <= timedelta(days=30)
     row = LoginEmailChange.objects.get()
     assert (row.status, row.committed_version) == (LoginEmailChange.COMMITTED, 1)
 
@@ -472,7 +472,7 @@ def test_commit_retry_returns_the_stored_result_at_any_age(client, user_factory,
     user = user_factory(username="retry@example.com", email="retry@example.com")
     accepted = accepted_change(client, user, signing_key, "retry-new@example.com")
     first = commit(client, accepted["grant"])
-    # Long after: the accepted window, a later rename and hold expiry change nothing for the result.
+    # Long after: the accepted window and a later rename change nothing for the result.
     LoginEmailChange.objects.update(
         expires_at=timezone.now() - timedelta(days=40), committed_at=timezone.now() - timedelta(days=40)
     )
@@ -534,7 +534,7 @@ def test_commit_refuses_a_destination_another_user_holds(client, user_factory, s
         user_factory(username="someone", email="Dest@example.com")
     else:
         owner = user_factory(username="someone", email="someone@example.com")
-        HeldUsername.objects.create(name="dest@example.com", user=owner, held_until=timezone.now() + timedelta(days=1))
+        HeldUsername.objects.create(name="dest@example.com", user=owner)
     accepted = accepted_change(client, user, signing_key, "dest@example.com")
 
     response = commit(client, accepted["grant"])
@@ -545,15 +545,27 @@ def test_commit_refuses_a_destination_another_user_holds(client, user_factory, s
     assert UserInfo.objects.get(owner=user).login_version == 0
 
 
-def test_commit_may_take_a_name_whose_hold_has_ended(client, user_factory, signing_key):
-    user = user_factory(username="taker@example.com", email="taker@example.com")
-    owner = user_factory(username="someone", email="someone@example.com")
-    HeldUsername.objects.create(name="free@example.com", user=owner, held_until=timezone.now() - timedelta(seconds=1))
+def test_commit_refuses_a_name_held_by_another_user_at_any_age(client, user_factory, signing_key):
+    first = user_factory(username="ancient@example.com", email="ancient@example.com")
+    rename(client, first, signing_key, "first-new@example.com")
+    call_command("cleanup_billing_link_proofs", stdout=StringIO())
+    second = user_factory(username="taker@example.com", email="taker@example.com")
 
-    result = rename(client, user, signing_key, "free@example.com")
+    response = commit(client, accepted_change(client, second, signing_key, "ancient@example.com")["grant"])
 
-    assert result["newUsername"] == "free@example.com"
+    assert_refused(response, "taken")
+    assert HeldUsername.objects.get(name="ancient@example.com").user_id == first.pk
 
+
+def test_commit_may_take_a_name_after_an_operator_released_it(client, user_factory, signing_key):
+    first = user_factory(username="freed@example.com", email="freed@example.com")
+    rename(client, first, signing_key, "first-new@example.com")
+    call_command("release_held_username", "freed@example.com", stdout=StringIO())
+    second = user_factory(username="taker@example.com", email="taker@example.com")
+
+    result = rename(client, second, signing_key, "freed@example.com")
+
+    assert result["newUsername"] == "freed@example.com"
 
 def test_commit_never_answers_anything_but_committed_or_a_terminal_refusal(client, user_factory, signing_key):
     user = user_factory(username="term@example.com", email="term@example.com")
@@ -674,7 +686,7 @@ def test_rename_back_consumes_the_hold_and_repeated_renames_reuse_hold_rows(clie
 def test_another_users_held_name_reused_after_release_replaces_the_hold_row(client, user_factory, signing_key):
     first = user_factory(username="shared@example.com", email="shared@example.com")
     rename(client, first, signing_key, "first-new@example.com")
-    HeldUsername.objects.update(held_until=timezone.now() - timedelta(seconds=1))
+    call_command("release_held_username", "shared@example.com", stdout=StringIO())
     second = user_factory(username="second@example.com", email="second@example.com")
 
     rename(client, second, signing_key, "shared@example.com")
@@ -682,7 +694,6 @@ def test_another_users_held_name_reused_after_release_replaces_the_hold_row(clie
 
     hold = HeldUsername.objects.get(name="shared@example.com")
     assert hold.user_id == second.pk
-    assert hold.held_until > timezone.now()
 
 
 # ---------------------------------------------------------------------------
@@ -740,7 +751,7 @@ def _change(user, status, *, ended_days_ago=None, acknowledged=False, expires_in
     )
 
 
-def test_cleanup_expires_open_changes_releases_holds_and_prunes_after_thirty_days(user_factory):
+def test_cleanup_expires_open_changes_prunes_after_thirty_days_and_keeps_every_hold(user_factory):
     user = user_factory(username="clean@example.com", email="clean@example.com")
     stale_pending = _change(user, LoginEmailChange.PENDING, expires_in=-timedelta(seconds=1))
     stale_accepted = _change(user, LoginEmailChange.ACCEPTED, expires_in=-timedelta(seconds=1))
@@ -751,8 +762,7 @@ def test_cleanup_expires_open_changes_releases_holds_and_prunes_after_thirty_day
     old_unacked = _change(user, LoginEmailChange.COMMITTED, ended_days_ago=400)
     old_acked = _change(user, LoginEmailChange.COMMITTED, ended_days_ago=31, acknowledged=True)
     recent_acked = _change(user, LoginEmailChange.COMMITTED, ended_days_ago=29, acknowledged=True)
-    ended_hold = HeldUsername.objects.create(name="a@example.com", user=user, held_until=timezone.now() - timedelta(seconds=1))
-    live_hold = HeldUsername.objects.create(name="b@example.com", user=user, held_until=timezone.now() + timedelta(days=1))
+    holds = [HeldUsername.objects.create(name=f"{n}@example.com", user=user).pk for n in ("a", "b")]
     stdout = StringIO()
 
     call_command("cleanup_billing_link_proofs", stdout=stdout)
@@ -763,19 +773,13 @@ def test_cleanup_expires_open_changes_releases_holds_and_prunes_after_thirty_day
     assert LoginEmailChange.objects.get(pk=stale_pending.pk).status == LoginEmailChange.EXPIRED
     assert LoginEmailChange.objects.get(pk=stale_accepted.pk).status == LoginEmailChange.EXPIRED
     assert LoginEmailChange.objects.get(pk=live_accepted.pk).status == LoginEmailChange.ACCEPTED
-    assert not HeldUsername.objects.filter(pk=ended_hold.pk).exists()
-    assert HeldUsername.objects.filter(pk=live_hold.pk).exists()
-    assert stdout.getvalue().splitlines()[1] == (
-        "Expired 2 login email change(s), released 1 held name(s), deleted 3 login email change(s)."
-    )
+    assert sorted(HeldUsername.objects.values_list("pk", flat=True)) == sorted(holds)
+    assert stdout.getvalue().splitlines()[1] == "Expired 2 login email change(s), deleted 3 login email change(s)."
 
 
 def test_released_name_is_found_again_and_can_be_signed_up(client, user_factory, signing_key, login_pubkey, user_salt):
     user = user_factory(username="release@example.com", email="release@example.com")
     rename(client, user, signing_key, "kept@example.com")
-    HeldUsername.objects.update(held_until=timezone.now() - timedelta(seconds=1))
-
-    call_command("cleanup_billing_link_proofs", stdout=StringIO())
     body = {
         "user": {"username": "release@example.com", "email": "release@example.com"},
         "salt": user_salt,
@@ -783,12 +787,44 @@ def test_released_name_is_found_again_and_can_be_signed_up(client, user_factory,
         "pubkey": login_pubkey,
         "encryptedContent": b"\x00" * 64,
     }
-    signup = msgpack_post(client, f"{AUTH_PREFIX}/signup/", body)
+    call_command("cleanup_billing_link_proofs", stdout=StringIO())
+    while_held = msgpack_post(client, f"{AUTH_PREFIX}/signup/", body)
+    assert while_held.status_code == 409
 
+    stdout = StringIO()
+    call_command("release_held_username", "Release@Example.com", stdout=stdout)
+    signup = msgpack_post(client, f"{AUTH_PREFIX}/signup/", body)
+    lookup, _ = login_challenge(client, "release@example.com")
+
+    assert stdout.getvalue() == "Released held name release@example.com.\n"
     assert HeldUsername.objects.count() == 0
+    assert lookup.status_code == 200
     assert signup.status_code in (200, 201), signup.content[:300]
     assert User.objects.get(username="release@example.com").pk != user.pk
 
+
+def test_release_command_reports_a_missing_hold_and_changes_nothing(user_factory):
+    user = user_factory(username="keeper@example.com", email="keeper@example.com")
+    HeldUsername.objects.create(name="other-held@example.com", user=user)
+    stdout = StringIO()
+
+    call_command("release_held_username", "never-held@example.com", stdout=stdout)
+
+    assert stdout.getvalue() == "No hold for never-held@example.com; nothing changed.\n"
+    assert HeldUsername.objects.count() == 1
+
+
+def test_release_command_refuses_a_current_username(user_factory):
+    user = user_factory(username="current@example.com", email="current@example.com")
+    # Inconsistent data an operator might meet: a hold row on a name someone currently uses.
+    HeldUsername.objects.create(name="current@example.com", user=user)
+    stdout = StringIO()
+
+    with pytest.raises(CommandError):
+        call_command("release_held_username", "Current@example.com", stdout=stdout)
+
+    assert stdout.getvalue() == ""
+    assert HeldUsername.objects.filter(name="current@example.com").exists()
 
 def test_committed_change_survives_cleanup_until_acknowledged(client, user_factory, signing_key):
     user = user_factory(username="unacked@example.com", email="unacked@example.com")
