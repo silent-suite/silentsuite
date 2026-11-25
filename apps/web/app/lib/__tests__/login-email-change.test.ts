@@ -28,6 +28,7 @@ import {
   nextSessionIdentity,
   requestLoginEmailChange,
   syncLoginIdentity,
+  verifySessionPrincipal,
 } from '../login-email-change'
 
 const session = (username: string, token = 'tok-saved') => JSON.stringify({ username, token, serverUrl: 'https://server.test/' })
@@ -171,6 +172,7 @@ describe('requestLoginEmailChange', () => {
     ['server invalid destination', [json(400, { code: 'invalid_destination' })], 'invalid-email'],
     ['server signature refused', [json(401, { code: 'invalid_signature' })], 'failed'],
     ['older server without the route', [json(404, {})], 'failed'],
+    ['server busy', [json(503, { code: 'try_again' })], 'try-again'],
   ])('%s maps to %s and always logs the fresh account out', async (_label, responses, expected) => {
     for (const response of responses as Response[]) fetchMock.mockImplementationOnce(async () => response)
     expect(await requestLoginEmailChange('new@example.test', 'pw')).toBe(expected)
@@ -219,5 +221,25 @@ describe('confirmLoginEmailChange', () => {
   it('treats a network failure as try again', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('network'))
     expect(await confirmLoginEmailChange('tok')).toEqual({ kind: 'try-again' })
+  })
+})
+
+describe('verifySessionPrincipal (unlock)', () => {
+  it('accepts only a whoami id equal to the principal, using the fresh session token', async () => {
+    whoami({ id: 7, loginVersion: 1, username: 'new@example.test' })
+    expect(await verifySessionPrincipal(session('new@example.test', 'tok-fresh'), 7)).toEqual({ ok: true, identity: { id: 7, loginVersion: 1, username: 'new@example.test' } })
+    expect(fetchMock).toHaveBeenCalledWith('https://server.test/api/v1/authentication/whoami/', { headers: { Authorization: 'Token tok-fresh' } })
+    expect(core.logout).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['another id', () => whoami({ id: 8, loginVersion: 1, username: 'x@example.test' }), 'mismatch'],
+    ['an older server', () => whoami({ detail: 'nope' }, 404), 'unavailable'],
+    ['a network failure', () => fetchMock.mockRejectedValueOnce(new TypeError('network')), 'unavailable'],
+  ])('refuses %s and logs the fresh session out', async (_label, arrange, reason) => {
+    arrange()
+    expect(await verifySessionPrincipal(session('x@example.test', 'tok-fresh'), 7)).toEqual({ ok: false, reason })
+    expect(core.logout).toHaveBeenCalledTimes(1)
+    expect((core.logout.mock.calls[0] as any[])[0]).toMatchObject({ authToken: 'tok-fresh' })
   })
 })

@@ -26,7 +26,7 @@ describe('confirm login email page', () => {
     expect(await screen.findByText('new@example.test')).toBeInTheDocument()
     expect(confirm).toHaveBeenCalledWith('secret-token-value')
     expect(screen.getByText('Billing emails now go to this address too.')).toBeInTheDocument()
-    expect(screen.getByText(/Phones and the desktop Bridge stay signed in/)).toBeInTheDocument()
+    expect(screen.getByText(/Phones and the desktop Bridge that are signed in keep syncing/)).toBeInTheDocument()
   })
 
   it.each([

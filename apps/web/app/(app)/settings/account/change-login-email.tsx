@@ -5,7 +5,7 @@ import { useLoginEmailChangeEnabled } from '@/app/hooks/use-login-email-change-e
 import { isHostedAccount, requestLoginEmailChange, type LoginEmailRequestResult } from '@/app/lib/login-email-change'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 
-const DEVICE_NOTE = 'Phones and the desktop Bridge stay signed in and keep syncing. They may show your old address until you sign in on them again.'
+const DEVICE_NOTE = 'Phones and the desktop Bridge that are signed in keep syncing. To use the new email there, sign out and sign in again.'
 const RECEIPT_NOTE = 'Card receipts from the payment provider may still go to your old address.'
 
 const MESSAGES: Record<LoginEmailRequestResult, string> = {
@@ -17,6 +17,7 @@ const MESSAGES: Record<LoginEmailRequestResult, string> = {
   'same-email': 'That is already your login email.',
   'wrong-password': 'Current password is incorrect.',
   'rate-limited': 'Too many attempts. Please try again later.',
+  'try-again': 'The server is busy. Please try again in a few minutes.',
   'account-changed': 'Your account changed while this was running. Please try again.',
   failed: 'Could not start the change. Please try again.',
 }

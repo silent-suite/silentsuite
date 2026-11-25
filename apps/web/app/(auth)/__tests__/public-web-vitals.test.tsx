@@ -66,7 +66,7 @@ describe('web vitals contract', () => {
   })
 
   it('lists only public pages, separately from the pageview routes', () => {
-    for (const page of WEB_VITALS_PAGES) expect(page).toMatch(/^\/(?:login|verify-email|signup(?:\/[a-z-]+)?)$/)
+    for (const page of WEB_VITALS_PAGES) expect(page).toMatch(/^\/(?:login|verify-email|confirm-login-email|signup(?:\/[a-z-]+)?)$/)
     for (const page of ['/', '/calendar', '/contacts', '/tasks', '/notes', '/settings', '/settings/subscription', '/admin', '/offline', '/login/', '/signup?x=1']) {
       expect(webVitalsPageFor(page)).toBeUndefined()
     }
@@ -160,6 +160,16 @@ describe('public web vitals session', () => {
     vitals.report({ name: 'LCP', value: 100, navigationType: 'back-forward-cache' })
     vitals.report({ name: 'LCP', value: 100, navigationType: 'navigate' })
     expect(sent).toEqual([buildWebVitalPayload('LCP', 'good', '/signup')])
+  })
+})
+
+describe('confirm login email page vitals', () => {
+  it('labels the page by path only and never sends the fragment token', () => {
+    const url = 'https://app.silentsuite.io/confirm-login-email#token=CANARY_TOKEN_9d1'
+    const { sent, vitals } = session(url)
+    vitals.report({ name: 'LCP', value: 1000 })
+    expect(sent).toEqual([buildWebVitalPayload('LCP', 'good', '/confirm-login-email')])
+    expect(JSON.stringify(sent)).not.toContain('CANARY_TOKEN_9d1')
   })
 })
 

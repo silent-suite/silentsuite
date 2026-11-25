@@ -17,7 +17,7 @@ function takeTokenFromFragment(): string | null {
   return token && token.trim() ? token.trim() : null
 }
 
-const DEVICE_NOTE = 'Phones and the desktop Bridge stay signed in and keep syncing. They may show your old address until you sign in on them again.'
+const DEVICE_NOTE = 'Phones and the desktop Bridge that are signed in keep syncing. To use the new email there, sign out and sign in again.'
 
 function contactLine(contactState: string): string {
   switch (contactState) {

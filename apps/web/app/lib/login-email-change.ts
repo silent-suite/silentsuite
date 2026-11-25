@@ -65,6 +65,28 @@ export function nextSessionIdentity(saved: SessionIdentity | null, answer: Sessi
   return answer
 }
 
+export type PrincipalCheck =
+  | { ok: true; identity: SessionIdentity }
+  | { ok: false; reason: 'mismatch' | 'unavailable' }
+
+/**
+ * Unlock binding: the fresh session must be the server account Billing
+ * recorded (whoami id == principal). On any refusal the fresh session is
+ * logged out, so nothing from it survives.
+ */
+export async function verifySessionPrincipal(savedSession: string, principal: number): Promise<PrincipalCheck> {
+  const core = await import('@silentsuite/core')
+  const account = await core.restoreSession(ETEBASE_SERVER_URL, savedSession)
+  const answer = account.authToken ? await fetchWhoami(account.serverUrl, account.authToken) : null
+  if (answer && answer.id === principal) return { ok: true, identity: answer }
+  try {
+    await core.logout(account)
+  } catch {
+    // The refused session is never stored; a failed logout changes nothing here.
+  }
+  return { ok: false, reason: answer ? 'mismatch' : 'unavailable' }
+}
+
 let identitySync: Promise<void> | null = null
 
 /**
@@ -124,7 +146,7 @@ export async function readSavedSessionUsername(): Promise<string | null> {
 export type LoginEmailRequestResult =
   | 'sent' | 'rejected' | 'unknown'
   | 'unavailable' | 'invalid-email' | 'same-email' | 'wrong-password'
-  | 'rate-limited' | 'account-changed' | 'failed'
+  | 'rate-limited' | 'try-again' | 'account-changed' | 'failed'
 
 function problemCode(body: unknown): string | null {
   if (!body || typeof body !== 'object') return null
@@ -174,6 +196,7 @@ export async function requestLoginEmailChange(newEmail: string, password: string
     if (!serverRes.ok) {
       const code = problemCode(serverBody)
       if (serverRes.status === 429) return 'rate-limited'
+      if (serverRes.status === 503 || code === 'try_again') return 'try-again'
       if (code === 'same_destination') return 'same-email'
       if (code === 'invalid_destination') return 'invalid-email'
       return 'failed'

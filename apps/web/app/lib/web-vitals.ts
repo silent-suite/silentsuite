@@ -10,6 +10,7 @@
 export const WEB_VITALS_PAGES = [
   '/login',
   '/verify-email',
+  '/confirm-login-email',
   '/signup',
   '/signup/plan',
   '/signup/verify-email',
