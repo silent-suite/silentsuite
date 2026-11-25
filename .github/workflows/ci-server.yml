@@ -290,6 +290,65 @@ jobs:
             fi
           done
 
+  test-server-postgres:
+    name: Server Tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    # A throwaway PostgreSQL for tests that need real row and advisory locks (pytest marker
+    # postgres_only). Same pinned image as the self-host stack (16.16-alpine). The password is a
+    # fixed test value for this job-local container only.
+    services:
+      postgres:
+        image: postgres@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
+        env:
+          POSTGRES_DB: etebase_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DJANGO_SETTINGS_MODULE: etebase_server.postgres_test_settings
+      ETEBASE_TEST_POSTGRES_DB: etebase_test
+      ETEBASE_TEST_POSTGRES_USER: postgres
+      ETEBASE_TEST_POSTGRES_PASSWORD: ci-test-only
+      ETEBASE_TEST_POSTGRES_HOST: 127.0.0.1
+      ETEBASE_TEST_POSTGRES_PORT: "5432"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes --only-binary=:all: -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      # Exit code 5 means no test carries the marker yet; that is not a failure.
+      - name: Run PostgreSQL-only tests
+        working-directory: server
+        run: |
+          set +e
+          python -m pytest etebase_server/ -m postgres_only -v --tb=short
+          status=$?
+          if [ "$status" -eq 5 ]; then echo "No postgres_only tests collected."; exit 0; fi
+          exit "$status"
+
   self-host-contracts:
     name: Self-Host Release Contracts
     runs-on: ubuntu-latest
