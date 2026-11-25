@@ -219,6 +219,52 @@ def test_successful_account_does_not_clear_another_account_failure():
     assert _bridge_status["error"] == "One or more configured accounts failed to sync"
 
 
+def _account_card(page, username):
+    start = page.index(f"<h4>{username}</h4>")
+    return page[start:page.index('<div class="account-actions">', start)]
+
+
+def test_reauth_required_account_shows_sign_in_again_notice(tmp_path, monkeypatch):
+    _reset_status()
+    monkeypatch.setitem(_bridge_status, "account_states", {})
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, _username: None)
+    creds = Credentials()
+    creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
+    creds.set_etebase("bob@example.com", "bob-session", "https://server-b.test")
+    creds.set_etebase("carol@example.com", "carol-session", "https://server-c.test")
+    creds.save()
+    notice = (
+        "This account needs you to sign in again. If you changed your login email, "
+        "sign in with the new email. Keep this account until you have checked that "
+        "its changes are synced."
+    )
+    assert web_module.REAUTH_REQUIRED_TEXT == notice
+
+    update_status("error", error=web_module.REAUTH_REQUIRED, account="alice@example.com")
+    update_status("error", error="ConnectionError", account="bob@example.com")
+    update_status(
+        "connected",
+        collections={"calendars": 1, "contacts": 0, "tasks": 0},
+        account="carol@example.com",
+    )
+    page = _render_dashboard()
+
+    assert page.count(notice) == 1
+    assert notice in _account_card(page, "alice@example.com")
+    assert notice not in _account_card(page, "bob@example.com")
+    assert notice not in _account_card(page, "carol@example.com")
+    assert _bridge_status["account_states"]["bob@example.com"]["error"] == "ConnectionError"
+    assert _bridge_status["error"] == "One or more configured accounts failed to sync"
+
+    update_status(
+        "connected",
+        collections={"calendars": 1, "contacts": 0, "tasks": 0},
+        account="alice@example.com",
+    )
+    assert notice not in _render_dashboard()
+
+
 def test_render_dashboard_uses_https_urls_when_ssl_enabled(tmp_path, monkeypatch):
     """AC 11: with SSL enabled, account DAV URLs use https://."""
     _reset_status()
@@ -582,6 +628,60 @@ def test_dashboard_sync_request_reports_generation_completion(monkeypatch):
         "timed_out": 0,
     }
     assert "account@example.com" not in body.decode()
+
+
+@pytest.mark.parametrize(
+    "error_code, expected_flag",
+    [("ReauthRequired", True), ("ConnectionError", False), ("SyncTimeout", False)],
+)
+def test_dashboard_sync_request_flags_refused_session(
+    monkeypatch, error_code, expected_flag
+):
+    web_module._sync_requests.clear()
+    monkeypatch.setattr(
+        accounts, "list_accounts", lambda: ["refused@example.com", "fine@example.com"]
+    )
+    refused = MagicMock()
+    refused.is_alive.return_value = True
+    refused.force_sync.return_value = 3
+    refused.generation_status.return_value = {
+        "generation": 3,
+        "state": "failed",
+        "started_at": 100.0,
+        "completed_at": 101.0,
+        "error_code": error_code,
+    }
+    fine = MagicMock()
+    fine.is_alive.return_value = True
+    fine.force_sync.return_value = 4
+    fine.generation_status.return_value = {
+        "generation": 4,
+        "state": "succeeded",
+        "started_at": 100.0,
+        "completed_at": 101.0,
+        "error_code": None,
+    }
+    monkeypatch.setattr(
+        storage,
+        "_sync_threads",
+        {"refused@example.com": refused, "fine@example.com": fine},
+    )
+    web = Web.__new__(Web)
+    _, _, post_body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token), "", "/.web/api/sync", None
+    )
+    request_id = json.loads(post_body)["request_id"]
+
+    status, _, body = web.get(_get_environ(), "", f"/.web/api/sync/{request_id}", None)
+
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["state"] == "partial_failure"
+    assert payload["reauth_required"] is expected_flag
+    assert "refused@example.com" not in body.decode()
+    # The terminal result is kept, flag included, for later polls.
+    _, _, again = web.get(_get_environ(), "", f"/.web/api/sync/{request_id}", None)
+    assert json.loads(again)["reauth_required"] is expected_flag
 
 
 def test_dashboard_sync_waits_for_all_configured_accounts(monkeypatch):
@@ -1150,6 +1250,44 @@ global.window = {SILENTSUITE_DASHBOARD_CSRF: 'csrf-test'};
         assert.equal(box.checked, !ok);
         assert.equal(box.disabled, false);
         assert.equal(status.textContent, ok ? 'Saved' : 'Not saved: write failed');
+    }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run([NODE, "-e", functions + harness], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required to execute dashboard JavaScript")
+def test_open_dashboard_reloads_after_sync_attempt_with_refused_session(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    html = _render_dashboard()
+    functions = _extract_js_function(html, "pollSyncRequest")
+    harness = r"""
+const assert = require('node:assert/strict');
+const cases = [
+    [{state: 'failed', reauth_required: true}, 'Sync failed', 1],
+    [{state: 'partial_failure', reauth_required: true}, 'Partially failed', 1],
+    [{state: 'failed', reauth_required: false}, 'Sync failed', 0],
+    [{state: 'partial_failure'}, 'Partially failed', 0],
+    [{state: 'timed_out', reauth_required: false}, 'Timed out', 0],
+];
+(async () => {
+    for (const [data, label, reloads] of cases) {
+        let reloaded = 0;
+        global.location = {reload: () => { reloaded += 1; }};
+        global.setTimeout = (fn) => { fn(); };
+        global.fetch = async (url) => {
+            assert.equal(url, '/.web/api/sync/request-1');
+            return {ok: true, json: async () => data};
+        };
+        const btn = {textContent: '', disabled: true};
+        pollSyncRequest('request-1', btn);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(btn.textContent, label);
+        assert.equal(btn.disabled, false);
+        assert.equal(reloaded, reloads, JSON.stringify(data));
     }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """

@@ -50,7 +50,7 @@ OUTCOME_UNKNOWN = "unknown"
 KINDS = ("problem", "feature")
 
 # Bounded status codes the bridge records (privacy_logging._BOUNDED_DIAGNOSTIC_CODES
-# plus the sync worker's SyncTimeout/SyncStopped) mapped to the schema's
+# plus the sync worker's SyncTimeout/SyncStopped/ReauthRequired) mapped to the schema's
 # bridgeErrorCode enum. Explicit table: values are never derived from input.
 _ERROR_CODES = {
     "CacheBackfillIntegrityError": "cache_backfill_integrity_error",
@@ -62,6 +62,7 @@ _ERROR_CODES = {
     "CacheUnresolvedRetryIntegrityError": "cache_unresolved_retry_integrity_error",
     "SyncTimeout": "sync_timeout",
     "SyncStopped": "sync_stopped",
+    "ReauthRequired": "reauth_required",
 }
 ERROR_CODES = frozenset(_ERROR_CODES.values()) | {"other"}
 

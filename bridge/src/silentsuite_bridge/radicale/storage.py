@@ -38,6 +38,7 @@ from ..local_cache import (
     db,
     ensure_dav_href,
     is_safe_dav_href,
+    is_session_refused,
     opaque_dav_href,
     record_dav_change,
     resolve_dav_collection_uid,
@@ -53,7 +54,7 @@ from ..local_cache.models import (
     ItemEntity,
 )
 from ..privacy_logging import BoundedDiagnosticError, bounded_exception_class
-from ..web import log_sync_event, update_status
+from ..web import REAUTH_REQUIRED, log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
 
 logger = logging.getLogger("silentsuite-bridge.storage")
@@ -399,7 +400,11 @@ class SyncThread(threading.Thread):
                     logger.info("Stopped account sync discarded its late result")
                 else:
                     state = "failed"
-                    error_code = bounded_exception_class(e)
+                    error_code = (
+                        REAUTH_REQUIRED
+                        if is_session_refused(e)
+                        else bounded_exception_class(e)
+                    )
                     logger.warning(
                         "Sync failed for configured account (%s)",
                         error_code,
@@ -775,6 +780,10 @@ class EteSyncItem(Item):
 # --- Radicale Collection ---
 
 
+class UnreadableDavItemError(RuntimeError):
+    """A stored item could not be parsed into a DAV object."""
+
+
 class CollectionDeleteNotAllowed(PermissionError):
     """A DAV client asked to delete a whole collection this account does not administer."""
 
@@ -1040,11 +1049,34 @@ class Collection(BaseCollection):
             )
             yield href_mapper.href
 
+    def _readable_items(self, hrefs):
+        """Yield (href, item) pairs, leaving out stored items that cannot be parsed.
+
+        One unreadable card must not fail a whole listing, multiget or
+        sync-collection response. It is omitted rather than reported as
+        missing: a 404 would make clients delete their local copy. The stored
+        item is not changed. Count only: no href, UID or content is logged.
+        """
+        skipped = 0
+        try:
+            for href in hrefs:
+                try:
+                    item = self._get(href)
+                except UnreadableDavItemError:
+                    skipped += 1
+                    continue
+                yield href, item
+        finally:
+            if skipped:
+                logger.warning(
+                    "DAV response left out %d unreadable item(s)", skipped
+                )
+
     def get_multi(self, hrefs):
-        return ((href, self._get(href)) for href in hrefs)
+        return self._readable_items(hrefs)
 
     def get_all(self):
-        return (self._get(href) for href in self._list())
+        return (item for _href, item in self._readable_items(self._list()))
 
     def has_uid(self, uid):
         for item in self.get_all():
@@ -1076,8 +1108,10 @@ class Collection(BaseCollection):
         if etesync_item is None:
             return None
 
+        # Reading decrypts the item: backend and decryption failures propagate.
+        stored_content = etesync_item.content
         try:
-            item = vobject.readOne(etesync_item.content)
+            item = vobject.readOne(stored_content)
 
             # vCard 4.0 -> 3.0 compatibility for broader client support
             if (
@@ -1087,8 +1121,8 @@ class Collection(BaseCollection):
                 if hasattr(item, "kind") and item.kind.value.lower() == "group":
                     pass
                 else:
-                    content = _vcard4_media_to_3(etesync_item.content)
-                    if content != etesync_item.content:
+                    content = _vcard4_media_to_3(stored_content)
+                    if content != stored_content:
                         item = vobject.readOne(content)
 
                     item.contents["version"][0].value = "3.0"
@@ -1103,7 +1137,13 @@ class Collection(BaseCollection):
             if item.name == "VCARD" and not hasattr(item, "fn"):
                 item.add("fn").value = _fallback_contact_fn(item)
 
+        except MemoryError:
+            raise
         except Exception:
+            # Only contact listings leave an unparseable card out; events and
+            # tasks keep failing the request.
+            if self.content_suffix == ".vcf":
+                raise UnreadableDavItemError("Failed to parse DAV item") from None
             raise RuntimeError("Failed to parse DAV item") from None
 
         mtime_ms = etesync_item.meta.get("mtime", 0)
@@ -1420,8 +1460,8 @@ class Storage(BaseStorage):
                     self, posixpath.join(path, dav_collection_path(attributes[0], journal.uid))
                 )
         elif len(attributes) == 2:
-            for href in collection._list():
-                yield collection._get(href)
+            for _href, item in collection._readable_items(collection._list()):
+                yield item
         elif len(attributes) > 2:
             raise RuntimeError(
                 "Found more than one attribute. Shouldn't happen"

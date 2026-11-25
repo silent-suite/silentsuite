@@ -14,6 +14,7 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
+from etebase import etebase_python
 from playhouse.sqlite_ext import SqliteExtDatabase
 
 from silentsuite_bridge.local_cache import (
@@ -263,3 +264,41 @@ def test_superseded_session_still_stops_the_cycle(tmp_path):
 
     world.service.push_collection.assert_called_once()
     world.service.pull_collection.assert_not_called()
+
+
+def _two_collection_failures(world, first, second):
+    """First collection fails on push; the second fails on pull."""
+    world.service.push_collection = MagicMock(side_effect=[first, None])
+    world.service.pull_collection = MagicMock(side_effect=[second])
+
+
+def test_later_session_refusal_is_raised_over_earlier_failure(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    world = _World(tmp_path)
+    refused = etebase_python.Error("Invalid token.")
+    _two_collection_failures(world, PermissionDenied("synthetic"), refused)
+
+    with pytest.raises(etebase_python.Error) as raised:
+        world.service.sync()
+
+    assert raised.value is refused
+    assert world.service.push_collection.call_count == 2
+    assert world.service.pull_collection.call_count == 1
+    assert "Collection sync failed; other collections continue (PermissionDenied)" in (
+        caplog.text
+    )
+    assert "Invalid token." not in caplog.text
+
+
+def test_first_failure_is_raised_when_no_session_refusal(tmp_path):
+    world = _World(tmp_path)
+    first = PermissionDenied("synthetic")
+    _two_collection_failures(
+        world, first, etebase_python.Error("Temporary server error")
+    )
+
+    with pytest.raises(PermissionDenied) as raised:
+        world.service.sync()
+
+    assert raised.value is first
+    assert world.service.pull_collection.call_count == 1
