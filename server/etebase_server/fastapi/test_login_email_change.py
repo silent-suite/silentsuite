@@ -937,19 +937,33 @@ def test_deleting_the_holder_keeps_the_name_reserved_for_everyone(
     assert lookup.status_code == 401
 
 
-def test_release_of_a_deleted_holders_name_needs_no_flag(client, user_factory, signing_key):
+def test_release_of_a_deleted_holders_name_also_needs_the_flag(client, user_factory, signing_key, login_pubkey, user_salt):
     holder = user_factory(username="gone-holder@example.com", email="gone-holder@example.com")
     rename(client, holder, signing_key, "gone-holder-new@example.com")
     User.objects.get(pk=holder.pk).delete()
-    stdout = StringIO()
+    refused_out, confirmed_out = StringIO(), StringIO()
 
-    call_command("release_held_username", "gone-holder@example.com", stdout=stdout)
+    with pytest.raises(CommandError, match="--confirm-old-devices-retired"):
+        call_command("release_held_username", "gone-holder@example.com", stdout=refused_out)
+    assert refused_out.getvalue() == ""
+    assert HeldUsername.objects.filter(name="gone-holder@example.com", user__isnull=True).exists()
 
-    assert stdout.getvalue() == "Released held name gone-holder@example.com.\n"
+    call_command("release_held_username", "gone-holder@example.com", "--confirm-old-devices-retired", stdout=confirmed_out)
+    signup = msgpack_post(
+        client,
+        f"{AUTH_PREFIX}/signup/",
+        {
+            "user": {"username": "gone-holder@example.com", "email": "gone-holder@example.com"},
+            "salt": user_salt,
+            "loginPubkey": login_pubkey,
+            "pubkey": login_pubkey,
+            "encryptedContent": b"\x00" * 64,
+        },
+    )
+
+    assert confirmed_out.getvalue() == "Released held name gone-holder@example.com.\n"
     assert not HeldUsername.objects.exists()
-    mover = user_factory(username="mover@example.com", email="mover@example.com")
-    assert rename(client, mover, signing_key, "gone-holder@example.com")["newUsername"] == "gone-holder@example.com"
-
+    assert signup.status_code in (200, 201), signup.content[:300]
 
 def test_release_is_refused_while_the_holder_exists_unless_confirmed(client, user_factory, signing_key):
     holder = user_factory(username="live-holder@example.com", email="live-holder@example.com")
@@ -965,3 +979,5 @@ def test_release_is_refused_while_the_holder_exists_unless_confirmed(client, use
 
     assert confirmed_out.getvalue() == "Released held name live-holder@example.com.\n"
     assert not HeldUsername.objects.exists()
+    mover = user_factory(username="mover@example.com", email="mover@example.com")
+    assert rename(client, mover, signing_key, "live-holder@example.com")["newUsername"] == "live-holder@example.com"
