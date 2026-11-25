@@ -1,0 +1,1 @@
+Manage members, Invitations and Revisions show an error instead of closing the app when the server can't be reached. If you turned down a permission with "Don't ask again", the permissions screen now offers a way to the app's system settings. Experimental Notes: move a note to another notebook.

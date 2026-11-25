@@ -1,6 +1,6 @@
 {
   "name": "@silentsuite/docs",
-  "version": "0.5.21-beta.2",
+  "version": "0.5.22-beta",
   "private": true,
   "scripts": {
     "dev": "vitepress dev",
