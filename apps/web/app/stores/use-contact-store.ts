@@ -384,6 +384,8 @@ export const useContactStore = create<ContactState & ContactActions>()(
           }
           if (skipped > 0) options.onSkipped?.(skipped)
           const total = outcomes.filter((outcome) => outcome !== 'skipped').length
+          // The count drops skipped cards now, not only once the first batch is encrypted.
+          if (skipped > 0) set({ fileImport: { saved: 0, total } })
           let savedBefore = 0
           const now = new Date()
           for (const target of targets) {

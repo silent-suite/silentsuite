@@ -287,6 +287,19 @@ describe('file contact import: preflight and UIDs', () => {
     expect(err.unsaved).toEqual([1])
   })
 
+  it('lowers the shown total as soon as already imported cards are skipped', async () => {
+    server.seed('col-1', 'BEGIN:VCARD\r\nUID:a\r\nFN:A\r\nEND:VCARD')
+    const create = useEtebaseStore.getState().createItemsBatch
+    let shown: unknown = null
+    useEtebaseStore.setState({ createItemsBatch: (...args: Parameters<typeof create>) => { shown = useContactStore.getState().fileImport; return create(...args) } } as any)
+    try {
+      await expect(importFile([card('A', 'a'), card('B', 'b'), card('C', 'c')])).resolves.toBe(2)
+      expect(shown).toEqual({ saved: 0, total: 2 })
+    } finally {
+      useEtebaseStore.setState({ createItemsBatch: create } as any)
+    }
+  })
+
   it('re-import with A on the server sends only B', async () => {
     server.seed('col-1', 'BEGIN:VCARD\r\nVERSION:3.0\r\nUID:a\r\nFN:A\r\nEND:VCARD')
     await expect(importFile([card('A', 'a'), card('B', 'b')])).resolves.toBe(1)
