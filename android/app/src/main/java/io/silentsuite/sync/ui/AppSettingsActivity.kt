@@ -9,8 +9,10 @@ package io.silentsuite.sync.ui
 
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.CalendarContract
 import androidx.annotation.VisibleForTesting
@@ -30,12 +32,15 @@ import com.google.android.material.snackbar.Snackbar
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.BuildConfig
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
+import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.ui.report.ProblemReport
 import io.silentsuite.sync.ui.report.ReportProblemActivity
 import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.ui.settings.SettingsCategory
@@ -450,6 +455,20 @@ class AppSettingsActivity : BaseActivity() {
                 setOnPreferenceClickListener {
                     val exact = exactSelectedAccount() ?: return@setOnPreferenceClickListener false
                     startActivity(AccountActivity.newIntent(requireContext(), exact, host.selectedCreationId!!))
+                    true
+                }
+            }
+            requirePreference<Preference>("manage_subscription").apply {
+                // Billing lives on the hosted web app; a self-hosted server has no subscription.
+                isVisible = account == null || !ProblemReport.isCustomServer(
+                    AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_URI),
+                    Constants.serviceUrl.toString())
+                setOnPreferenceClickListener {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BillingManager.BILLING_MANAGE_URL)))
+                    } catch (_: ActivityNotFoundException) {
+                        Snackbar.make(requireView(), R.string.dashboard_open_app_unavailable, Snackbar.LENGTH_LONG).show()
+                    }
                     true
                 }
             }

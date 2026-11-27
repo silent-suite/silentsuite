@@ -58,6 +58,23 @@ class SettingsRoutingContractTest {
     }
 
     @Test
+    fun billingEntryPointsOpenTheWebSubscriptionPage() {
+        val openBilling = "Intent(Intent.ACTION_VIEW, Uri.parse(BillingManager.BILLING_MANAGE_URL))"
+        val accountXml = File(resourceRoot, "settings_account.xml").readText()
+        assertTrue("Settings > Account has a Subscription row that keeps no value", accountXml.substringAfter(
+            "android:key=\"manage_subscription\"", "").substringBefore("/>").contains("android:persistent=\"false\""))
+        val settings = File(sourceRoot, "ui/AppSettingsActivity.kt").readText()
+            .substringAfter("\"manage_subscription\"").substringBefore("requirePreference")
+        assertTrue("the Subscription row opens the web subscription page", settings.contains(openBilling))
+        assertTrue("the Subscription row is hidden for self-hosted servers", settings.contains("ProblemReport.isCustomServer("))
+        // App settings has no billing controls, so the billing warning must not send people there.
+        val card = File(sourceRoot, "ui/AccountActivity.kt").readText()
+            .substringAfter("private fun updateSubscriptionUi(").substringBefore("companion object")
+        assertTrue(card.contains("launchDashboardExternalApp($openBilling)"))
+        assertFalse(card.contains("AppSettingsActivity"))
+    }
+
+    @Test
     fun accountPreferencesRemainNonPersistentAndBackedByAccountSettings() {
         val syncXml = File(resourceRoot, "settings_sync.xml").readText()
         listOf("sync_interval", "sync_wifi_only", "sync_wifi_only_ssid").forEach { key ->

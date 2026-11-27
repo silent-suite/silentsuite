@@ -2041,9 +2041,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
         statusView.setTextColor(ContextCompat.getColor(this, R.color.semantic_warning))
         actionButton.visibility = View.VISIBLE
-        actionButton.setText(R.string.dashboard_open_account_settings)
+        // App settings has no billing controls; the web subscription page does, as in the expired notification.
+        actionButton.setText(R.string.subscription_manage)
         actionButton.setOnClickListener {
-            launchExactAccountRoute(AppSettingsActivity.newIntent(this, account, accountCreationId))
+            launchDashboardExternalApp(Intent(Intent.ACTION_VIEW, Uri.parse(BillingManager.BILLING_MANAGE_URL)))
         }
     }
 

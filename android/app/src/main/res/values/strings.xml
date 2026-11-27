@@ -642,7 +642,7 @@
     <string name="subscription_expires">Active — expires %s</string>
     <string name="subscription_trial_days">%d days remaining in trial</string>
     <string name="subscription_expired_message">Your subscription has expired. Your data is safe — tap to reactivate.</string>
-    <string name="subscription_manage">Manage Subscription</string>
+    <string name="subscription_manage">Manage subscription</string>
     <string name="subscription_reactivate">Reactivate</string>
     <string name="subscription_loading">Loading subscription status…</string>
     <!-- Theme mode arrays -->
@@ -762,6 +762,8 @@
     <string name="settings_account_current">Current account</string>
     <string name="settings_account_not_available">No account selected</string>
     <string name="settings_account_dashboard_summary">Open this account’s encrypted-sync overview</string>
+    <string name="settings_subscription">Subscription</string>
+    <string name="settings_subscription_summary">Manage your plan and payment in the browser</string>
     <string name="settings_privacy_local_title">Local settings</string>
     <string name="settings_privacy_local_summary">Global preferences stay on this device. Sync schedule, Wi-Fi restrictions, setup state, and session data remain scoped to the selected Android account.</string>
     <string name="settings_invalid_proxy_host">Enter a valid proxy host</string>
