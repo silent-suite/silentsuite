@@ -1418,7 +1418,8 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
       </div>
 
       {/* Mobile: horizontal stepper on top */}
-      <div className="flex w-full md:hidden items-center justify-center gap-1 sm:gap-2 mb-4 sm:mb-6">
+      <div className="flex w-full md:hidden flex-col items-center mb-4 sm:mb-6">
+      <div className="flex items-center justify-center gap-1 sm:gap-2">
         {steps.map((step, i) => (
           <div key={step.key} className="flex items-center gap-1.5">
             <div className="flex items-center gap-1">
@@ -1456,6 +1457,13 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
             )}
           </div>
         ))}
+      </div>
+      {/* Phones hide the per-step labels above, so name the current step here. */}
+      {currentIndex >= 0 && (
+        <p data-testid="signup-mobile-step-label" className="sm:hidden mt-2 text-xs text-[rgb(var(--muted))]">
+          Step {steps[currentIndex].number} of {steps.length}: {steps[currentIndex].label}
+        </p>
+      )}
       </div>
     </>
   )
