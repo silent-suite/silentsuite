@@ -38,8 +38,8 @@ ct yunohost domain list --output-as json | grep -q "\"$DOMAIN\"" || fail "setup:
 ct yunohost user create "$ADMIN_USER" --fullname "CI Admin" --domain "$DOMAIN" --password "$ADMIN_PASS" >/dev/null
 ct yunohost user group add admins "$ADMIN_USER" >/dev/null
 ct yunohost user create "$USER_NAME" --fullname "CI User" --domain "$DOMAIN" --password "$USER_PASS" >/dev/null
-sudo incus file pull ynh/etc/yunohost/certs/yunohost.org/ca.pem "$CA_FILE"
-sudo chown "$(id -u):$(id -g)" "$CA_FILE"
+# YunoHost signs its self-signed domain certificates with this local CA.
+ct cat /etc/ssl/certs/ca-yunohost_crt.pem > "$CA_FILE"
 ip=$(sudo incus list ynh --format csv -c 4 | cut -d' ' -f1)
 echo "$ip $DOMAIN" | sudo tee -a /etc/hosts >/dev/null
 for f in yunohost-candidate-ws-responder.py yunohost-candidate-rollback-evidence.py; do

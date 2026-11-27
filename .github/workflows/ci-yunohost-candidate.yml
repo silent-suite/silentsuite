@@ -214,7 +214,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -q
           sudo apt-get install -y -q incus lynx jq btrfs-progs python3-jsonschema python3-toml \
-            python3-packaging python3-pyparsing python3-six python3-pycurl
+            python3-packaging python3-pyparsing python3-six python3-pycurl python3-pip
           sudo incus admin init --minimal
           sudo iptables -I DOCKER-USER -i incusbr0 -j ACCEPT
           sudo iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
@@ -255,5 +255,10 @@ jobs:
           # the image as yunohost/bookworm-stable/appci.
           sudo incus remote add yunohost https://repo.yunohost.org/incus --protocol simplestreams --public
           sudo incus image copy yunohost:yunohost/bookworm-stable/appci local: --alias yunohost-bookworm-stable-appci
-          sg incus-admin -c "./package_check.sh $RUNNER_TEMP/silentsuite_ynh"
+          # GitHub-hosted runners drop ICMP, and package_check tests connectivity with ping.
+          # Stand-in for that one check only: an HTTPS request to the host it pings.
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\nfor h; do :; done\nexec curl -fsS -o /dev/null --max-time 10 "https://$h/"\n' > "$RUNNER_TEMP/bin/ping"
+          chmod +x "$RUNNER_TEMP/bin/ping"
+          sg incus-admin -c "PATH=$RUNNER_TEMP/bin:\$PATH ./package_check.sh $RUNNER_TEMP/silentsuite_ynh"
           test "$(git -C package_linter rev-parse HEAD)" = "$PACKAGE_LINTER_SHA"
