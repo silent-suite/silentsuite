@@ -3,6 +3,7 @@ import { BlockList, isIP } from 'node:net'
 import type { AnnualOfferAnalyticsDimensions } from './annual-offer-presentation'
 import {
   buildCheckoutReturnedPayload,
+  buildInPageCheckoutReturnedPayload,
   buildSignupStepPayload,
   buildSubscriptionManagementEntryPayload,
   CANONICAL_REFERRERS,
@@ -126,6 +127,7 @@ function buildInventory(): ReadonlyMap<string, InventoryEntry> {
   for (const outcome of CHECKOUT_OUTCOMES) {
     for (const method of RETURN_METHODS) add(buildCheckoutReturnedPayload(outcome, method), true)
   }
+  for (const method of ['stripe', 'btcpay'] as const) add(buildInPageCheckoutReturnedPayload(method), true)
   add(buildSubscriptionManagementEntryPayload(), true)
   for (const step of SIGNUP_STEPS) add(buildSignupStepPayload(step), true)
   for (const path of SIGNUP_PAYMENT_RETURN_PATHS) {

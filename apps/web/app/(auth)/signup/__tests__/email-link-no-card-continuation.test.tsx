@@ -70,7 +70,9 @@ vi.mock('@/app/stores/use-etebase-store', () => ({ normalizeServerUrl: (value: s
 vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
 vi.mock('@/app/lib/self-hosted', () => ({ isSelfHosted: false, isCustomServer: () => false }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
-vi.mock('@/app/components/stripe-payment-form', () => ({ default: ({ submitLabel, mode }: { submitLabel: string; mode: string }) => <button data-testid="card-submit" data-mode={mode}>{submitLabel}</button> }))
+vi.mock('@/app/components/stripe-payment-form', () => ({ default: ({ submitLabel, mode, onSuccess }: { submitLabel: string; mode: string; onSuccess: () => void }) => <button data-testid="card-submit" data-mode={mode} onClick={onSuccess}>{submitLabel}</button> }))
+const trackInPageCheckoutReturned = vi.hoisted(() => vi.fn())
+vi.mock('../commercial-funnel-analytics', async (importOriginal) => ({ ...await importOriginal<typeof import('../commercial-funnel-analytics')>(), trackInPageCheckoutReturned }))
 vi.mock('next/link', () => ({ default: ({ children }: { children: React.ReactNode }) => <>{children}</> }))
 
 describe('email-link seven-day no-card continuation', () => {
@@ -707,9 +709,14 @@ describe('email-link seven-day no-card continuation', () => {
     }))
     await choosePaymentMethod('btcpay')
     expect(await screen.findByText(/Payment confirmed for your Early Adopter Plan/)).toHaveTextContent('Account and vault setup still need to finish')
+    // Recorded when settlement is seen, before the delayed hand-off to account setup.
+    expect(trackInPageCheckoutReturned).toHaveBeenCalledWith('btcpay')
     expect(screen.queryByText(/access is active|early_annual|Plan ID/)).not.toBeInTheDocument()
     expect(authState.finalizePaidSignup).not.toHaveBeenCalled()
     expect(authState.completeSignup).not.toHaveBeenCalled()
+    // The hand-off to account finalization reports the same method again; the tracker sends once per document.
+    await waitFor(() => expect(trackInPageCheckoutReturned).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    expect(new Set(trackInPageCheckoutReturned.mock.calls.map(([method]) => method))).toEqual(new Set(['btcpay']))
   })
 
   async function traverseHistory(direction: 'back' | 'forward') {
@@ -786,6 +793,17 @@ describe('email-link seven-day no-card continuation', () => {
     await reachPlanScreen(checkoutToken, selectedDisclosure)
     return chooseFreeTrial()
   }
+
+  it('records a card checkout that finishes on the signup page once', async () => {
+    await reachPlanScreen()
+    authState.startAnnualSignupPayment.mockResolvedValue({ clientSecret: 'seti_fixture' })
+    await choosePaymentMethod('stripe')
+    const submit = await screen.findByTestId('card-submit')
+    expect(trackInPageCheckoutReturned).not.toHaveBeenCalled()
+    fireEvent.click(submit)
+    await waitFor(() => expect(trackInPageCheckoutReturned).toHaveBeenCalledWith('stripe'))
+    expect(trackInPageCheckoutReturned.mock.calls).toEqual([['stripe']])
+  })
 
   it.each(['charge_now', 'card_trial'] as const)('keeps the validated %s disclosure through card confirmation', async (kind) => {
     const disclosure: AnnualDisclosure = {
