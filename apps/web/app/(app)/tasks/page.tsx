@@ -62,7 +62,8 @@ const STATUS_OPTIONS: TaskStatus[] = ['needs-action', 'in-process', 'completed',
 
 // ── Helpers ──
 
-function formatDueDate(date: Date): string {
+// A completed task is never overdue: past dates show as a plain date in neutral text.
+function formatDueDate(date: Date, completed = false): string {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const due = new Date(date.getFullYear(), date.getMonth(), date.getDate())
@@ -71,12 +72,13 @@ function formatDueDate(date: Date): string {
   if (diffDays === 0) return 'Today'
   if (diffDays === 1) return 'Tomorrow'
   if (diffDays === -1) return 'Yesterday'
-  if (diffDays < -1) return `${Math.abs(diffDays)}d overdue`
-  if (diffDays <= 7) return `In ${diffDays}d`
+  if (diffDays < -1 && !completed) return `${Math.abs(diffDays)}d overdue`
+  if (diffDays >= 0 && diffDays <= 7) return `In ${diffDays}d`
   return formatDate(date, 'system', { month: 'short', day: 'numeric' })
 }
 
-function dueDateColor(date: Date): string {
+function dueDateColor(date: Date, completed = false): string {
+  if (completed) return 'text-[rgb(var(--muted))]'
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const due = new Date(date.getFullYear(), date.getMonth(), date.getDate())
@@ -861,8 +863,8 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
           {!expanded && (
             <div className="mt-0.5 flex items-center gap-2 md:hidden">
               {task.due_date && (
-                <span className={`text-xs ${dueDateColor(task.due_date)}`}>
-                  {formatDueDate(task.due_date)}
+                <span className={`text-xs ${dueDateColor(task.due_date, task.completed)}`}>
+                  {formatDueDate(task.due_date, task.completed)}
                 </span>
               )}
               <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium ${PRIORITY_COLORS[task.priority]}`}>
@@ -876,8 +878,8 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
         {/* Badges */}
         <div className="flex items-center gap-2 shrink-0 max-md:gap-1.5 max-md:min-w-0">
           {task.due_date && !expanded && (
-            <span className={`text-xs max-md:hidden ${dueDateColor(task.due_date)}`}>
-              {formatDueDate(task.due_date)}
+            <span className={`text-xs max-md:hidden ${dueDateColor(task.due_date, task.completed)}`}>
+              {formatDueDate(task.due_date, task.completed)}
             </span>
           )}
           {!expanded && (
