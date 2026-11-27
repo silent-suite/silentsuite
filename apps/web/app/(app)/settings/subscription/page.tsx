@@ -16,6 +16,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import AddCardBanner from '@/app/components/add-card-banner'
 import { ModalDialog } from '@/app/components/modal-dialog'
 import PaymentChoicePanel from '@/app/components/payment-choice-panel'
+import { useReportCardEndedNotice } from '@/app/components/read-only-overlay'
 import { getPaidBonusAccessDate } from './bonus-access'
 import { SubscriptionEntry } from './subscription-entry'
 
@@ -633,6 +634,10 @@ export default function SubscriptionPage() {
     }
   }
 
+  // The card shows the ended notice, its read-only line and the export link exactly when this holds.
+  const endedNotice = notice?.kind === 'trial_ended' || notice?.kind === 'access_ended'
+  useReportCardEndedNotice(!loading && !!data && endedNotice)
+
   if (loading) return <LoadingSkeleton />
 
   if (!data) {
@@ -692,7 +697,6 @@ export default function SubscriptionPage() {
   // show no stored interval: hosted plans are annual-only.
   const planName = purchaseAction ? liveOffer?.planName ?? null : data.planLabel
   const showBillingRow = !purchaseAction && !!data.plan && !data.planLabel.toLowerCase().includes(data.billingInterval)
-  const endedNotice = notice?.kind === 'trial_ended' || notice?.kind === 'access_ended'
   const endedHistory = classifyEndedHistory(data)
   // Only Billing's notice (seven-day countdown or a verified end) replaces the raw status badge.
   const headline = countdown

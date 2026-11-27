@@ -6,6 +6,7 @@ import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
 import type { AnnualOffer } from '@/app/lib/billing-v2'
 import SubscriptionPage from '../page'
+import { ReadOnlyBanner } from '@/app/components/read-only-overlay'
 
 vi.mock('next/dynamic', () => ({ default: () => function MockStripePaymentForm() { return <div data-testid="stripe-payment-form" /> } }))
 vi.mock('@silentsuite/ui', () => ({
@@ -15,6 +16,7 @@ vi.mock('@silentsuite/ui', () => ({
 }))
 vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test', ETEBASE_SERVER_URL: 'https://server.example.test' }))
 vi.mock('@/app/lib/date', () => ({ formatDate: (date: Date) => date.toISOString().slice(0, 10) }))
+vi.mock('next/navigation', () => ({ usePathname: () => '/settings/subscription' }))
 
 const DAY = 86_400_000
 const future = (days: number) => new Date(Date.now() + days * DAY).toISOString()
@@ -275,6 +277,23 @@ describe('subscription card clarity', () => {
     await screen.findByText('Plan')
     expect(within(card()).getByText('Trial ended')).toBeInTheDocument()
     expect(screen.queryByText('Trialing')).not.toBeInTheDocument()
+  })
+
+  // Review fix SIGNUP-04/08: one copy of the read-only line and export link for both shapes.
+  it('keeps the read-only banner when the card has no ended notice, and drops it when the card shows one', async () => {
+    route({ status: 'none', plan: null, renewalDate: null, accountNotice: null, capabilities: { ...capabilities, canReactivate: true } })
+    const first = render(<><ReadOnlyBanner /><SubscriptionPage /></>)
+    await screen.findByText('No Subscription')
+    expect(screen.getByText(/Your data is safe and read-only\./)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Export data' })).toBeInTheDocument()
+    first.unmount()
+
+    route(endedTrial)
+    render(<><ReadOnlyBanner /><SubscriptionPage /></>)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Your data is safe and read-only.')).toBeInTheDocument()
+    expect(screen.getAllByText(/Your data is safe and read-only\./)).toHaveLength(1)
+    expect(screen.getAllByRole('link', { name: /export/i })).toHaveLength(1)
   })
 
   it('says plainly when paid access has ended', async () => {

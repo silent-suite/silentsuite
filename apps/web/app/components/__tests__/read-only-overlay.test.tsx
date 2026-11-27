@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { ReadOnlyBanner, DegradedModeBanner } from '../read-only-overlay'
+import { ReadOnlyBanner, DegradedModeBanner, useReportCardEndedNotice } from '../read-only-overlay'
+
+function CardReport({ shown }: { shown: boolean }) {
+  useReportCardEndedNotice(shown)
+  return null
+}
 
 // Mock the auth store
 let mockSubscriptionStatus: string | null = 'cancelled'
@@ -134,10 +139,23 @@ describe('ReadOnlyBanner', () => {
     expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument()
   })
 
-  it('stays hidden on the subscription page, whose card says the same (SIGNUP-08)', () => {
+  it('stays hidden on the subscription page while its card says the same (SIGNUP-08)', () => {
     mockPathname = '/settings/subscription'
-    const { container } = render(<ReadOnlyBanner />)
+    const { container } = render(<><CardReport shown /><ReadOnlyBanner /></>)
     expect(container).toBeEmptyDOMElement()
+  })
+
+  it('shows on the subscription page when its card has no ended notice (review fix: SIGNUP-04/08)', () => {
+    mockPathname = '/settings/subscription'
+    mockSubscriptionStatus = 'none'
+    const { rerender } = render(<><CardReport shown={false} /><ReadOnlyBanner /></>)
+    expect(screen.getByText(/Your free trial ended\. Your data is safe and read-only\./)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Export data' })).toBeInTheDocument()
+    // A card that stops showing the notice brings the banner back.
+    rerender(<><CardReport shown /><ReadOnlyBanner /></>)
+    expect(screen.queryByText(/Your data is safe and read-only\./)).not.toBeInTheDocument()
+    rerender(<><CardReport shown={false} /><ReadOnlyBanner /></>)
+    expect(screen.getByText(/Your data is safe and read-only\./)).toBeInTheDocument()
   })
 
   it('shows on other settings pages (SIGNUP-08)', () => {
