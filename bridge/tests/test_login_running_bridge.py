@@ -6,8 +6,10 @@ account endpoint, and the terminal must print the right next step.
 """
 
 import contextlib
+import http.server
 import io
 import json
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -220,16 +222,59 @@ def test_cli_login_without_loopback_dashboard_cannot_ask(monkeypatch):
     opener.open.assert_not_called()
 
 
+class _RecordingHandler(http.server.BaseHTTPRequestHandler):
+    """Records each request path; ``/start`` redirects to ``/elsewhere``."""
+
+    def do_GET(self):
+        self.server.paths.append(self.path)
+        if self.path == "/start":
+            self.send_response(302)
+            self.send_header("Location", "/elsewhere")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+@contextlib.contextmanager
+def _recording_server():
+    server = http.server.HTTPServer(("127.0.0.1", 0), _RecordingHandler)
+    server.paths = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
 def test_loopback_opener_bypasses_proxies_and_redirects(monkeypatch):
     monkeypatch.setattr(config, "SSL_ENABLED", False)
-    monkeypatch.setenv("http_proxy", "http://proxy.invalid:3128")
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
 
-    opener = auth_browser._loopback_opener()
+    with _recording_server() as bridge, _recording_server() as proxy:
+        bridge_url = f"http://127.0.0.1:{bridge.server_address[1]}"
+        monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_address[1]}")
 
-    proxy_handlers = [h for h in opener.handlers if isinstance(h, urllib.request.ProxyHandler)]
-    assert proxy_handlers and all(h.proxies == {} for h in proxy_handlers)
-    redirect_handlers = [h for h in opener.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)]
-    assert redirect_handlers and all(isinstance(h, auth_browser._NoRedirect) for h in redirect_handlers)
+        # Control: a default opener honours the proxy variable.
+        with urllib.request.build_opener().open(bridge_url + "/plain", timeout=5):
+            pass
+        assert proxy.paths == [bridge_url + "/plain"]
+        assert bridge.paths == []
+
+        opener = auth_browser._loopback_opener()
+        with pytest.raises(urllib.error.HTTPError) as redirect:
+            opener.open(bridge_url + "/start", timeout=5)
+
+    assert redirect.value.code == 302
+    assert bridge.paths == ["/start"]
+    assert proxy.paths == [bridge_url + "/plain"]
 
 
 # ---------------------------------------------------------------------------
