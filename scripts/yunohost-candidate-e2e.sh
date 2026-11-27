@@ -205,8 +205,14 @@ curl -fsS -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/api/v1/authenticatio
 curl -fsS -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/signup" || fail "rollback: web not ready"
 check_perms "rollback"
 check_data "rollback"
-node "$repo/scripts/yunohost-candidate-witness.mjs" verify-acks --state "$STATE" "$work/acks" \
-    || fail "rollback: an acknowledged write was lost"
+if ! node "$repo/scripts/yunohost-candidate-witness.mjs" verify-acks --state "$STATE" "$work/acks"; then
+    # Diagnostics: unit start/stop timeline and server errors since the attempt, with
+    # long ID-like strings removed.
+    ct journalctl -u "$app-server" -u "$app-web" -u postgresql --since "@$((start - 5))" -o short-unix --no-pager \
+        | grep -E "Start|Stopp|Stopped|Failed|status=|Error|Exception|Traceback|raise |File \"" \
+        | sed -E 's/[A-Za-z0-9_-]{20,}/<id>/g' | cut -c1-200 | head -80
+    fail "rollback: an acknowledged write was lost"
+fi
 
 #=== Backup, purge, restore ==================================================
 group "backup and restore"
