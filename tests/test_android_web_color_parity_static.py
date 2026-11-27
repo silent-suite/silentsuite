@@ -1109,8 +1109,7 @@ TOP_BAR = "@color/semantic_system_bar"
 ON_TOP_BAR = "@color/semantic_on_system_bar"
 LEGACY_WINDOW_BAR_ACTIVITIES = (
     ".ui.AppSettingsActivity", ".ui.AccountSettingsActivity", ".ui.DebugInfoActivity",
-    ".ui.WebViewActivity", ".ui.ViewCollectionActivity", ".ui.CollectionMembersActivity",
-    ".ui.JournalItemActivity",
+    ".ui.WebViewActivity",
 )
 # Attributes that would make the light overflow popup (which inherits the toolbar context
 # unless a popupTheme is set) draw white text on its light surface.
