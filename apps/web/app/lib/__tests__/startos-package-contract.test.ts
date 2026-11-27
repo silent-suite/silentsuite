@@ -74,6 +74,18 @@ describe('StartOS package manifest', () => {
     expect(imageRef('postgresImage')).toMatch(/^postgres:16\.\d+-alpine@/)
   })
 
+  it('claims encryption for content only, never that the server stores only ciphertext', () => {
+    const copy = read('self-host/startos/startos/manifest/i18n.ts') + read('self-host/startos/instructions.md')
+    expect(copy).not.toMatch(/only ciphertext|only encrypted data|nur Chiffretext|solo guarda texto cifrado|tylko szyfrogram|ne stocke que/)
+    expect(read('self-host/startos/instructions.md')).toContain('username, email address and sync metadata')
+  })
+
+  it('links the package from the bundled guide by repository URL', () => {
+    const guide = read('self-host/SELF-HOSTING.md')
+    expect(guide).not.toMatch(/\]\(\.\/startos/)
+    expect(guide).toContain('https://github.com/silent-suite/silentsuite/tree/main/self-host/startos')
+  })
+
   it('names the license and keeps descriptions within the store limits', () => {
     expect(manifest()).toContain("license: 'AGPL-3.0-only'")
     const i18n = read('self-host/startos/startos/manifest/i18n.ts')
@@ -161,6 +173,18 @@ describe('StartOS package secrets', () => {
     expect(init).toContain('await chmod(sdk.volumes.startos.path, 0o700)')
     expect(init).toContain("await chmod(sdk.volumes.startos.subpath('store.json'), 0o600)")
     expect(init.match(/await makeStorePrivate\(\)/g)).toHaveLength(2)
+  })
+
+  it('never lets a store parse error quote the secret file', () => {
+    const init = read('self-host/startos/startos/init/initializeService.ts')
+    const reads = init.match(/storeJson\.read\(\)/g) ?? []
+    const wrapped = init.match(/readStore\(\(\) => storeJson\.read\(\)/g) ?? []
+    expect(reads.length).toBeGreaterThan(0)
+    expect(wrapped).toHaveLength(reads.length)
+    expect(init).toMatch(/\} catch \{\s*throw new Error\('SilentSuite store\.json is unreadable or not valid JSON'\)/)
+    for (const file of ['backups.ts', 'main.ts', 'actions/showInstallationPassword.ts']) {
+      expect(read(`self-host/startos/startos/${file}`), file).not.toContain('storeJson.read(')
+    }
   })
 
   it('keeps the secret store out of every subcontainer', () => {

@@ -594,14 +594,14 @@ unsure about.
 
 ## StartOS (Start9)
 
-A StartOS package lives in [`self-host/startos/`](./startos/). It runs the same released
+A StartOS package lives in [`self-host/startos/`](https://github.com/silent-suite/silentsuite/tree/main/self-host/startos). It runs the same released
 server and web images, generates its own installation password and database password, and
 uses StartOS backups (a PostgreSQL dump plus the server data). On StartOS, open the
 **Show Installation Password** action, then sign up at the service's `https://` address.
 The Android app needs a public domain on that address, because it only trusts publicly
 issued certificates. The package is built and smoke-tested in CI. It has not been tested on
 a StartOS server yet and is not in the Start9 registry. See
-[`self-host/startos/instructions.md`](./startos/instructions.md).
+[`self-host/startos/instructions.md`](https://github.com/silent-suite/silentsuite/blob/main/self-host/startos/instructions.md).
 
 ## Security Notes
 

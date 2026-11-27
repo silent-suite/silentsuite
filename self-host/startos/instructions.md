@@ -1,7 +1,8 @@
 # SilentSuite on StartOS
 
-SilentSuite encrypts your calendar, contacts, tasks and notes on your own devices. This
-server stores only encrypted data and never sees your account password.
+SilentSuite encrypts the content of your calendar, contacts, tasks and notes on your own
+devices. This server never sees that content or your account password. It does see your
+username, email address and sync metadata, such as when items change.
 
 ## Create your account
 
@@ -17,7 +18,9 @@ needs the installation password, so only people you give it to can sign up.
 
 ## Addresses and certificates
 
-- Always use the `https://` address. Plain `http://` requests are redirected or refused.
+- Always use the `https://` address. Plain `http://` page loads are redirected to it and other
+  plain requests are refused. A client you set up with an `http://` address has already sent
+  its request over the network unencrypted by the time it is refused, so don't do that.
 - **Browser on your local network:** the `.local` address uses your StartOS server's own
   certificate authority. Trust the StartOS root CA on that device first
   ([Start9's guide](https://docs.start9.com/start-os/0.4.2.x/trust-ca.html)).
