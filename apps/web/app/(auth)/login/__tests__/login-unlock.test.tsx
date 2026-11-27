@@ -188,3 +188,13 @@ describe('LoginPage server selection', () => {
     expect(localStorage.getItem('silentsuite-server-url')).toBeNull()
   })
 })
+
+describe('LoginPage server error', () => {
+  it('announces the server error to screen readers', () => {
+    authState.error = 'Invalid email or password. Please try again.'
+
+    render(<LoginPage />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid email or password. Please try again.')
+  })
+})

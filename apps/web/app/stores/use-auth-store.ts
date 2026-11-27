@@ -946,10 +946,21 @@ function clearHostedValidationMarkers() {
   }
 }
 
+/**
+ * Etebase rejects an unknown user ("User not found") and a wrong password
+ * ("Wrong password for user.") with the same UnauthorizedError (HTTP 401).
+ * Both get one message, so the form never says which accounts exist.
+ */
+function isWrongCredentials(err: Error, raw: string): boolean {
+  return err.name === 'UnauthorizedError'
+    || raw.includes('unauthorized') || raw.includes('401')
+    || raw.includes('wrong password') || raw.includes('user not found')
+}
+
 function authErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'Login failed'
   const raw = err.message.toLowerCase()
-  if (raw.includes('unauthorized') || raw.includes('401')) return 'Invalid email or password. Please try again.'
+  if (isWrongCredentials(err, raw)) return 'Invalid email or password. Please try again.'
   if (raw.includes('not found') || raw.includes('404')) return 'No account found with this email. Please sign up first.'
   if (raw.includes('429') || raw.includes('too many') || raw.includes('rate limit') || raw.includes('throttl')) {
     return AUTH_RATE_LIMIT_MESSAGE
