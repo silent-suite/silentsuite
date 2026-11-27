@@ -1,0 +1,46 @@
+#!/bin/bash
+
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+# Keep this path for calling _common.sh inside the execution's context of backup and restore scripts
+source ../settings/scripts/_common.sh
+source /usr/share/yunohost/helpers
+
+ynh_print_info "Declaring files to be backed up..."
+
+#=================================================
+# BACKUP THE APP MAIN DIR
+#=================================================
+
+# The image trees are included so a restore works offline.
+ynh_backup "$install_dir"
+
+#=================================================
+# BACKUP THE DATA DIR
+#=================================================
+
+ynh_backup "$data_dir"
+
+#=================================================
+# BACKUP SYSTEM CONFIGURATION
+#=================================================
+
+ynh_backup "/etc/nginx/conf.d/$domain.d/$app.conf"
+
+ynh_backup "/etc/systemd/system/$app-server.service"
+ynh_backup "/etc/systemd/system/$app-web.service"
+
+#=================================================
+# BACKUP THE POSTGRESQL DATABASE
+#=================================================
+ynh_print_info "Backing up the PostgreSQL database..."
+
+ynh_psql_dump_db > db.sql
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_print_info "Backup script completed for $app. (YunoHost will then actually copy those files to the archive)."

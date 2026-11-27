@@ -1,0 +1,41 @@
+[Unit]
+Description=SilentSuite web app
+After=network.target __APP__-server.service
+
+[Service]
+Type=simple
+User=__APP__
+Group=__APP__
+# Runs inside the published web image's file tree, read-only.
+RootDirectory=__INSTALL_DIR__/web
+WorkingDirectory=/app
+UMask=0077
+Environment=NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=127.0.0.1 PORT=__PORT_WEB__
+CacheDirectory=__APP__-web
+BindPaths=/var/cache/__APP__-web:/app/apps/web/.next/cache
+ExecStart=/usr/local/bin/node apps/web/server.js
+Restart=on-failure
+TimeoutStartSec=300
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=+/app/apps/web/.next/cache
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+DevicePolicy=closed
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=~@clock @debug @module @mount @obsolete @reboot @setuid @swap @cpu-emulation @privileged
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

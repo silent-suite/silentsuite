@@ -1,0 +1,63 @@
+#!/bin/bash
+
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+source _common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# DOWNLOAD, CHECK AND UNPACK SOURCE
+#=================================================
+ynh_script_progression "Fetching and verifying the SilentSuite images..."
+
+# Fetch first, so a failed download leaves the running version untouched.
+_silentsuite_fetch_images
+
+#=================================================
+# STOP SYSTEMD SERVICE
+#=================================================
+ynh_script_progression "Stopping $app's systemd services..."
+
+ynh_systemctl --service="$app-web" --action="stop"
+ynh_systemctl --service="$app-server" --action="stop"
+
+_silentsuite_promote_images
+
+#=================================================
+# UPDATE A CONFIG FILE
+#=================================================
+ynh_script_progression "Updating $app's configuration files..."
+
+_silentsuite_add_config
+
+#=================================================
+# REAPPLY SYSTEM CONFIGURATION
+#=================================================
+ynh_script_progression "Upgrading system configurations related to $app..."
+
+ynh_config_add_nginx
+
+ynh_config_add_systemd --service="$app-server" --template="server.service"
+ynh_config_add_systemd --service="$app-web" --template="web.service"
+
+yunohost service add "$app-server" --description="SilentSuite server"
+yunohost service add "$app-web" --description="SilentSuite web app"
+
+_silentsuite_set_permissions
+
+#=================================================
+# START SYSTEMD SERVICE
+#=================================================
+ynh_script_progression "Starting $app's systemd services..."
+
+# Migrations run when the server starts. On failure YunoHost restores its safety backup.
+_silentsuite_start
+_silentsuite_remove_old_images
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_script_progression "Upgrade of $app completed"

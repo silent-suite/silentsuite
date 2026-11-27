@@ -1,0 +1,12 @@
+#:schema https://raw.githubusercontent.com/YunoHost/apps/master/schemas/tests.v1.schema.json
+
+test_format = 1.0
+
+[default]
+
+    # SilentSuite's own CI runs the stateful checks (permissions, accounts, data, rollback).
+    [default.curl_tests]
+    signup.path = "/signup"
+    signup.expect_return_code = 200
+    native.path = "/api/v1/authentication/is_etebase/"
+    native.expect_return_code = 200

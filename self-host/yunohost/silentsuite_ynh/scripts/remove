@@ -1,0 +1,30 @@
+#!/bin/bash
+
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+source _common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# REMOVE SYSTEM CONFIGURATIONS
+#=================================================
+ynh_script_progression "Removing system configurations related to $app..."
+
+for service in "$app-web" "$app-server"; do
+    if ynh_hide_warnings yunohost service status "$service" >/dev/null; then
+        yunohost service remove "$service"
+    fi
+    ynh_config_remove_systemd "$service"
+done
+
+ynh_config_remove_nginx
+
+rm -rf "$fetch_dir" "/var/lib/silentsuite-fetch"
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_script_progression "Removal of $app completed"

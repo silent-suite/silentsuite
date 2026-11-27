@@ -1,0 +1,44 @@
+[Unit]
+Description=SilentSuite server (Etebase)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=__APP__
+Group=__APP__
+# Runs inside the published server image's file tree; only /data is writable.
+RootDirectory=__INSTALL_DIR__/server
+BindPaths=__DATA_DIR__:/data
+BindReadOnlyPaths=__INSTALL_DIR__/etebase-server.ini:/etc/etebase-server/etebase-server.ini
+EnvironmentFile=__INSTALL_DIR__/server.env
+WorkingDirectory=/app
+UMask=0077
+ExecStartPre=/usr/local/bin/python manage.py collectstatic --noinput --verbosity 0
+ExecStartPre=/usr/local/bin/python manage.py migrate --noinput
+ExecStart=/usr/local/bin/uvicorn etebase_server.asgi:application --host 127.0.0.1 --port __PORT_SERVER__ --workers 2 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log --log-level warning
+Restart=on-failure
+TimeoutStartSec=300
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=+/data
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+DevicePolicy=closed
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=~@clock @debug @module @mount @obsolete @reboot @setuid @swap @cpu-emulation @privileged
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
