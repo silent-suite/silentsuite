@@ -1,2 +1,0 @@
-* Task collection view: add a message about changelog not showing if OpenTasks isn't installed
-* Update German translation
