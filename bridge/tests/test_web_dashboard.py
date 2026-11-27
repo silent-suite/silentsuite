@@ -307,6 +307,11 @@ def test_render_dashboard_handles_no_accounts(tmp_path, monkeypatch):
     assert 'id="dashboardLoginForm"' in html
     assert 'name="password"' in html
     assert "Add / Re-authenticate Account" in html
+    # First run leads with sign-in; network details sit below it, collapsed.
+    network = html.index('<details class="url-section network-details">')
+    assert html.index('id="dashboardLoginForm"') < network
+    assert html.index("<summary>Advanced: network</summary>") > network
+    assert html.index("CSRF token") > network
 
 
 def test_render_dashboard_escapes_account_action_attributes(tmp_path, monkeypatch):

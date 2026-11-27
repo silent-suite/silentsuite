@@ -863,6 +863,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
+        .network-details summary {
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
         .url-box {
             background: #111;
             border: 1px solid #2a2a2a;
@@ -1102,11 +1108,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
 
             <div class="url-section">
-                <h3>Network</h3>
-                {{NETWORK_CARD}}
-            </div>
-
-            <div class="url-section">
                 <div class="section-title-row">
                     <h3>Configured Accounts</h3>
                     <button id="addAccountBtn" class="account-action-btn primary">Add / Re-authenticate Account</button>
@@ -1133,6 +1134,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 </div>
                 {{ACCOUNT_LIST}}
             </div>
+
+            <details class="url-section network-details">
+                <summary>Advanced: network</summary>
+                {{NETWORK_CARD}}
+            </details>
         </div>
 
         <div class="status-card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
@@ -1635,14 +1641,17 @@ def _render_network_card() -> str:
 
     parts.append(
         '<div style="margin-top:8px;font-size:12px;color:#666;">'
-        'Source rule: the dashboard answers only when bridge-owned evidence proves '
-        'the request arrived on a bound loopback listener (never a wildcard or '
-        'remote bind), was accepted on a loopback local address on that '
-        'listener\'s port, and came from a loopback peer matching REMOTE_ADDR. '
-        'The Host header must then be a strict loopback authority whose port '
-        'matches the listener, and mutating requests must also carry the CSRF '
-        'token. Anything else gets a plain 404. Append /&lt;account email&gt;/ to a '
-        'bound endpoint above for that account\'s CalDAV/CardDAV URL.'
+        'Only this computer can open this page. It answers a request only when '
+        'the bridge can show the request arrived on a bound loopback listener '
+        '(never a wildcard or remote bind), was accepted on a loopback address on '
+        'that listener\'s port, and came from a loopback peer matching '
+        'REMOTE_ADDR. The Host header must also name that loopback address and '
+        'port, and changes must carry the page\'s CSRF token. Anything else gets '
+        'a plain 404 (not found).'
+        '</div>'
+        '<div style="margin-top:8px;font-size:12px;color:#666;">'
+        'Your CalDAV/CardDAV address is a listener address above followed by '
+        '/&lt;account email&gt;/.'
         '</div>'
     )
     return "\n".join(parts)
