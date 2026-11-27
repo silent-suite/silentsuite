@@ -87,6 +87,7 @@ class ListenerRegistry:
         self._lock = threading.Lock()
         self._bound: list[dict] = []
         self._failed_count = 0
+        self._failed_binds: list[tuple] = []
         self._state = self._NEVER
         self._listeners: list = []
 
@@ -125,6 +126,7 @@ class ListenerRegistry:
         with self._lock:
             self._bound.clear()
             self._failed_count = 0
+            self._failed_binds.clear()
             self._state = self._STARTED
         self._notify()
 
@@ -155,9 +157,12 @@ class ListenerRegistry:
             )
         self._notify()
 
-    def record_failed(self) -> None:
+    def record_failed(self, error=None, port=None) -> None:
+        """Count a failed listener; keep the bind errno and port when known."""
         with self._lock:
             self._failed_count += 1
+            if error is not None:
+                self._failed_binds.append((getattr(error, "errno", None), port))
         self._notify()
 
     # -- querying --
@@ -169,6 +174,11 @@ class ListenerRegistry:
     def failed_count(self) -> int:
         with self._lock:
             return self._failed_count
+
+    def failed_binds(self) -> list[tuple]:
+        """Return ``(errno, port)`` for each failed listener constructor."""
+        with self._lock:
+            return list(self._failed_binds)
 
     def dashboard_url(self, ssl_enabled: bool) -> str | None:
         with self._lock:
@@ -266,8 +276,8 @@ def _build_bridge_http_server_class(upstream_class, registry: ListenerRegistry):
         def __init__(self, configuration, family, address, handler_class):
             try:
                 super().__init__(configuration, family, address, handler_class)
-            except (OSError, RuntimeError):
-                registry.record_failed()
+            except (OSError, RuntimeError) as exc:
+                registry.record_failed(exc, address[1])
                 print_listener_not_bound(address, "HTTP")
                 raise
             # After full construction: server_address is populated.
@@ -291,8 +301,8 @@ def _build_bridge_https_server_class(upstream_class, registry: ListenerRegistry)
         def __init__(self, configuration, family, address, handler_class):
             try:
                 super().__init__(configuration, family, address, handler_class)
-            except (OSError, RuntimeError):
-                registry.record_failed()
+            except (OSError, RuntimeError) as exc:
+                registry.record_failed(exc, address[1])
                 print_listener_not_bound(address, "HTTPS")
                 raise
             # Per listener and per serve() run: never shared across listeners.

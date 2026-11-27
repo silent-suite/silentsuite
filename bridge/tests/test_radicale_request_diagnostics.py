@@ -59,9 +59,19 @@ MARKERS = (
 )
 
 
-def _emit(tmp_path, template, args, *, level=logging.INFO, pathname=APP_PATHNAMES[0]):
+def _emit(
+    tmp_path,
+    template,
+    args,
+    *,
+    level=logging.INFO,
+    pathname=APP_PATHNAMES[0],
+    logger_level=logging.DEBUG,
+):
     """Send one record through the production logger into both sink kinds."""
     logger = logging.getLogger("radicale")
+    previous_level = logger.level
+    logger.setLevel(logger_level)
     stream = io.StringIO()
     stream_handler = logging.StreamHandler(stream)
     log_file = tmp_path / "bridge.log"
@@ -81,6 +91,7 @@ def _emit(tmp_path, template, args, *, level=logging.INFO, pathname=APP_PATHNAME
     try:
         logger.handle(record)
     finally:
+        logger.setLevel(previous_level)
         for handler in (stream_handler, file_handler):
             logger.removeHandler(handler)
             handler.close()
@@ -222,15 +233,89 @@ def test_local_auth_result_uses_fixed_categories(
     assert _emit(tmp_path, template, args, level=level, pathname=pathname) == expected
 
 
+DASHBOARD_PATHS = (
+    "/.web",
+    "/.web/",
+    "/.web/api/sync/marker-request-id",
+    "/.web/report",
+)
+
+
+@pytest.mark.parametrize("path", DASHBOARD_PATHS)
+def test_dashboard_requests_are_named_as_dashboard_requests(tmp_path, path):
+    arrival = _emit(
+        tmp_path, ARRIVAL, ("GET", path, "", MARKER_HOST, MARKER_AGENT)
+    )
+    outcome = _emit(tmp_path, OUTCOME, ("GET", path, "", 0.123, "200 OK"))
+
+    assert arrival == "INFO Dashboard request received (method=GET)"
+    assert outcome == "INFO Dashboard request completed (method=GET status=200)"
+
+
+@pytest.mark.parametrize("method", ("GET", "HEAD"))
+def test_root_redirect_to_the_dashboard_is_a_dashboard_request(tmp_path, method):
+    output = _emit(
+        tmp_path, ARRIVAL, (method, "/", "", MARKER_HOST, MARKER_AGENT)
+    )
+
+    assert output == f"INFO Dashboard request received (method={method})"
+
+
+@pytest.mark.parametrize(
+    "method, path",
+    (
+        ("PROPFIND", "/"),
+        ("PROPFIND", "/.well-known/caldav"),
+        ("GET", "/.webmarker/item.ics"),
+        ("GET", MARKER_PATH),
+    ),
+)
+def test_dav_requests_stay_dav_requests(tmp_path, method, path):
+    output = _emit(tmp_path, ARRIVAL, (method, path, "", MARKER_HOST, MARKER_AGENT))
+
+    assert output == f"INFO DAV request received (method={method})"
+
+
+@pytest.mark.parametrize(
+    "pathname, warning",
+    (
+        # Radicale's request handlers: a warning is a rejected request.
+        (APP_PATHNAMES[0], "WARNING Radicale request was rejected"),
+        # Any other Radicale module: a warning is a generic failure.
+        ("radicale/log.py", "WARNING Radicale failure"),
+    ),
+)
+def test_suppressed_placeholders_are_debug_only(tmp_path, pathname, warning):
+    template = "Sanitized path: %r"
+    args = (MARKER_PATH,)
+
+    assert _emit(tmp_path, template, args, pathname=pathname, logger_level=logging.INFO) == ""
+    assert (
+        _emit(tmp_path, template, args, pathname=pathname, logger_level=logging.DEBUG)
+        == "DEBUG Radicale diagnostic suppressed"
+    )
+    assert (
+        _emit(
+            tmp_path,
+            template,
+            args,
+            level=logging.WARNING,
+            pathname=pathname,
+            logger_level=logging.INFO,
+        )
+        == warning
+    )
+
+
 # The remaining tests are fail-closed guards. They hold on the current
 # suppress-everything filter and must keep holding once the diagnostics above
 # are restored.
 
 GENERIC_OUTPUTS = {
-    "INFO Radicale diagnostic suppressed",
+    "DEBUG Radicale diagnostic suppressed",
     "WARNING Radicale request was rejected",
-    "INFO Radicale item diagnostic suppressed",
-    "INFO Radicale server diagnostic suppressed",
+    "DEBUG Radicale item diagnostic suppressed",
+    "DEBUG Radicale server diagnostic suppressed",
     "WARNING Radicale failure",
 }
 

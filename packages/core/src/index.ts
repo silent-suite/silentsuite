@@ -2,7 +2,6 @@
 
 // Etebase client
 export {
-  initializeEtebase,
   signUp,
   logIn,
   restoreSession,
@@ -47,7 +46,6 @@ export {
   listItems,
   updateItem,
   deleteItem,
-  batchUpload,
   savedRevisionOf,
   fetchItemFresh,
   updateItemIfUnchanged,
@@ -67,8 +65,6 @@ export {
   inviteToCollection,
   getPublicKeyFingerprint,
   snapshotInvitation,
-  InvalidSharingKeyError,
-  InvalidSharingInvitationError,
   listCollectionMembers,
   removeCollectionMember,
   leaveCollection,
@@ -87,7 +83,6 @@ export type { StokenAdvanceEvent } from './etebase/sync.js';
 
 // Calendar event model
 export {
-  toVEvent,
   fromVEvent,
   serializeCalendarEvent,
   deserializeCalendarEvent,
@@ -102,7 +97,6 @@ export type { CalendarEvent } from './models/calendar-event.js';
 // Task model
 export {
   toVTodo,
-  fromVTodo,
   serializeTask,
   deserializeTask,
   taskICalDateFromProperty,
@@ -112,10 +106,8 @@ export type { Task, TaskStatus, TaskICalDate, TaskICalDateKind } from './models/
 // Contact model
 export {
   toVCard,
-  fromVCard,
   serializeContact,
   deserializeContact,
-  getContactInitials,
 } from './models/contact.js';
 export type { Contact } from './models/contact.js';
 
@@ -134,10 +126,8 @@ export type { DateRange, Priority, SortOrder } from './models/types.js';
 
 // Synced preferences model
 export {
-  SYNCED_PREFERENCE_KEYS,
   DEFAULT_SYNCED_PREFERENCES,
   createSyncedPreferences,
-  normalizeSyncedPreferences,
   getSyncedPreferenceValues,
   getSyncedPreferenceTimestamps,
   mergeSyncedPreferences,
@@ -160,8 +150,6 @@ export type {
 // Synced label index model
 export {
   createEmptyLabelIndex,
-  normalizeLabelKey,
-  normalizeLabelIndex,
   recordLabelsUsed,
   mergeLabelIndexes,
   serializeLabelIndex,
@@ -176,29 +164,25 @@ export type {
 
 // iCal parser
 export {
-  parseVEvent,
-  generateVEvent,
   parseVCalendar,
   generateVCalendar,
   parseVTodo,
-  generateVTodo,
 } from './utils/ical-parser.js';
 export type { VEvent, VAlarm, VTodo } from './utils/ical-parser.js';
 
 // vCard parser
 export {
   parseVCard,
-  generateVCard,
 } from './utils/vcard-parser.js';
 export type { VCard, VCardName, VCardPhone, VCardEmail, VCardAddress } from './utils/vcard-parser.js';
 
 // Todoist CSV parser
 export { parseTodoistCsv, parseTodoistDate } from './utils/csv-parser.js';
-export { isKnownTimeZone, resolveTimeZone, decodeTimeZone, encodeTimeZone } from './utils/zoned-time.js';
+export { isKnownTimeZone, resolveTimeZone, decodeTimeZone } from './utils/zoned-time.js';
 export { parseICalDurationSeconds } from './utils/ical-duration.js';
 
 // Recurrence expansion
-export { expandRecurrence, untilDateBefore, untilTimeBefore, occurrenceWallClock } from './utils/recurrence.js';
+export { untilDateBefore, untilTimeBefore, occurrenceWallClock } from './utils/recurrence.js';
 export type { RecurrenceOptions } from './utils/recurrence.js';
 export {
   isFloatingICalDateTime,

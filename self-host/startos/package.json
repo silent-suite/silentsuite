@@ -1,0 +1,11 @@
+{
+  "name": "silentsuite-startos",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@start9labs/start-sdk": "4.1.0"
+  },
+  "overrides": {
+    "@start9labs/start-sdk": "$@start9labs/start-sdk"
+  }
+}

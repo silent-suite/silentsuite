@@ -8,6 +8,8 @@
   --foreground: 17 27 39;
   --primary: 16 185 129;
   --primary-hover: 5 150 105;
+  /* Focus outlines: at least 3:1 on --background and --surface (WCAG 1.4.11). */
+  --focus-ring: 5 150 105;
   --muted: 71 85 105;
   --border: 200 210 222;
   color-scheme: light;
@@ -19,6 +21,7 @@
   --foreground: 217 223 232;
   --primary: 52 211 153;
   --primary-hover: 16 185 129;
+  --focus-ring: 52 211 153;
   --muted: 163 179 201;
   --border: 37 53 73;
   color-scheme: dark;
@@ -574,7 +577,7 @@
 .sx-silentsuite-calendar .sx__day-grid-event:focus-visible,
 .sx-silentsuite-calendar .sx__month-grid-event:focus-visible,
 .sx-silentsuite-calendar .sx__month-grid-day:focus-visible {
-  outline: 2px solid rgb(var(--primary));
+  outline: 2px solid rgb(var(--focus-ring));
   outline-offset: 1px;
 }
 
@@ -725,7 +728,7 @@
 
 /* Accessible focus-visible styles */
 *:focus-visible {
-  outline: 2px solid rgb(var(--primary));
+  outline: 2px solid rgb(var(--focus-ring));
   outline-offset: 2px;
   border-radius: 4px;
 }

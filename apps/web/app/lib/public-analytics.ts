@@ -69,6 +69,13 @@ type CheckoutReturnedPayload = {
   name: 'Checkout Returned'
   url: 'https://app.silentsuite.io/signup/pending-payment' | 'https://app.silentsuite.io/signup/success' | 'https://app.silentsuite.io/signup/cancel'
   props: { outcome: CheckoutOutcome, payment_method: PaymentMethod }
+} | {
+  // A card confirmed in Stripe's own dialog and a Bitcoin payment the page saw
+  // settle both finish on /signup, with no navigation to a return page.
+  domain: 'app.silentsuite.io'
+  name: 'Checkout Returned'
+  url: 'https://app.silentsuite.io/signup'
+  props: { outcome: 'returned', payment_method: Exclude<PaymentMethod, 'unknown'> }
 }
 type SubscriptionManagementEntryPayload = {
   domain: 'app.silentsuite.io'
@@ -238,6 +245,10 @@ export function buildCheckoutReturnedPayload(outcome: CheckoutOutcome, paymentMe
       ? 'https://app.silentsuite.io/signup/pending-payment'
       : 'https://app.silentsuite.io/signup/success'
   return { domain: 'app.silentsuite.io', name: 'Checkout Returned', url, props: { outcome, payment_method: paymentMethod } }
+}
+
+export function buildInPageCheckoutReturnedPayload(paymentMethod: Exclude<PaymentMethod, 'unknown'>): CheckoutReturnedPayload {
+  return { domain: 'app.silentsuite.io', name: 'Checkout Returned', url: 'https://app.silentsuite.io/signup', props: { outcome: 'returned', payment_method: paymentMethod } }
 }
 
 export function buildSubscriptionManagementEntryPayload(): SubscriptionManagementEntryPayload {
