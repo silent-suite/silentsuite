@@ -657,6 +657,35 @@ def _handle_account_login(environ):
     })
 
 
+def _handle_account_refresh(environ):
+    """Start sync for an account a separate ``--login`` process just stored."""
+    data, error_response = _read_json_body(environ)
+    if error_response:
+        return error_response
+    username = data.get("username") if isinstance(data, dict) else None
+    username = username.strip() if isinstance(username, str) else ""
+    if not username:
+        return _json_response(400, {"error": "Account username is required"})
+
+    try:
+        from ..accounts import list_accounts
+        from ..radicale.storage import refresh_sync_thread
+
+        if username not in list_accounts():
+            return _json_response(404, {"error": "Account is not configured"})
+        refresh_sync_thread(username)
+    except Exception as exc:
+        logger.warning(
+            "Account sync refresh after CLI sign-in failed (%s)",
+            bounded_exception_class(exc),
+        )
+        return _json_response(500, {"ok": False, "error": "Sync could not start"})
+
+    log_sync_event("info", "Account added or re-authenticated")
+    logger.info("Account added or re-authenticated")
+    return _json_response(200, {"ok": True})
+
+
 def log_sync_event(event_type, message):
     """Add an entry to the sync log."""
     _sync_log.appendleft({
@@ -2440,6 +2469,12 @@ class Web(BaseWeb):
             if not _has_valid_csrf(environ):
                 return _csrf_error()
             return _handle_account_login(environ)
+
+        # Start sync for an account stored by a separate --login process
+        if path == "/.web/api/accounts/refresh":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
+            return _handle_account_refresh(environ)
 
         # Local account actions
         if path == "/.web/api/accounts/logout":
