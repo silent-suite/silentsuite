@@ -144,7 +144,7 @@ Edits made while offline to a note that is already open are encrypted locally an
 
 In the web app, creating a note, moving one to another notebook, saving one as a copy, and deleting a notebook need a connection. While you are offline, **New note** and the notebook menu in the editor are turned off, and the page says why. They turn on again when the connection returns. In the Android app, a move works offline and is sent at the next sync.
 
-Reloading the page while offline cannot show your notes: the web app keeps only unsent edits in the browser, not a copy of your notes.
+Reloading the web app while offline cannot show your note list.
 
 ## Sharing
 
