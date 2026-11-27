@@ -1,5 +1,6 @@
 """Narrow Billing linkage endpoints.  Remove the legacy identity route after cutover."""
 import hmac
+import logging
 import os
 import secrets
 import typing as t
@@ -15,7 +16,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import Field
 
-from etebase_server.django.models import BillingLinkProof, HeldUsername, LoginEmailChange, UserInfo, sha256_hex
+from etebase_server.django.models import (
+    BillingLinkProof,
+    HeldUsername,
+    LoginEmailChange,
+    SignupPass,
+    UserInfo,
+    sha256_hex,
+)
+from etebase_server.django.utils import CallbackContext, get_user_queryset
 from etebase_server.myauth.models import UserType, get_typed_user_model
 
 from ..db_hack import django_db_cleanup_decorator
@@ -32,11 +41,12 @@ from ..utils import (
     name_is_held,
     normalize_login_name,
 )
-from .authentication import ChangeLoginEmail, validate_login_request
+from .authentication import ChangeLoginEmail, UserSignup, signup_identity_taken, validate_login_request
 
 User = get_typed_user_model()
 
 billing_link_router = APIRouter(route_class=BoundedBodyRoute)
+logger = logging.getLogger("etebase_server.fastapi.billing_link")
 PROOF_TTL_SECONDS = 120
 PROOF_ISSUE_INTERVAL_SECONDS = 1
 PROOF_OPERATION_LOCK = Lock()
@@ -458,3 +468,60 @@ def login_email_ack(payload: LoginEmailChangeIdIn, x_etebase_billing_key: str | 
         pk=payload.changeId, status=LoginEmailChange.COMMITTED, acknowledged_at__isnull=True
     ).update(acknowledged_at=timezone.now())
     return {"status": "ok"}
+
+
+# ---- Hosted signup pass. Billing (machine key) asks for one after the address's owner proved
+# control of it; the web app sends it in the registration token header at signup, where
+# ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED makes it mandatory. Errors are JSON `{"code": ...}`.
+
+SIGNUP_PASS_TTL_SECONDS = 600
+
+
+class SignupPassIn(BaseModel):
+    # No length cap here: the body limit bounds it and the canonical check refuses anything long.
+    email: str
+
+
+class SignupPassOut(BaseModel):
+    signupPass: str
+    expiresIn: int
+
+
+def delete_expired_signup_passes(now) -> None:
+    """Best effort: a failed cleanup never fails issuance; the next issue retries it."""
+    try:
+        SignupPass.objects.filter(expires_at__lte=now).delete()
+    except Exception:
+        # The fixed text only: a database error message could quote row values.
+        logger.warning("expired signup pass cleanup failed")
+
+
+@billing_link_router.post("/signup-pass/", response_model=SignupPassOut)
+@django_db_cleanup_decorator
+def issue_signup_pass(payload: SignupPassIn, x_etebase_billing_key: str | None = Header(default=None)):
+    """A one-time signup pass for an address that is already a canonical login email and still free."""
+    require_machine_key(x_etebase_billing_key)
+    email = payload.email
+    # Never transformed: Billing must hold exactly the address both signup fields will carry.
+    if canonical_login_email(email) != email:
+        return login_email_error(status.HTTP_400_BAD_REQUEST, "unsupported_address")
+    signup_pass = secrets.token_urlsafe(32)
+    try:
+        with transaction.atomic():
+            claim_names([email])
+            users = get_user_queryset(User.objects.all(), CallbackContext({}))
+            if signup_identity_taken(users, UserSignup(username=email, email=email)):
+                logger.warning("signup pass refused: reason=name_taken")
+                return login_email_error(status.HTTP_409_CONFLICT, "name_taken")
+            # After the name lock, which may wait: the pass gets its full lifetime from here.
+            now = timezone.now()
+            SignupPass.objects.create(
+                pass_hash=sha256_hex(signup_pass),
+                email=email,
+                created_at=now,
+                expires_at=now + timedelta(seconds=SIGNUP_PASS_TTL_SECONDS),
+            )
+    except OperationalError:
+        return try_again()
+    delete_expired_signup_passes(now)
+    return SignupPassOut(signupPass=signup_pass, expiresIn=SIGNUP_PASS_TTL_SECONDS)

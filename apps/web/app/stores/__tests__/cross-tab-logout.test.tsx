@@ -344,7 +344,7 @@ describe('the receiving tab while it ends its account', () => {
 describe('a server-acknowledged change whose display-cache write is refused', () => {
   const noteItem = { uid: 'note-1', isDeleted: false, getMeta: () => ({ name: 'Synthetic note', mtime: 1 }) }
 
-  /** Account A with one note, the local cache on, and the cache record cleared by another tab. */
+  /** Account A with one note, its encrypted envelope ready, and the local records cleared by another tab. */
   async function noteTabWithClearedCache() {
     await openSignedInTab()
     useEtebaseStore.setState({
@@ -356,11 +356,9 @@ describe('a server-acknowledged change whose display-cache write is refused', ()
     await clearCache()
     _setEncryptedCacheAvailableForTests(true)
     _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
-    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
   }
 
   afterEach(() => {
-    vi.unstubAllEnvs()
     _setEncryptedCacheAvailableForTests(null)
     _setEnvelopeKeyForTests(null)
   })

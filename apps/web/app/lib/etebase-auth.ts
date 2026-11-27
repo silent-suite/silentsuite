@@ -125,9 +125,11 @@ export async function etebaseSignUp(
   password: string,
   serverUrl?: string,
   owner?: OwnerSignupOptions,
+  /** Hosted signup pass from Billing; sent only as the signup registration header. */
+  signupPass?: string,
 ): Promise<EtebaseAuthResult> {
   const endpoint = serverUrl || ETEBASE_SERVER_URL
-  let registrationToken: string | undefined
+  let registrationToken: string | undefined = owner ? undefined : signupPass
   if (owner) {
     throwIfAborted(owner.signal)
     const origin = ownerOrigin()

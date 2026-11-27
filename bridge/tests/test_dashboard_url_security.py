@@ -48,3 +48,8 @@ def test_dashboard_urls_never_embed_credentials(tmp_path, monkeypatch):
     assert re.search(r"[?&](password|passwd|token|secret)=", html, re.I) is None
     # Users are warned not to open the CalDAV URL in a browser.
     assert "do not open it in a web browser" in html
+    # The URL box says which credentials the app should use.
+    assert (
+        "Username: your SilentSuite email &middot; Password: your SilentSuite password"
+        in html
+    )

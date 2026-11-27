@@ -7,15 +7,16 @@ import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { formatDate as formatDateUtil } from '@/app/lib/date'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
-import { parseAccountNotice, parseBillingDate, type BillingDate } from '@/app/lib/account-notice'
+import { classifyEndedHistory, ENDED_TITLES, parseAccountNotice, parseBillingDate, type BillingDate } from '@/app/lib/account-notice'
 import { fetchAuthenticatedAccountOffer } from '@/app/lib/billing-v2'
 import { createAuthenticatedPaymentFetch } from '@/app/lib/authenticated-payment-fetch'
-import { formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
+import { annualOfferClassLabel, formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
 import { formatDaysLeft, isHostedBillingAccount, useEligibleAccountNotice, useTrialCountdown } from '@/app/hooks/use-trial-countdown'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import AddCardBanner from '@/app/components/add-card-banner'
 import { ModalDialog } from '@/app/components/modal-dialog'
-import PaymentChoicePanel from '@/app/components/payment-choice-panel'
+import PaymentChoicePanel, { readCurrentPaymentFlow } from '@/app/components/payment-choice-panel'
+import { useReportCardEndedNotice } from '@/app/components/read-only-overlay'
 import { getPaidBonusAccessDate } from './bonus-access'
 import { SubscriptionEntry } from './subscription-entry'
 
@@ -69,7 +70,7 @@ function isSubscriptionData(value: unknown): value is SubscriptionData {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  active: 'bg-[rgb(var(--primary))]/20 text-[rgb(var(--primary))]',
+  active: 'bg-[rgb(var(--primary))]/20 text-emerald-800 dark:text-emerald-400',
   trialing: 'bg-amber-500/20 text-amber-700 dark:text-amber-400',
   past_due: 'bg-red-500/20 text-red-700 dark:text-red-400',
   cancelled: 'bg-neutral-500/20 text-neutral-600 dark:text-neutral-400',
@@ -179,7 +180,7 @@ function CancelDialog({
   return (
     <ModalDialog
       title="Cancel your subscription"
-      description={`Your access continues until ${accessUntil}. After that, your account becomes read-only. Your encrypted data remains safe and can be exported or reactivated.`}
+      description={`Your access continues until ${accessUntil}. After that, your account becomes read-only until you subscribe again. Your encrypted data stays safe and you can export it anytime.`}
       onClose={onClose}
       closeOnEscape={!cancelling}
       closeOnBackdrop={!cancelling}
@@ -187,8 +188,9 @@ function CancelDialog({
     >
       <div className="space-y-4">
         <div className="space-y-2 text-sm text-[rgb(var(--foreground))]">
-          <p>Your access continues until {accessUntil}. After that, your account becomes read-only.</p>
-          <p>Your data stays safe and encrypted. You can export anytime. You can reactivate anytime.</p>
+          {/* Billing can't resume a pending cancellation; after the period ends this page offers Reactivate or Subscribe (SIGNUP-13). */}
+          <p>Your access continues until {accessUntil}. After that, your account becomes read-only, and you can subscribe again from this page.</p>
+          <p>Your data stays safe and encrypted. You can export it anytime.</p>
         </div>
         {error !== null && (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error || tError('description')}</p>
@@ -244,21 +246,25 @@ function getStripePaymentReturn(search: string): StripePaymentReturn {
 
 function PaymentChoiceDialog({
   dismissible,
+  busy,
   onClose,
   onSuccess,
   onDismissibilityChange,
+  onBusyChange,
   restoreFocusTo,
 }: {
   dismissible: boolean
+  busy: boolean
   onClose: () => void
   onSuccess: () => void | Promise<void>
   onDismissibilityChange: (dismissible: boolean) => void
+  onBusyChange: (busy: boolean) => void
   restoreFocusTo: HTMLElement | null
 }) {
   return (
     <ModalDialog
-      title="Continue with silentsuite.io"
-      description="Review the current server-authorized annual payment options before choosing a payment method."
+      title="Choose how to pay"
+      description="Choose a payment method for your annual plan."
       onClose={onClose}
       closeOnEscape={dismissible}
       closeOnBackdrop={dismissible}
@@ -268,8 +274,20 @@ function PaymentChoiceDialog({
         onSuccess={onSuccess}
         onCancel={onClose}
         onDismissibilityChange={onDismissibilityChange}
-        title="Payment options"
+        onBusyChange={onBusyChange}
+        title={null}
       />
+      {/* While a payment may exist, Escape and the backdrop stay disabled, but
+          the user can leave on purpose. Close only unmounts the panel: it
+          cancels and starts nothing, and reopening mounts a fresh panel that
+          re-checks the current payment before any new payment can start. It
+          waits while a start, a card confirmation or a crypto completion is
+          in flight, because unmounting then would drop the success handling. */}
+      {!dismissible && (
+        <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={busy} className="mt-3 w-full max-md:min-h-[44px]">
+          Close
+        </Button>
+      )}
     </ModalDialog>
   )
 }
@@ -282,12 +300,13 @@ export default function SubscriptionPage() {
   ))
   const [data, setData] = useState<SubscriptionData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [offerQuote, setOfferQuote] = useState<{ price: string; owner: OperationOwner; sequence: number } | null>(null)
+  const [offerQuote, setOfferQuote] = useState<{ price: string; planName: string; owner: OperationOwner; sequence: number } | null>(null)
   const [showCancelDialog, setShowCancelDialog] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<{ owner: OperationOwner; message: string } | null>(null)
   const [showPlanSelection, setShowPlanSelection] = useState(false)
   const [paymentChoiceDismissible, setPaymentChoiceDismissible] = useState(false)
+  const [paymentChoiceBusy, setPaymentChoiceBusy] = useState(false)
   const [paymentConfirmationPending, setPaymentConfirmationPending] = useState(false)
   const [paymentReturnFailure, setPaymentReturnFailure] = useState<string | null>(null)
   const [paymentConfirmationAttempt, setPaymentConfirmationAttempt] = useState(0)
@@ -295,6 +314,9 @@ export default function SubscriptionPage() {
   // `inert` in the same commit that mounts the dialog, and the browser blurs
   // the CTA before any effect runs, so the dialog cannot discover it later.
   const [modalOpener, setModalOpener] = useState<HTMLElement | null>(null)
+  // Focus target when the opener is gone after a dialog closes (View payment unmounts while open).
+  const cardHeadingRef = useRef<HTMLHeadingElement>(null)
+  const dialogWasOpenRef = useRef(false)
   const stripeReturnHandledRef = useRef(false)
   // The page belongs to the account (id and boundary) it was opened for; a later account never
   // owns its data or actions. Each new operation captures the live user object of that account
@@ -410,13 +432,44 @@ export default function SubscriptionPage() {
       fetcher: (input, init) => fetch(input, { ...init, credentials: 'include' }),
       billingApiUrl: BILLING_API_URL,
     }).then(
-      (account) => { if (live()) setOfferQuote({ price: `${formatAnnualOfferAmount(account.offer.offer)} per year`, owner, sequence }) },
+      (account) => {
+        if (!live()) return
+        const { offer } = account.offer
+        setOfferQuote({ price: `${formatAnnualOfferAmount(offer)} per year`, planName: annualOfferClassLabel(offer), owner, sequence })
+      },
       () => { if (live()) setOfferQuote(null) },
     )
   }, [purchaseAction, data, liveUser, captureOwner, ownerCurrent])
-  const offerPrice = offerQuote && offerQuote.sequence === offerSequenceRef.current && ownerCurrent(offerQuote.owner)
-    ? offerQuote.price
+  const liveOffer = offerQuote && offerQuote.sequence === offerSequenceRef.current && ownerCurrent(offerQuote.owner)
+    ? offerQuote
     : null
+  const offerPrice = liveOffer?.price ?? null
+
+  // An open crypto invoice is otherwise only found once the payment dialog opens. The same
+  // read-only status read the dialog makes (it starts or cancels nothing) lets the card say so;
+  // the dialog still re-checks the payment itself before anything new can start.
+  const [cryptoFlowNotice, setCryptoFlowNotice] = useState<{ owner: OperationOwner; sequence: number } | null>(null)
+  const cryptoFlowSequenceRef = useRef(0)
+  const readCryptoFlow = !!data && isHostedBillingAccount() && !showPlanSelection
+    && !paymentConfirmationPending && !paymentReturnFailure
+  useEffect(() => {
+    const sequence = ++cryptoFlowSequenceRef.current
+    setCryptoFlowNotice(null)
+    if (!readCryptoFlow) return
+    const owner = captureOwner()
+    if (!owner) return
+    const live = () => sequence === cryptoFlowSequenceRef.current && ownerCurrent(owner)
+    fetch(`${BILLING_API_URL}/subscription/payment-flows/current?preview=1`, { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok || !live()) return
+        // The dialog's own validator: a reply it would reject shows no line here either.
+        const flow = readCurrentPaymentFlow(await res.json())
+        if (flow?.flowKind === 'btcpay_annual' && live()) setCryptoFlowNotice({ owner, sequence })
+      })
+      .catch(() => { /* No line; the dialog still checks the payment before anything starts. */ })
+  }, [readCryptoFlow, data, liveUser, captureOwner, ownerCurrent])
+  const showCryptoFlowNotice = !!cryptoFlowNotice && cryptoFlowNotice.sequence === cryptoFlowSequenceRef.current
+    && ownerCurrent(cryptoFlowNotice.owner)
 
   useEffect(() => {
     const { hasStripeParameters, paymentIntent, redirectStatus } = stripePaymentReturn
@@ -543,11 +596,13 @@ export default function SubscriptionPage() {
     setPaymentConfirmationPending(false)
     setPaymentReturnFailure(null)
     setPaymentChoiceDismissible(false)
+    setPaymentChoiceBusy(false)
     setShowPlanSelection(true)
   }
 
   function closePaymentRecovery() {
     setPaymentChoiceDismissible(false)
+    setPaymentChoiceBusy(false)
     setShowPlanSelection(false)
   }
 
@@ -580,6 +635,18 @@ export default function SubscriptionPage() {
       if (captureOwner()) setCancelling(false)
     }
   }
+
+  // The card shows the ended notice, its read-only line and the export link exactly when this holds.
+  const endedNotice = notice?.kind === 'trial_ended' || notice?.kind === 'access_ended'
+  useReportCardEndedNotice(!loading && !!data && endedNotice)
+
+  // The dialog's own restore runs first and does nothing for a detached opener; then focus goes to
+  // the card's heading, so it never lands on the page body.
+  useEffect(() => {
+    const open = showPlanSelection || showCancelDialog
+    if (dialogWasOpenRef.current && !open && modalOpener && !modalOpener.isConnected) cardHeadingRef.current?.focus()
+    dialogWasOpenRef.current = open
+  }, [showPlanSelection, showCancelDialog, modalOpener])
 
   if (loading) return <LoadingSkeleton />
 
@@ -620,9 +687,11 @@ export default function SubscriptionPage() {
         {showPlanSelection && (
           <PaymentChoiceDialog
             dismissible={paymentChoiceDismissible}
+            busy={paymentChoiceBusy}
             onClose={closePaymentRecovery}
             onSuccess={startPaymentConfirmation}
             onDismissibilityChange={setPaymentChoiceDismissible}
+            onBusyChange={setPaymentChoiceBusy}
             restoreFocusTo={modalOpener}
           />
         )}
@@ -633,17 +702,25 @@ export default function SubscriptionPage() {
   const capabilities = getCapabilities(data)
   const { showAddCard, showPaidRecovery } = getCardActions(data, paymentConfirmationPending, paymentReturnFailure)
   const dateRow = getDateRow(data)
-  const showBillingRow = !!data.plan && !data.planLabel.toLowerCase().includes(data.billingInterval)
-  const endedNotice = notice?.kind === 'trial_ended' || notice?.kind === 'access_ended'
+  // Next to a purchase action the stored plan is often a legacy one (say "Standard Monthly") that
+  // isn't what the price below offers. Name the plan from the signed offer that prices it, and
+  // show no stored interval: hosted plans are annual-only.
+  const planName = purchaseAction ? liveOffer?.planName ?? null : data.planLabel
+  const showBillingRow = !purchaseAction && !!data.plan && !data.planLabel.toLowerCase().includes(data.billingInterval)
+  const endedHistory = classifyEndedHistory(data)
   // Only Billing's notice (seven-day countdown or a verified end) replaces the raw status badge.
   const headline = countdown
     ? { title: `Free trial: ${formatDaysLeft(countdown.daysLeft)}`, detail: "No card on file, so you won't be charged." }
     : notice?.kind === 'trial_ended'
-      ? { title: 'Your trial has ended.', detail: null }
+      ? { title: ENDED_TITLES.trial, detail: null }
       : notice?.kind === 'access_ended'
-        ? { title: 'Your subscription has ended.', detail: null }
+        ? { title: ENDED_TITLES[endedHistory ?? 'subscription'], detail: null }
         : null
 
+  // Billing can keep status trialing after the trial ran out; don't show that as "Trialing".
+  const trialEndsAtMs = data.trial.endsAt ? Date.parse(data.trial.endsAt) : NaN
+  const trialEnded = data.status === 'trialing'
+    && (capabilities.trialExpired || (!data.trial.active && trialEndsAtMs <= Date.now()))
   const isCancelled = data.status === 'cancelled' || data.status === 'expired'
   const hasLiveSubscriptionActions = (data.status === 'active' || data.status === 'trialing')
     && !data.cancelAtPeriodEnd
@@ -651,9 +728,10 @@ export default function SubscriptionPage() {
     && !capabilities.trialExpired
     && !capabilities.canRetryPayment
     && !capabilities.canStartPaidSubscription
+  // Reactivate only for an ended subscription; an ended trial or an unfinished payment subscribes.
   const paidRecoveryLabel = capabilities.canRetryPayment
     ? 'Retry payment'
-    : data.status === 'cancelled'
+    : endedHistory === 'subscription'
       ? 'Reactivate'
       : 'Subscribe'
   const accessUntilFormatted = data.renewalDate ? formatDateStr(data.renewalDate) : 'the end of your current period'
@@ -670,15 +748,26 @@ export default function SubscriptionPage() {
       {/* Subscription details card */}
       <section className="rounded-lg border border-[rgb(var(--border))] p-4 space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Subscription</h2>
+          <h2 ref={cardHeadingRef} tabIndex={-1} className="text-sm font-semibold text-[rgb(var(--foreground))] focus:outline-none">Subscription</h2>
           {!notice && (
             <span
-              className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[data.status] ?? STATUS_STYLES.none}`}
+              className={`rounded-full px-2 py-0.5 text-xs font-medium ${trialEnded ? STATUS_STYLES.expired : STATUS_STYLES[data.status] ?? STATUS_STYLES.none}`}
             >
-              {STATUS_LABELS[data.status] ?? data.status}
+              {trialEnded ? 'Trial ended' : STATUS_LABELS[data.status] ?? data.status}
             </span>
           )}
         </div>
+
+        {!notice && trialEnded && data.trial.endsAt && Number.isFinite(trialEndsAtMs) && (
+          <p className="text-sm text-[rgb(var(--muted))]">Your free trial ended on {formatDateStr(data.trial.endsAt)}.</p>
+        )}
+
+        {/* A retryable payment has its own box below; otherwise say why the badge is red. */}
+        {!notice && data.status === 'past_due' && !capabilities.canRetryPayment && (
+          <p className="text-sm text-[rgb(var(--muted))]">
+            Your last payment didn&apos;t go through.{showPaidRecovery && ` ${paidRecoveryLabel} to start a new yearly plan.`}
+          </p>
+        )}
 
         {expiryRefreshFailed && (
           <div className="space-y-3">
@@ -698,7 +787,7 @@ export default function SubscriptionPage() {
                 <p className="text-sm text-[rgb(var(--muted))]">Your data is safe and read-only.</p>
                 <Link
                   href="/settings/export"
-                  className="inline-flex min-h-11 items-center text-sm font-medium text-[rgb(var(--primary))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:focus-visible:ring-emerald-300"
+                  className="inline-flex min-h-11 items-center text-sm font-medium text-[rgb(var(--primary-text))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:focus-visible:ring-emerald-300"
                 >
                   Export your data
                 </Link>
@@ -709,10 +798,12 @@ export default function SubscriptionPage() {
 
         <div className="space-y-3">
           {/* Plan name */}
-          <div>
-            <p className="text-xs text-[rgb(var(--muted))]">Plan</p>
-            <p className="text-sm text-[rgb(var(--foreground))]">{data.planLabel}</p>
-          </div>
+          {planName && (
+            <div>
+              <p className="text-xs text-[rgb(var(--muted))]">Plan</p>
+              <p className="text-sm text-[rgb(var(--foreground))]">{planName}</p>
+            </div>
+          )}
 
           {/* Billing interval, unless the plan name already says it */}
           {showBillingRow && (
@@ -753,6 +844,9 @@ export default function SubscriptionPage() {
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">{dateRow.label}</p>
               <p className="text-sm text-[rgb(var(--foreground))]">{formatDateStr(dateRow.at)}</p>
+              {dateRow.label === 'Access until' && !(data.cancelAtPeriodEnd && !isCancelled && data.renewalDate) && (
+                <p className="text-xs text-[rgb(var(--muted))]">It won&apos;t renew automatically, so you won&apos;t be charged.</p>
+              )}
             </div>
           )}
 
@@ -773,6 +867,15 @@ export default function SubscriptionPage() {
 
         {showAddCard && (
           <AddCardBanner daysRemaining={countdown?.daysLeft ?? null} onChoosePayment={openPaymentRecovery} />
+        )}
+
+        {showCryptoFlowNotice && (
+          <div className="space-y-3 border-t border-[rgb(var(--border))] pt-4">
+            <p className="text-sm text-[rgb(var(--foreground))]">You have a cryptocurrency payment in progress.</p>
+            <Button size="sm" variant="outline" className="w-full sm:w-auto min-h-11" onClick={openPaymentRecovery}>
+              View payment
+            </Button>
+          </div>
         )}
 
         {(showPaidRecovery || hasLiveSubscriptionActions) && (
@@ -841,9 +944,11 @@ export default function SubscriptionPage() {
       {showPlanSelection && (
         <PaymentChoiceDialog
           dismissible={paymentChoiceDismissible}
+          busy={paymentChoiceBusy}
           onClose={closePaymentRecovery}
           onSuccess={startPaymentConfirmation}
           onDismissibilityChange={setPaymentChoiceDismissible}
+          onBusyChange={setPaymentChoiceBusy}
           restoreFocusTo={modalOpener}
         />
       )}

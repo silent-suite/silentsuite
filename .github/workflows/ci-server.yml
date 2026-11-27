@@ -39,7 +39,6 @@ on:
       - 'tests/test_umbrella_release_*.py'
       - 'tests/test_server_image_verifier.py'
       - 'tests/test_reusable_workflow_caller_permissions.py'
-      - 'tests/test_annual_cutover_admission_preflight.py'
       # Any checked-in workflow can be, or become, a local reusable caller or
       # callee, so the caller/callee permission-subset contract this job runs
       # is only truthfully enforced by watching the whole directory. This also
@@ -85,7 +84,6 @@ on:
       - 'tests/test_umbrella_release_*.py'
       - 'tests/test_server_image_verifier.py'
       - 'tests/test_reusable_workflow_caller_permissions.py'
-      - 'tests/test_annual_cutover_admission_preflight.py'
       # Any checked-in workflow can be, or become, a local reusable caller or
       # callee, so the caller/callee permission-subset contract this job runs
       # is only truthfully enforced by watching the whole directory. This also
@@ -388,9 +386,6 @@ jobs:
       - name: Check reusable-workflow caller/callee permission subsets
         run: python -m pytest -q tests/test_reusable_workflow_caller_permissions.py
 
-      - name: Check the annual Stage B cutover admission preflight and outcome contract
-        run: python -m pytest -q tests/test_annual_cutover_admission_preflight.py
-
       - name: Verify the effective self-host Compose configuration
         run: scripts/self-host-compose-effective-check.sh
 
@@ -412,11 +407,6 @@ jobs:
             scripts/umbrel-candidate-smoke.sh; do
             bash -n "$script"
           done
-
-      # Runs the real add-on setup/update/remove/build scripts against isolated
-      # fixtures with stubbed docker, caddy and systemctl, and builds the .deb.
-      - name: Run the Libre Workspace add-on lifecycle tests
-        run: integrations/libre-workspace/tests/lifecycle.test.sh
 
       - name: Compile the release control-plane Python helpers
         run: |

@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from etebase import etebase_python
+
 from silentsuite_bridge import auth_browser
 from silentsuite_bridge.auth_browser import (
     AUTH_PAGE_HTML,
@@ -184,7 +186,7 @@ def test_auth_post_with_matching_origin_reaches_login():
     try:
         with patch(
             "silentsuite_bridge.auth_browser.Account.login",
-            side_effect=Exception("401 Unauthorized"),
+            side_effect=etebase_python.Error("Wrong password for user."),
         ) as login:
             status, body = _raw_request(
                 server,
@@ -202,8 +204,93 @@ def test_auth_post_with_matching_origin_reaches_login():
         thread.join(timeout=5)
 
     assert status == 401
-    assert "Invalid email or password." in body
+    assert "Wrong email or password." in body
     assert login.called
+
+
+def test_auth_post_shows_server_problem_instead_of_credentials_error():
+    server, thread = _serve_one_auth_request()
+    try:
+        with patch(
+            "silentsuite_bridge.auth_browser.Account.login",
+            side_effect=etebase_python.Error(
+                "error sending request for url "
+                "(https://server.example.invalid/api/v1/authentication/login_challenge/)"
+            ),
+        ):
+            status, payload = _post_auth(server, {
+                "email": "alice@example.com",
+                "password": "secret",
+                "server_url": "https://server.example.invalid",
+                "csrf_token": "expected-token",
+            })
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 401
+    assert payload == {"success": False, "error": auth_browser.UNREACHABLE_MESSAGE}
+    assert "server.example.invalid" not in payload["error"]
+
+
+# Texts as etebase 0.32 (libetebase 0.6.1, reqwest 0.11) and the SilentSuite
+# server produce them for a login attempt.
+@pytest.mark.parametrize(
+    ("sdk_text", "expected"),
+    [
+        ("Wrong password for user.", auth_browser.WRONG_CREDENTIALS_MESSAGE),
+        ("User not found", auth_browser.WRONG_CREDENTIALS_MESSAGE),
+        ("Unauthorized", auth_browser.WRONG_CREDENTIALS_MESSAGE),
+        (
+            "error sending request for url "
+            "(https://server.example.invalid/api/v1/authentication/login_challenge/): "
+            "error trying to connect: dns error: failed to lookup address information",
+            auth_browser.UNREACHABLE_MESSAGE,
+        ),
+        (
+            "error sending request for url (https://127.0.0.1:1/api/v1/authentication/login_challenge/): "
+            "error trying to connect: tcp connect error: Connection refused (os error 111)",
+            auth_browser.UNREACHABLE_MESSAGE,
+        ),
+        ("request or response body error: operation timed out", auth_browser.UNREACHABLE_MESSAGE),
+        ("Temporary server error", auth_browser.UNREACHABLE_MESSAGE),
+        ("Server error", auth_browser.UNREACHABLE_MESSAGE),
+        ("NotFound", auth_browser.NOT_SILENTSUITE_MESSAGE),
+        ("Got a redirect - should never happen", auth_browser.NOT_SILENTSUITE_MESSAGE),
+        ("HTTP error 405! Code: 'null'. Detail: 'null'", auth_browser.NOT_SILENTSUITE_MESSAGE),
+        ("invalid type: integer `60`, expected struct LoginChallange", auth_browser.NOT_SILENTSUITE_MESSAGE),
+        ("missing field `challenge`", auth_browser.NOT_SILENTSUITE_MESSAGE),
+        # Details the SilentSuite server itself can send, and other unknown
+        # failures, get the neutral text.
+        ("Login challenge has expired", auth_browser.SIGN_IN_FAILED_MESSAGE),
+        ("User not properly init", auth_browser.SIGN_IN_FAILED_MESSAGE),
+        ("relative URL without a base", auth_browser.SIGN_IN_FAILED_MESSAGE),
+    ],
+)
+def test_login_failure_maps_to_a_user_message(sdk_text, expected):
+    with patch(
+        "silentsuite_bridge.auth_browser.Account.login",
+        side_effect=etebase_python.Error(sdk_text),
+    ):
+        with pytest.raises(auth_browser.AuthenticationError) as raised:
+            auth_browser.authenticate_and_store_account(
+                "alice@example.com",
+                "secret",
+                "https://server.example.invalid",
+            )
+
+    assert str(raised.value) == expected
+
+
+def test_login_failure_outside_the_sdk_is_not_reported_as_wrong_password():
+    with patch(
+        "silentsuite_bridge.auth_browser.Account.login",
+        side_effect=RuntimeError("Unauthorized"),
+    ):
+        with pytest.raises(auth_browser.AuthenticationError) as raised:
+            auth_browser.authenticate_and_store_account("alice@example.com", "secret")
+
+    assert str(raised.value) == auth_browser.SIGN_IN_FAILED_MESSAGE
 
 
 def test_auth_page_contains_csrf_field():
@@ -254,7 +341,10 @@ def test_auth_post_rejects_wrong_csrf_before_login():
 def test_auth_post_with_valid_csrf_reaches_login():
     server, thread = _serve_one_auth_request()
     try:
-        with patch("silentsuite_bridge.auth_browser.Account.login", side_effect=Exception("401 Unauthorized")) as login:
+        with patch(
+            "silentsuite_bridge.auth_browser.Account.login",
+            side_effect=etebase_python.Error("Wrong password for user."),
+        ) as login:
             status, payload = _post_auth(server, {
                 "email": "alice@example.com",
                 "password": "secret",
@@ -266,14 +356,17 @@ def test_auth_post_with_valid_csrf_reaches_login():
         thread.join(timeout=5)
 
     assert status == 401
-    assert payload == {"success": False, "error": "Invalid email or password."}
+    assert payload == {"success": False, "error": "Wrong email or password."}
     assert login.called
 
 
 def test_auth_post_does_not_distinguish_unknown_account_from_wrong_password():
     server, thread = _serve_one_auth_request()
     try:
-        with patch("silentsuite_bridge.auth_browser.Account.login", side_effect=Exception("404 Not Found")) as login:
+        with patch(
+            "silentsuite_bridge.auth_browser.Account.login",
+            side_effect=etebase_python.Error("User not found"),
+        ) as login:
             status, payload = _post_auth(server, {
                 "email": "unknown@example.com",
                 "password": "secret",
@@ -285,7 +378,7 @@ def test_auth_post_does_not_distinguish_unknown_account_from_wrong_password():
         thread.join(timeout=5)
 
     assert status == 401
-    assert payload == {"success": False, "error": "Invalid email or password."}
+    assert payload == {"success": False, "error": "Wrong email or password."}
     assert login.called
 
 

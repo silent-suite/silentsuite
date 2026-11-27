@@ -15,6 +15,9 @@ const mockTaskListState = {
 }
 
 const mockEtebaseState = {
+  domainLoadState: { tasks: 'loaded' } as Record<string, string>,
+  isInitialized: true,
+  restoreBlocked: false,
   createCollection: vi.fn(),
   deleteCollection: vi.fn(),
   updateCollectionMeta,
@@ -35,6 +38,36 @@ describe('TaskListPanel', () => {
     updateCollectionMeta.mockClear()
     mockTaskListState.toggleVisibility.mockClear()
     mockTaskListState.setActiveList.mockClear()
+  })
+
+  // WEB-14: on reload the store holds only the local "My Tasks" placeholder until the real lists load.
+  it('shows a skeleton instead of the placeholder list while task lists load', () => {
+    const realLists = mockTaskListState.lists
+    mockTaskListState.lists = [{ id: 'default', name: 'My Tasks', color: '#3b82f6', visible: true }] as typeof realLists
+    mockEtebaseState.domainLoadState = { tasks: 'unknown' }
+    mockEtebaseState.isInitialized = false
+    try {
+      const view = render(<TaskListPanel />)
+      expect(screen.getByRole('status', { name: 'Loading task lists' })).toBeInTheDocument()
+      expect(screen.queryByText('My Tasks')).not.toBeInTheDocument()
+
+      // Real list names replace the skeleton as soon as they arrive.
+      mockTaskListState.lists = realLists
+      view.rerender(<TaskListPanel />)
+      expect(screen.queryByRole('status', { name: 'Loading task lists' })).not.toBeInTheDocument()
+      expect(screen.getByText('Work Tasks')).toBeInTheDocument()
+
+      // If initialization ends without real lists, the placeholder shows rather than a skeleton forever.
+      mockTaskListState.lists = [{ id: 'default', name: 'My Tasks', color: '#3b82f6', visible: true }] as typeof realLists
+      mockEtebaseState.isInitialized = true
+      view.rerender(<TaskListPanel />)
+      expect(screen.queryByRole('status', { name: 'Loading task lists' })).not.toBeInTheDocument()
+      expect(screen.getByText('My Tasks')).toBeInTheDocument()
+    } finally {
+      mockTaskListState.lists = realLists
+      mockEtebaseState.domainLoadState = { tasks: 'loaded' }
+      mockEtebaseState.isInitialized = true
+    }
   })
 
   it('persists task-list color changes through collection metadata', () => {

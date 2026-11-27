@@ -17,6 +17,7 @@ import { CalendarGrid, type SlotClickEvent, type EventClickInfo } from './compon
 import { AgendaView } from './components/AgendaView'
 import { EventDialog } from './components/EventDialog'
 import { FloatingAddButton } from './components/FloatingAddButton'
+import { CalendarTimezoneNote } from './components/CalendarTimezoneNote'
 import { resolveUserTimezone } from '@/app/lib/tz'
 import { logCalendarPaintTiming } from '@/app/lib/sync-timing'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
@@ -26,6 +27,8 @@ import { PlanningPanel } from './components/PlanningPanel'
 import { RightSidebarPortal } from '@/app/components/right-sidebar'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { planTask, plannableCalendars, TASK_DRAG_TYPE } from './lib/plan-task'
+import { floatingToDisplay } from './lib/calendar-grid-events'
+import { toSearchResults } from './lib/search-results'
 
 const PLANNING_SIDEBAR_KEY = 'silentsuite-planning-sidebar-open-v1'
 
@@ -244,6 +247,8 @@ function CalendarPageBody() {
     [currentDate, currentView, dateFormat, firstDayOfWeek, mobileCalendarMode],
   )
 
+  const currentDateForNote = currentDate instanceof Date ? currentDate : new Date(currentDate)
+
   // Active calendar-week indicator (#292). Shown in week view; respects the
   // first-day-of-week preference (ISO-8601 for Monday-start). Updates as the
   // user navigates because it derives from currentDate.
@@ -303,9 +308,14 @@ function CalendarPageBody() {
     if (!colors.has('default')) colors.set('default', '#10b981')
     return colors
   }, [calendars])
+  // Results render only for a query, and an empty query returns every event, so recurrences are
+  // expanded only while there is something to search for.
+  const searching = searchQuery.trim() !== ''
   const visibleSearchResults = useMemo(
-    () => filteredEvents.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default')),
-    [filteredEvents, visibleCalendarIds],
+    () => searching
+      ? toSearchResults(filteredEvents.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default')))
+      : [],
+    [searching, filteredEvents, visibleCalendarIds],
   )
 
   const handleSlotClick = useCallback((slot: SlotClickEvent) => {
@@ -359,7 +369,7 @@ function CalendarPageBody() {
 
   const searchResults = searchQuery.trim() !== '' ? (
     <div className="mt-2 max-w-md space-y-1">
-      {visibleSearchResults.map((e) => {
+      {visibleSearchResults.map(({ event: e, startDate, instanceDate }) => {
         const calendarId = e.calendarId ?? 'default'
         const calendarName = calendars.find((calendar) => calendar.id === calendarId)?.name
         return (
@@ -367,9 +377,9 @@ function CalendarPageBody() {
             key={e.id}
             type="button"
             onClick={() => {
-              useCalendarStore.getState().setCurrentDate(new Date(e.startDate))
+              useCalendarStore.getState().setCurrentDate(new Date(startDate))
               useCalendarStore.getState().setSelectedEvent(e.id)
-              setEventInstanceDate(undefined)
+              setEventInstanceDate(instanceDate)
             }}
             className="w-full text-left rounded-md px-3 py-2 hover:bg-[rgb(var(--surface))]"
           >
@@ -382,7 +392,7 @@ function CalendarPageBody() {
               <span className="text-sm font-medium text-[rgb(var(--foreground))] truncate">{e.title || 'Untitled'}</span>
             </div>
             <div className="ml-4 text-xs text-[rgb(var(--muted))] truncate">
-              {calendarName ? `${calendarName} · ` : ''}{formatSearchResultDate(e.startDate, dateFormat, timeFormat, userTz, e.allDay)}
+              {calendarName ? `${calendarName} · ` : ''}{formatSearchResultDate(e.floating && !e.allDay ? floatingToDisplay(startDate, userTz) : startDate, dateFormat, timeFormat, userTz, e.allDay)}
             </div>
           </button>
         )
@@ -397,7 +407,7 @@ function CalendarPageBody() {
     <div className="flex h-full flex-col gap-3">
       {/* Desktop toolbar */}
       <div className="hidden md:flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <button
             onClick={navigateToday}
             className="no-min-size rounded-md border border-[rgb(var(--border))] px-3 py-1.5 text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
@@ -427,25 +437,27 @@ function CalendarPageBody() {
               Week {weekNumber}
             </span>
           )}
+          <CalendarTimezoneNote displayTz={userTz} refDate={currentDateForNote} />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <CalendarViewSwitcher />
-          <button
-            onClick={() => {
-              const now = new Date()
-              const start = snapTo30Min(now)
-              const end = new Date(start)
-              end.setHours(end.getHours() + 1)
-              setCreateDialog({ startDate: start, endDate: end, allDay: false })
-            }}
-            disabled={!canWrite}
-            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
-            aria-label="New event"
-            title={!canWrite ? 'Subscription required' : undefined}
-          >
-            <Plus className="h-4 w-4" />
-            <span className="hidden lg:inline">New event</span>
-          </button>
+          {/* Read-only accounts can't create events; the read-only banner explains why. */}
+          {canWrite && (
+            <button
+              onClick={() => {
+                const now = new Date()
+                const start = snapTo30Min(now)
+                const end = new Date(start)
+                end.setHours(end.getHours() + 1)
+                setCreateDialog({ startDate: start, endDate: end, allDay: false })
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+              aria-label="New event"
+            >
+              <Plus className="h-4 w-4" />
+              <span className="hidden lg:inline">New event</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -493,6 +505,7 @@ function CalendarPageBody() {
             </span>
           )}
         </div>
+        <CalendarTimezoneNote displayTz={userTz} refDate={currentDateForNote} className="px-1" />
         <div className="flex items-center gap-1 px-1" role="group" aria-label="Mobile calendar view">
           <button
             type="button"
@@ -500,7 +513,7 @@ function CalendarPageBody() {
             aria-pressed={mobileCalendarMode === 'agenda'}
             className={`max-md:min-h-[44px] rounded-md px-3 text-sm font-medium transition-colors ${
               mobileCalendarMode === 'agenda'
-                ? 'bg-[rgb(var(--primary))] text-white'
+                ? 'bg-[rgb(var(--primary-strong))] text-white'
                 : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))]'
             }`}
           >
@@ -512,7 +525,7 @@ function CalendarPageBody() {
             aria-pressed={mobileCalendarMode === 'threeDay'}
             className={`max-md:min-h-[44px] rounded-md px-3 text-sm font-medium transition-colors ${
               mobileCalendarMode === 'threeDay'
-                ? 'bg-[rgb(var(--primary))] text-white'
+                ? 'bg-[rgb(var(--primary-strong))] text-white'
                 : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))]'
             }`}
           >
@@ -524,7 +537,7 @@ function CalendarPageBody() {
             aria-pressed={mobileCalendarMode === 'sevenDay'}
             className={`max-md:min-h-[44px] rounded-md px-3 text-sm font-medium transition-colors ${
               mobileCalendarMode === 'sevenDay'
-                ? 'bg-[rgb(var(--primary))] text-white'
+                ? 'bg-[rgb(var(--primary-strong))] text-white'
                 : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))]'
             }`}
           >

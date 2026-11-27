@@ -1,37 +1,8 @@
-'use client'
+import { redirect } from 'next/navigation'
 
-import Link from 'next/link'
-import { XCircle } from 'lucide-react'
-import { Button } from '@silentsuite/ui'
-import { CheckoutReturnAnalytics } from '../commercial-funnel-analytics'
-
+// No checkout return URL points here any more (Stripe returns to /signup,
+// /signup/success or /settings/subscription; BTCPay to /signup/pending-payment).
+// Old links land back on sign-up instead of a dead end.
 export default function SignupCancelPage() {
-  return (
-    <div className="max-w-md mx-auto space-y-6 text-center">
-      <CheckoutReturnAnalytics outcome="cancelled" paymentMethod="unknown" />
-      <div className="flex flex-col items-center gap-4">
-        <div className="rounded-full bg-[rgb(var(--surface))] p-4">
-          <XCircle className="h-12 w-12 text-[rgb(var(--muted))]" />
-        </div>
-        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">
-          You didn&apos;t complete checkout
-        </h2>
-        <p className="text-sm text-[rgb(var(--muted))]">
-          No worries — you can try again or continue without a subscription.
-        </p>
-      </div>
-
-      <div className="space-y-3">
-        <Link href="/signup">
-          <Button className="w-full">Try again</Button>
-        </Link>
-        <Link
-          href="/"
-          className="block text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
-        >
-          Continue without subscription
-        </Link>
-      </div>
-    </div>
-  )
+  redirect('/signup')
 }

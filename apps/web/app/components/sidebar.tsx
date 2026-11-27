@@ -60,7 +60,7 @@ export function Sidebar() {
         </div>
         {isExpanded && (
           <span className="truncate text-sm font-semibold tracking-[-0.04em]">
-            <span className="text-[rgb(var(--primary))]">app.</span><span className="text-[rgb(var(--foreground))]">silentsuite</span><span className="text-[rgb(var(--primary))]">.io</span>
+            <span className="text-[rgb(var(--primary-text))]">app.</span><span className="text-[rgb(var(--foreground))]">silentsuite</span><span className="text-[rgb(var(--primary-text))]">.io</span>
           </span>
         )}
       </div>
@@ -87,7 +87,7 @@ export function Sidebar() {
               href={href}
               className={`group relative flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${
                 isActive
-                  ? 'bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary))] font-medium'
+                  ? 'bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary-text))] font-medium'
                   : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]'
               }`}
               aria-current={isActive ? 'page' : undefined}
@@ -116,7 +116,7 @@ export function Sidebar() {
             href="/admin"
             className={`group relative flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${
               pathname.startsWith('/admin')
-                ? 'bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary))] font-medium'
+                ? 'bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary-text))] font-medium'
                 : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]'
             }`}
             aria-current={pathname.startsWith('/admin') ? 'page' : undefined}
@@ -137,7 +137,7 @@ export function Sidebar() {
           href="/settings"
           className={`group relative flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${
             pathname.startsWith('/settings')
-              ? 'bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary))] font-medium'
+              ? 'bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary-text))] font-medium'
               : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]'
           }`}
           aria-current={pathname.startsWith('/settings') ? 'page' : undefined}

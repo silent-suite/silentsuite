@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Read-only, bounded evidence collector for the verified braces GHSA-vfj7-8cjw-p6xm remediation.
 // Usage: node scripts/verify-braces-tooling-exposure.mjs <out-dir> [compare-ref] [--runtime-smoke]
-// Run after a frozen install and the Dockerfile.web build steps (core, ui, web). Exits 1 unless
+// Run after a frozen install and the Dockerfile.web web build step. Exits 1 unless
 // every check below holds; writes summary.json and standalone-inventory.tsv to <out-dir>.
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'

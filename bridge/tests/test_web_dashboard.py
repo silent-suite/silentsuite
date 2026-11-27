@@ -156,13 +156,14 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     assert "http://127.0.0.1:37358/alice@example.com/" in html
     assert "http://127.0.0.1:37358/bob@example.com/" in html
     assert "Collections (all configured accounts)" in html
-    assert "2 calendars, 1 contacts, 0 tasks" in html
+    assert "2 calendars \u00b7 1 address book \u00b7 0 task lists" in html
     assert "window.SILENTSUITE_DASHBOARD_CSRF" in html
     assert "X-SilentSuite-CSRF" in html
 
     assert "Add / Re-authenticate Account" in html
     assert "Add or re-authenticate an account" in html
     assert 'class="login-panel hidden"' in html
+    assert 'onclick="hideLoginPanel()">Cancel</button>' in html
     assert 'data-account="alice@example.com"' in html
     assert 'onclick="logoutAccount(this)"' in html
     assert 'onclick="removeAccount(this)"' in html
@@ -202,7 +203,7 @@ def test_update_status_aggregates_background_sync_counts(tmp_path, monkeypatch):
     assert _bridge_status["collections_scope"] == "all configured accounts"
 
     html = _render_dashboard()
-    assert "3 calendars, 3 contacts, 1 tasks" in html
+    assert "3 calendars \u00b7 3 address books \u00b7 1 task list" in html
 
 
 def test_successful_account_does_not_clear_another_account_failure():
@@ -304,9 +305,16 @@ def test_render_dashboard_handles_no_accounts(tmp_path, monkeypatch):
     assert "No accounts configured" in html
     assert "Set up your bridge account" in html
     assert 'data-required="true"' in html
+    # The panel can't be hidden without an account, so first run has no Cancel.
+    assert 'onclick="hideLoginPanel()"' not in html
     assert 'id="dashboardLoginForm"' in html
     assert 'name="password"' in html
     assert "Add / Re-authenticate Account" in html
+    # First run leads with sign-in; network details sit below it, collapsed.
+    network = html.index('<details class="url-section network-details">')
+    assert html.index('id="dashboardLoginForm"') < network
+    assert html.index("<summary>Advanced: network</summary>") > network
+    assert html.index("CSRF token") > network
 
 
 def test_render_dashboard_escapes_account_action_attributes(tmp_path, monkeypatch):
@@ -564,6 +572,7 @@ def test_dashboard_sync_post_returns_request_id_without_waiting(monkeypatch):
 
 def test_dashboard_sync_post_fails_when_no_live_worker(monkeypatch):
     web_module._sync_requests.clear()
+    monkeypatch.setattr(accounts, "list_accounts", lambda: ["account@example.com"])
     thread = MagicMock()
     thread.is_alive.return_value = False
     monkeypatch.setattr(storage, "_sync_threads", {"account@example.com": thread})
@@ -580,8 +589,38 @@ def test_dashboard_sync_post_fails_when_no_live_worker(monkeypatch):
     assert headers["Content-Type"] == "application/json"
     assert json.loads(body) == {
         "ok": False,
-        "error": "No sync workers available",
+        "error": "Sync isn't running yet. Try again in a moment, or restart the bridge.",
     }
+
+
+def test_dashboard_sync_post_without_account_says_to_sign_in(monkeypatch):
+    web_module._sync_requests.clear()
+    monkeypatch.setattr(accounts, "list_accounts", lambda: [])
+    monkeypatch.setattr(storage, "_sync_threads", {})
+
+    status, _, body = Web.__new__(Web).post(
+        _post_environ(csrf_token=_dashboard_csrf_token), "", "/.web/api/sync", None,
+    )
+
+    assert status == 503
+    assert json.loads(body) == {"ok": False, "error": "Sign in to an account first."}
+
+
+def test_dashboard_disables_sync_now_until_an_account_is_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, _username: None)
+
+    html = _render_dashboard()
+    assert 'onclick="triggerSync()" disabled>Sync Now</button>' in html
+    assert 'color:#888;">Sign in to an account first.</span>' in html
+
+    creds = Credentials()
+    creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
+    creds.save()
+
+    html = _render_dashboard()
+    assert 'onclick="triggerSync()">Sync Now</button>' in html
+    assert 'Sign in to an account first.' not in html
 
 
 def test_dashboard_sync_request_reports_generation_completion(monkeypatch):
@@ -1295,6 +1334,47 @@ const cases = [
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.skipif(NODE is None, reason="node is required to execute dashboard JavaScript")
+def test_sync_now_shows_the_bridge_reason_when_sync_cannot_start(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    html = _render_dashboard()
+    functions = "\n".join(_extract_js_function(html, name) for name in (
+        "syncNowFailed", "triggerSync",
+    ))
+    harness = r"""
+const assert = require('node:assert/strict');
+const reason = "Sync isn't running yet. Try again in a moment, or restart the bridge.";
+const offline = "Couldn't reach the bridge. Check that it is still running.";
+const cases = [
+    [async () => ({ok: false, status: 503, json: async () => ({ok: false, error: reason})}), reason],
+    [async () => ({ok: false, status: 502, json: async () => { throw new SyntaxError('not json'); }}), offline],
+    [async () => { throw new TypeError('Failed to fetch'); }, offline],
+];
+global.window = {SILENTSUITE_DASHBOARD_CSRF: 'csrf-test'};
+(async () => {
+    for (const [respond, expected] of cases) {
+        const btn = {textContent: 'Sync Now', disabled: false};
+        const status = {textContent: 'old message', style: {}};
+        global.document = {getElementById: (id) => id === 'syncNowBtn' ? btn : status};
+        global.fetch = async (url, options) => {
+            assert.equal(url, '/.web/api/sync');
+            assert.equal(options.headers['X-SilentSuite-CSRF'], 'csrf-test');
+            return respond();
+        };
+        triggerSync();
+        assert.equal(btn.disabled, true);
+        assert.equal(status.textContent, '');
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        assert.equal(btn.textContent, 'Sync Now');
+        assert.equal(btn.disabled, false);
+        assert.equal(status.textContent, expected);
+    }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run([NODE, "-e", functions + harness], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+
+
 def test_dashboard_settings_post_requires_csrf_before_writing(tmp_path, monkeypatch):
     settings_file = tmp_path / "settings.json"
     monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_file))
@@ -1332,6 +1412,8 @@ def test_dashboard_settings_post_accepts_valid_csrf(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
     monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(config, "SYNC_INTERVAL", config.SYNC_INTERVAL)
+    events = []
+    monkeypatch.setattr(web_module, "log_sync_event", lambda kind, message: events.append(message))
     web = Web.__new__(Web)
     body = json.dumps({"syncInterval": 60}).encode()
 
@@ -1345,6 +1427,31 @@ def test_dashboard_settings_post_accepts_valid_csrf(tmp_path, monkeypatch):
     assert status == 200
     assert headers["Content-Type"] == "application/json"
     assert json.loads(response_body) == {"ok": True, "syncInterval": 60}
+    # Logged in the dashboard's wording, not raw seconds.
+    assert events == ["Sync interval changed to 1 min"]
+
+
+@pytest.mark.parametrize(
+    ("seconds", "logged"),
+    [(60, "1 min"), (900, "15 min"), (3600, "1 hr"), (90, "90 s"), (5400, "90 min"), (45, "45 s")],
+)
+def test_dashboard_settings_logs_the_exact_interval(tmp_path, monkeypatch, seconds, logged):
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "SYNC_INTERVAL", config.SYNC_INTERVAL)
+    events = []
+    monkeypatch.setattr(web_module, "log_sync_event", lambda kind, message: events.append(message))
+    web = Web.__new__(Web)
+
+    status, _headers, _body = web.post(
+        _post_environ(body=json.dumps({"syncInterval": seconds}).encode(), csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/settings",
+        None,
+    )
+
+    assert status == 200
+    assert events == [f"Sync interval changed to {logged}"]
 
 
 # --- Settings failures must never look like success (#658) ------------------
@@ -1624,6 +1731,9 @@ function page(scenario) {
     select.disabled = false;
     select.setAttribute('data-saved', '900');
     const status = element('');
+    // The status card's "Sync interval" value, rendered for the saved 900.
+    const card = element('');
+    card.textContent = '15 min';
     const requests = [];
     const deferreds = [];
     const timers = [];
@@ -1633,6 +1743,7 @@ function page(scenario) {
             getElementById: function(id) {
                 if (id === 'syncInterval') return select;
                 if (id === 'syncIntervalStatus') return status;
+                if (id === 'syncIntervalValue') return card;
                 return null;
             }
         },
@@ -1652,7 +1763,7 @@ function page(scenario) {
     };
     const context = vm.createContext(sandbox);
     vm.runInContext(source, context);
-    return { select: select, status: status, requests: requests, deferreds: deferreds, timers: timers, context: context };
+    return { select: select, status: status, card: card, requests: requests, deferreds: deferreds, timers: timers, context: context };
 }
 
 function snapshot(p) {
@@ -1662,6 +1773,7 @@ function snapshot(p) {
         selected: p.select.value,
         saved: p.select.getAttribute('data-saved'),
         disabled: p.select.disabled,
+        card: p.card.textContent,
         requests: p.requests.map(function(r) { return r.body; }),
         timers: p.timers.map(function(t) { return { delay: t.delay, cleared: t.cleared, fired: t.fired }; })
     };
@@ -1680,6 +1792,7 @@ async function run(scenario) {
         selected: state.selected,
         saved: state.saved,
         disabled: state.disabled,
+        card: state.card,
         requests: p.requests,
         timers: p.timers.map(function(t) { return t.delay; })
     };
@@ -1747,6 +1860,7 @@ def test_dashboard_update_interval_never_shows_saved_on_http_failure(tmp_path, m
     assert ok["selected"] == "300"
     assert ok["saved"] == "300"
     assert ok["disabled"] is False
+    assert ok["card"] == "5 min"
     assert ok["timers"] == [2000]
     assert ok["requests"] == [
         {"url": "/.web/api/settings", "method": "POST", "csrf": "csrf-token", "body": '{"syncInterval":300}'}
@@ -1763,6 +1877,7 @@ def test_dashboard_update_interval_never_shows_saved_on_http_failure(tmp_path, m
         assert failed["selected"] == "900", scenario["id"]
         assert failed["saved"] == "900", scenario["id"]
         assert failed["disabled"] is False, scenario["id"]
+        assert failed["card"] == "15 min", scenario["id"]
         assert failed["timers"] == [], scenario["id"]
         assert len(failed["requests"]) == 1, scenario["id"]
         if scenario["body"] and "error" in scenario["body"]:
@@ -1871,6 +1986,7 @@ def test_dashboard_update_interval_serializes_overlapping_saves_and_cancels_stal
     assert failed["selected"] == "300"
     assert failed["saved"] == "300"
     assert failed["disabled"] is False
+    assert failed["card"] == "5 min"
     assert failed["timers"] == [{"delay": 2000, "cleared": True, "fired": False}]
     # Firing whatever timers are still alive leaves the error visible.
     assert snaps["final"]["status"] == "Not saved: " + WRITE_ERROR
@@ -1892,6 +2008,7 @@ def test_dashboard_update_interval_serializes_overlapping_saves_and_cancels_stal
     assert reconciled["selected"] == "60"
     assert reconciled["saved"] == "60"
     assert reconciled["disabled"] is False
+    assert reconciled["card"] == "1 min"
 
     repeated = results["repeat-of-acknowledged-value-is-not-resent"]
     assert repeated["calls"][1]["sameAsFirst"] is True
@@ -2424,3 +2541,65 @@ class TestNetworkCard:
         assert "DAV URL unavailable" in page
         assert "/alice@example.com/" not in page
         assert 'id="davUrl0"' not in page
+
+
+def test_render_dashboard_keeps_signed_out_account_with_remove_local_data(
+    tmp_path, monkeypatch, mem_db,
+):
+    from silentsuite_bridge.local_cache.models import User
+
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(
+        web_module,
+        "_account_fingerprint",
+        lambda _creds, username: f"fingerprint for {username}",
+    )
+    creds = Credentials()
+    creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
+    creds.save()
+    User.create(username="alice@example.com")
+    User.create(username="bob@example.com")
+
+    html = _render_dashboard()
+
+    assert html.count("Signed out, local copy kept") == 1
+    assert (
+        '<h4>bob@example.com</h4>'
+        '<div class="account-meta">Signed out, local copy kept</div>'
+        '<div class="account-actions">'
+        '<button class="account-action-btn danger" data-account="bob@example.com" '
+        'onclick="removeAccount(this)">Remove local data</button>'
+    ) in html
+    assert html.count('onclick="removeAccount(this)"') == 2
+
+
+def test_render_dashboard_shows_signed_out_account_when_none_configured(
+    tmp_path, monkeypatch, mem_db,
+):
+    from silentsuite_bridge.local_cache.models import User
+
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    User.create(username="bob@example.com")
+
+    html = _render_dashboard()
+
+    assert "Signed out, local copy kept" in html
+    assert 'data-account="bob@example.com"' in html
+    assert "Remove local data" in html
+
+
+def test_render_dashboard_survives_signed_out_listing_failure(tmp_path, monkeypatch):
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+
+    def boom(**_kwargs):
+        raise RuntimeError("cache unavailable")
+
+    monkeypatch.setattr(accounts, "list_signed_out_accounts", boom)
+
+    html = _render_dashboard()
+
+    assert "No accounts configured yet" in html
+    assert "Signed out, local copy kept" not in html

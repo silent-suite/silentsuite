@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
 import CalendarPage from '../calendar-workspace'
+import { toSearchResults } from '../lib/search-results'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 
@@ -224,10 +225,9 @@ describe('Calendar mobile search', () => {
     expect(screen.queryByRole('dialog', { name: 'Edit recurring event' })).not.toBeInTheDocument()
   })
 
-  it('opens a search result as the series after an occurrence was selected, not as that occurrence', () => {
-    calendarMock.state.events = [
-      event({ id: 'standup', title: 'Standup', calendarId: 'cal-a', recurrenceRule: 'FREQ=WEEKLY' }),
-    ]
+  it('opens a search result at the occurrence it shows, not the occurrence selected before', () => {
+    const standup = event({ id: 'standup', title: 'Standup', calendarId: 'cal-a', recurrenceRule: 'FREQ=WEEKLY' })
+    calendarMock.state.events = [standup]
     renderWithIntl(<CalendarPage />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Open standup occurrence' }))
@@ -246,7 +246,10 @@ describe('Calendar mobile search', () => {
 
     expect(calendarMock.state.deleteRecurringEvent).toHaveBeenCalledTimes(1)
     const instance = calendarMock.state.deleteRecurringEvent.mock.calls[0]?.[2] as Date
-    expect(instance.getTime()).toBe(calendarMock.seriesStart.getTime())
+    // A series result shows and opens its next occurrence from today (WEB-17).
+    const shown = toSearchResults([standup])[0]?.instanceDate
+    expect(shown).toBeDefined()
+    expect(instance.getTime()).toBe(shown!.getTime())
     expect(instance.getTime()).not.toBe(calendarMock.occurrence.getTime())
   })
 })

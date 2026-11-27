@@ -539,7 +539,7 @@ export default function ExportPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-lg font-semibold text-[rgb(var(--foreground))]">Export Data</h1>
+      <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Export Data</h2>
       <p className="text-sm text-[rgb(var(--muted))]">
         Download your data in standard formats (ICS, VCF, Markdown). Your data is always yours.
       </p>

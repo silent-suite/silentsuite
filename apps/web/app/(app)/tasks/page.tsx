@@ -2,11 +2,12 @@
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List, Folder, Tag, MapPin, Link, BarChart3, CircleDot } from 'lucide-react'
+import { X, ChevronDown, Calendar, Flag, WifiOff, TriangleAlert, Plus, AlignLeft, Pencil, List, Folder, Tag, MapPin, Link, BarChart3, CircleDot } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useTaskStore, type TaskSaveError } from '@/app/stores/use-task-store'
-import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
+import { useDomainInitializing, useTaskListsLoading } from '@/app/hooks/use-domain-initializing'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -15,9 +16,10 @@ import { canWriteCollection, defaultWritableListId, findItemCollection } from '@
 
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
-import { TasksEmptyState } from '@/app/components/empty-state'
+import { EmptyState, TasksEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
+import { TaskDateInput } from './components/TaskDateInput'
 import type { Task, TaskStatus, Priority } from '@silentsuite/core'
 
 // ── Priority config ──
@@ -61,7 +63,8 @@ const STATUS_OPTIONS: TaskStatus[] = ['needs-action', 'in-process', 'completed',
 
 // ── Helpers ──
 
-function formatDueDate(date: Date): string {
+// A completed task is never overdue: past dates show as a plain date in neutral text.
+function formatDueDate(date: Date, completed = false): string {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const due = new Date(date.getFullYear(), date.getMonth(), date.getDate())
@@ -70,12 +73,13 @@ function formatDueDate(date: Date): string {
   if (diffDays === 0) return 'Today'
   if (diffDays === 1) return 'Tomorrow'
   if (diffDays === -1) return 'Yesterday'
-  if (diffDays < -1) return `${Math.abs(diffDays)}d overdue`
-  if (diffDays <= 7) return `In ${diffDays}d`
+  if (diffDays < -1 && !completed) return `${Math.abs(diffDays)}d overdue`
+  if (diffDays >= 0 && diffDays <= 7) return `In ${diffDays}d`
   return formatDate(date, 'system', { month: 'short', day: 'numeric' })
 }
 
-function dueDateColor(date: Date): string {
+function dueDateColor(date: Date, completed = false): string {
+  if (completed) return 'text-[rgb(var(--muted))]'
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const due = new Date(date.getFullYear(), date.getMonth(), date.getDate())
@@ -142,11 +146,13 @@ function TaskQuickAdd() {
   const taskLists = useTaskListStore((s) => s.lists)
   const activeListId = useTaskListStore((s) => s.activeListId)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Until the real lists arrive, writability is unknown: say "Loading…", not "Read-only mode".
+  const listsLoading = useTaskListsLoading(taskLists)
 
   // A new task never goes to a list shared read-only.
   const defaultListId = useMemo(() => defaultWritableListId(taskLists, activeListId), [activeListId, taskLists])
   const canWrite = canWriteAccount && defaultListId !== undefined
-  const readOnlyTitle = !canWriteAccount ? 'Subscription required' : 'This task list is read-only'
+  const readOnlyTitle = listsLoading ? undefined : !canWriteAccount ? 'Subscription required' : 'This task list is read-only'
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -176,7 +182,7 @@ function TaskQuickAdd() {
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder={canWrite ? 'Add a task...' : 'Read-only mode'}
+          placeholder={canWrite ? 'Add a task...' : listsLoading ? 'Loading…' : 'Read-only mode'}
           aria-label="Add a task"
           disabled={!canWrite}
           readOnly={pending}
@@ -186,7 +192,7 @@ function TaskQuickAdd() {
         <button
           type="submit"
           disabled={!title.trim() || !canWrite || pending}
-          className={`rounded-lg bg-emerald-600 px-4 py-2 max-md:min-h-[44px] text-sm font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${canWrite ? 'hover:bg-emerald-500' : ''}`}
+          className={`rounded-lg bg-emerald-700 px-4 py-2 max-md:min-h-[44px] text-sm font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${canWrite ? 'hover:bg-emerald-800' : ''}`}
           title={!canWrite ? readOnlyTitle : undefined}
         >
           Add
@@ -235,8 +241,10 @@ function TaskDialog({
 
   const [title, setTitle] = useState(task?.title ?? '')
   const [description, setDescription] = useState(task?.description ?? '')
-  const [startDate, setStartDate] = useState<string>(dateInputValue(task?.start_date))
-  const [dueDate, setDueDate] = useState<string>(dateInputValue(task?.due_date))
+  // An ISO day, '' for none, or null while the typed date is not valid (Save waits for a valid one).
+  const [startDate, setStartDate] = useState<string | null>(dateInputValue(task?.start_date))
+  const [dueDate, setDueDate] = useState<string | null>(dateInputValue(task?.due_date))
+  const datesValid = startDate !== null && dueDate !== null
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? (task?.completed ? 'completed' : 'needs-action'))
   const [percentComplete, setPercentComplete] = useState(task?.percent_complete ?? (task?.completed ? 100 : 0))
@@ -302,7 +310,7 @@ function TaskDialog({
 
   const handleSave = useCallback(async () => {
     const trimmed = title.trim()
-    if (!trimmed || creating || !canWrite) return
+    if (!trimmed || creating || !canWrite || startDate === null || dueDate === null) return
 
     const parsedStart = parseDateInput(startDate)
     const parsedDue = parseDateInput(dueDate)
@@ -384,8 +392,8 @@ function TaskDialog({
             </span>
             <button
               onClick={handleSave}
-              disabled={!title.trim() || creating || !canWrite}
-              className="shrink-0 rounded-md bg-emerald-600 px-3 py-1 max-md:min-h-[44px] text-sm font-medium text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!title.trim() || creating || !canWrite || !datesValid}
+              className="shrink-0 rounded-md bg-emerald-700 px-3 py-1 max-md:min-h-[44px] text-sm font-medium text-white hover:bg-emerald-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title={!canWrite ? readOnlyTitle : undefined}
             >
               {mode === 'create' ? 'Create' : 'Save'}
@@ -421,12 +429,12 @@ function TaskDialog({
                 <span className="sr-only">Start date</span>
                 <div className="flex flex-1 items-center gap-2">
                   <span className="text-sm text-[rgb(var(--muted))]">Start</span>
-                  <input
-                    type="date"
+                  <TaskDateInput
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={setStartDate}
                     aria-label="Start date"
-                    className="min-w-0 flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    containerClassName="flex-1"
+                    className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
               </label>
@@ -435,12 +443,12 @@ function TaskDialog({
                 <span className="sr-only">Due date</span>
                 <div className="flex flex-1 items-center gap-2">
                   <span className="text-sm text-[rgb(var(--muted))]">Due</span>
-                  <input
-                    type="date"
+                  <TaskDateInput
                     value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
+                    onChange={setDueDate}
                     aria-label="Due date"
-                    className="min-w-0 flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    containerClassName="flex-1"
+                    className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
               </label>
@@ -696,6 +704,7 @@ function PrioritySelector({
 
 // ── DateInput ──
 
+// The expanded row saves the due date as soon as a valid one is entered and the field is left.
 function DateInput({
   value,
   onChange,
@@ -707,27 +716,16 @@ function DateInput({
   disabled?: boolean
   disabledTitle?: string
 }) {
-  const formatted = value
-    ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
-    : ''
-
   return (
     <div className="flex items-center gap-1">
       <Calendar className="h-3.5 w-3.5 text-[rgb(var(--muted))]" />
-      <input
-        type="date"
-        value={formatted}
-        onChange={(e) => {
-          if (e.target.value) {
-            const [y, m, d] = e.target.value.split('-').map(Number)
-            onChange(new Date(y!, m! - 1, d!))
-          } else {
-            onChange(null)
-          }
-        }}
+      <TaskDateInput
+        value={dateInputValue(value)}
+        onChange={(iso) => onChange(parseDateInput(iso ?? ''))}
+        commitOnBlur
         readOnly={disabled}
         aria-label="Task due date"
-        className={`bg-transparent text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1.5 border border-transparent hover:border-[rgb(var(--border))] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        className={`w-28 bg-transparent text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1.5 border border-transparent hover:border-[rgb(var(--border))] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         title={disabled ? disabledTitle : undefined}
       />
     </div>
@@ -860,8 +858,8 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
           {!expanded && (
             <div className="mt-0.5 flex items-center gap-2 md:hidden">
               {task.due_date && (
-                <span className={`text-xs ${dueDateColor(task.due_date)}`}>
-                  {formatDueDate(task.due_date)}
+                <span className={`text-xs ${dueDateColor(task.due_date, task.completed)}`}>
+                  {formatDueDate(task.due_date, task.completed)}
                 </span>
               )}
               <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium ${PRIORITY_COLORS[task.priority]}`}>
@@ -875,8 +873,8 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
         {/* Badges */}
         <div className="flex items-center gap-2 shrink-0 max-md:gap-1.5 max-md:min-w-0">
           {task.due_date && !expanded && (
-            <span className={`text-xs max-md:hidden ${dueDateColor(task.due_date)}`}>
-              {formatDueDate(task.due_date)}
+            <span className={`text-xs max-md:hidden ${dueDateColor(task.due_date, task.completed)}`}>
+              {formatDueDate(task.due_date, task.completed)}
             </span>
           )}
           {!expanded && (
@@ -889,7 +887,7 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onEdit(task) }}
-              className="flex rounded max-md:min-h-[44px] max-md:min-w-[44px] items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
+              className="flex rounded max-md:min-h-[44px] max-md:min-w-[44px] items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary-text))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
               aria-label="Edit task"
             >
               <Pencil className="h-3.5 w-3.5" />
@@ -898,7 +896,7 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
-              className="hidden md:flex rounded p-1 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
+              className="hidden md:flex rounded p-1 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary-text))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
               aria-label="Edit task"
             >
               <Pencil className="h-3.5 w-3.5" />
@@ -999,8 +997,12 @@ export default function TasksPage() {
   const canWrite = canWriteAccount && hasWritableList
   const tasks = useTaskStore((s) => s.tasks)
   const isLoading = useDomainInitializing('tasks') && tasks.length === 0
+  // Zero tasks means "no tasks yet" only once the tasks domain has loaded; after a failed or
+  // unfinished load (for example offline with nothing cached) the account may still have tasks.
+  const tasksLoaded = useEtebaseStore((s) => s.domainLoadState.tasks === 'loaded')
   const isOnline = useSyncStore((s) => s.isOnline)
   const taskLists = useTaskListStore((s) => s.lists)
+  const listsLoading = useTaskListsLoading(taskLists)
   const [showDialog, setShowDialog] = useState(false)
   const [editTask, setEditTask] = useState<Task | null>(null)
   const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
@@ -1025,6 +1027,7 @@ export default function TasksPage() {
   }, [visibleTasks, taskQuery])
   const sortedTasks = useMemo(() => sortTasks(searchedTasks), [searchedTasks])
   const isEmpty = tasks.length === 0 && !isLoading
+  const loadFailed = isEmpty && !tasksLoaded
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -1052,8 +1055,8 @@ export default function TasksPage() {
           <button
             onClick={() => setShowDialog(true)}
             disabled={!canWrite}
-            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
-            title={!canWriteAccount ? 'Subscription required' : !hasWritableList ? 'This task list is read-only' : undefined}
+            className={`flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-800'}`}
+            title={listsLoading ? undefined : !canWriteAccount ? 'Subscription required' : !hasWritableList ? 'This task list is read-only' : undefined}
           >
             <Plus className="h-4 w-4" />
             New task
@@ -1078,6 +1081,13 @@ export default function TasksPage() {
       {/* Content */}
       {isLoading ? (
         <TaskSkeleton />
+      ) : loadFailed ? (
+        <EmptyState
+          icon={isOnline ? TriangleAlert : WifiOff}
+          title={t('tasksLoadFailedTitle')}
+          description={isOnline ? t('tasksLoadFailedDescription') : t('tasksLoadFailedOffline')}
+          action={isOnline ? { label: t('tasksLoadFailedRetry'), onClick: () => window.location.reload() } : undefined}
+        />
       ) : isEmpty ? (
         <TasksEmptyState />
       ) : taskQuery.trim() && sortedTasks.length === 0 ? (

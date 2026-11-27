@@ -147,6 +147,17 @@ def _all_text(values):
     return all(type(value) is str for value in values)
 
 
+def _request_kind(method, unsafe_path):
+    """Name the bridge dashboard apart from DAV; the path itself is never kept."""
+    path = pathutils.sanitize_path(unsafe_path)
+    if path == "/.web" or path.startswith("/.web/"):
+        return "Dashboard"
+    # Radicale answers GET/HEAD on the root with a redirect to the dashboard.
+    if path == "/" and _method_category(method) in {"GET", "HEAD"}:
+        return "Dashboard"
+    return "DAV"
+
+
 def _request_diagnostic(record):
     """Return a fixed request/auth diagnostic, or None to keep it suppressed."""
     template = record.msg
@@ -157,7 +168,10 @@ def _request_diagnostic(record):
     count = len(args)
     if template == _REQUEST_ARRIVAL:
         if level == logging.INFO and count == 5 and _all_text(args[1:]):
-            return f"DAV request received (method={_method_category(args[0])})"
+            return (
+                f"{_request_kind(args[0], args[1])} request received "
+                f"(method={_method_category(args[0])})"
+            )
     elif template == _REQUEST_OUTCOME:
         if (
             level == logging.INFO
@@ -166,7 +180,7 @@ def _request_diagnostic(record):
             and type(args[3]) is float
         ):
             return (
-                "DAV request completed "
+                f"{_request_kind(args[0], args[1])} request completed "
                 f"(method={_method_category(args[0])} "
                 f"status={_status_category(args[4])})"
             )
@@ -177,7 +191,10 @@ def _request_diagnostic(record):
             and type(args[1]) is str
             and isinstance(args[2], BaseException)
         ):
-            return f"DAV request failed (method={_method_category(args[0])})"
+            return (
+                f"{_request_kind(args[0], args[1])} request failed "
+                f"(method={_method_category(args[0])})"
+            )
     elif template == _LOGIN_SUCCEEDED:
         if level == logging.INFO and count == 1 and _all_text(args):
             return "Local authentication succeeded"
@@ -192,6 +209,16 @@ def _request_diagnostic(record):
             return "Local authentication refused"
     return None
 
+
+# Placeholders for records whose content is withheld. They carry no detail, so
+# below WARNING they are shown only when the bridge runs at DEBUG level.
+_SUPPRESSED_PLACEHOLDERS = frozenset(
+    {
+        "Radicale diagnostic suppressed",
+        "Radicale item diagnostic suppressed",
+        "Radicale server diagnostic suppressed",
+    }
+)
 
 _expected_record_fields = [None, frozenset()]
 
@@ -223,6 +250,10 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
         record.exc_text = None
         record.stack_info = None
         _drop_unexpected_record_fields(record)
+        if record.msg in _SUPPRESSED_PLACEHOLDERS and record.levelno < logging.WARNING:
+            record.levelno = logging.DEBUG
+            record.levelname = logging.getLevelName(logging.DEBUG)
+            return logging.getLogger(record.name).isEnabledFor(logging.DEBUG)
         return True
 
     def _redact(self, record):

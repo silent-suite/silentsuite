@@ -5,6 +5,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import { formatDate } from '@/app/lib/date'
+import { timezoneOptions } from '@/app/lib/tz'
 import { getAccountEpoch } from '@/app/lib/account-epoch'
 import { createAuthenticatedPaymentFetch } from '@/app/lib/authenticated-payment-fetch'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
@@ -45,13 +46,7 @@ export default function AccountPage() {
 
   const hourOptions = useMemo(() => Array.from({ length: 25 }, (_, hour) => hour as DayBoundaryHour), [])
 
-  const allTimezones = useMemo(() => {
-    try {
-      return Intl.supportedValuesOf('timeZone')
-    } catch {
-      return ['UTC']
-    }
-  }, [])
+  const allTimezones = useMemo(() => timezoneOptions(defaultTimezone), [defaultTimezone])
 
   useEffect(() => {
     if (isSelfHosted) {
@@ -130,7 +125,7 @@ export default function AccountPage() {
               </div>
 
               <div>
-                <p className="text-xs text-[rgb(var(--muted))]">Plan</p>
+                <p className="text-xs text-[rgb(var(--muted))]">Status</p>
                 <p className="text-sm text-[rgb(var(--foreground))] capitalize">{status.replace(/_/g, ' ')}</p>
               </div>
 
@@ -155,24 +150,24 @@ export default function AccountPage() {
                     onClick={() => setTimeFormat('12h')}
                     className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
                       timeFormat === '12h'
-                        ? 'border-emerald-500 bg-emerald-600/15 text-emerald-400'
+                        ? 'border-emerald-700 bg-emerald-700 text-white'
                         : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] hover:border-[rgb(var(--muted))]'
                     }`}
                   >
                     <span className="font-medium">12-hour</span>
-                    <span className="ml-2 text-xs opacity-70">7:00 PM</span>
+                    <span className="ml-2 text-xs opacity-90">7:00 PM</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setTimeFormat('24h')}
                     className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
                       timeFormat === '24h'
-                        ? 'border-emerald-500 bg-emerald-600/15 text-emerald-400'
+                        ? 'border-emerald-700 bg-emerald-700 text-white'
                         : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] hover:border-[rgb(var(--muted))]'
                     }`}
                   >
                     <span className="font-medium">24-hour</span>
-                    <span className="ml-2 text-xs opacity-70">19:00</span>
+                    <span className="ml-2 text-xs opacity-90">19:00</span>
                   </button>
                 </div>
               </div>
@@ -186,7 +181,7 @@ export default function AccountPage() {
                     onClick={() => setFirstDayOfWeek('monday')}
                     className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
                       firstDayOfWeek === 'monday'
-                        ? 'border-emerald-500 bg-emerald-600/15 text-emerald-400'
+                        ? 'border-emerald-700 bg-emerald-700 text-white'
                         : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] hover:border-[rgb(var(--muted))]'
                     }`}
                   >
@@ -197,7 +192,7 @@ export default function AccountPage() {
                     onClick={() => setFirstDayOfWeek('sunday')}
                     className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
                       firstDayOfWeek === 'sunday'
-                        ? 'border-emerald-500 bg-emerald-600/15 text-emerald-400'
+                        ? 'border-emerald-700 bg-emerald-700 text-white'
                         : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] hover:border-[rgb(var(--muted))]'
                     }`}
                   >
@@ -317,12 +312,12 @@ export default function AccountPage() {
                   type="button"
                   onClick={syncPreferencesNow}
                   disabled={preferencesSyncStatus === 'syncing'}
-                  className="rounded-md border border-emerald-500/60 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:border-emerald-400 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-md border border-emerald-500/60 px-3 py-2 text-sm font-medium text-emerald-700 transition-colors hover:border-emerald-400 hover:text-emerald-800 dark:text-emerald-300 dark:hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {preferencesSyncStatus === 'syncing' ? 'Syncing preferences...' : 'Sync account preferences'}
                 </button>
                 {preferencesSyncStatus === 'synced' && (
-                  <p className="text-xs text-emerald-300">Preferences synced.</p>
+                  <p className="text-xs text-emerald-700 dark:text-emerald-300">Preferences synced.</p>
                 )}
                 {preferencesSyncStatus === 'failed' && (
                   <p className="text-xs text-rose-300">Could not sync preferences. Check your connection and try again.</p>

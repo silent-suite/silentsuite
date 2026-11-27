@@ -238,9 +238,9 @@ export function MiniCalendar() {
             aria-label={formatDayLabel(cell.date, dateFormat)}
             className={`relative flex h-7 w-full items-center justify-center rounded text-[11px] transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
               cell.isToday
-                ? 'bg-[rgb(var(--primary))] font-bold text-white'
+                ? 'bg-[rgb(var(--primary-strong))] font-bold text-white'
                 : cell.isSelected
-                  ? 'bg-[rgb(var(--primary))]/20 font-medium text-[rgb(var(--primary))]'
+                  ? 'bg-[rgb(var(--primary))]/20 font-medium text-emerald-800 dark:text-emerald-400'
                   : cell.inCurrentMonth
                     ? 'text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]'
                     : 'text-[rgb(var(--muted))]/50 hover:bg-[rgb(var(--background))]'

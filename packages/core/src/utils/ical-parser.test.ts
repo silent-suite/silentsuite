@@ -351,6 +351,40 @@ describe('EXDATE', () => {
     const parsed = parseVEvent(generated);
     expect(parsed.exdate).toEqual(original.exdate);
   });
+
+  it('keeps each EXDATE line\'s TZID through parse and generate', () => {
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:exdate-zones',
+      'DTSTART;TZID=Europe/Berlin:20260315T100000',
+      'RRULE:FREQ=DAILY;COUNT=5',
+      'EXDATE;TZID=Europe/Berlin:20260316T100000',
+      'EXDATE;TZID=America/New_York:20260318T050000,20260319T050000',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = parseVEvent(ical);
+    expect(event.exdate).toEqual(['20260316T100000', '20260318T050000', '20260319T050000']);
+    expect(event.exdateTzids).toEqual(['Europe/Berlin', 'America/New_York', 'America/New_York']);
+
+    const generated = generateVEvent(event);
+    expect(generated).toContain('EXDATE;TZID=Europe/Berlin:20260316T100000\r\n');
+    expect(generated).toContain('EXDATE;TZID=America/New_York:20260318T050000,20260319T050000\r\n');
+    expect(parseVEvent(generated)).toEqual(event);
+  });
+
+  it('records no per-value zones when every EXDATE line shares one TZID', () => {
+    const event = parseVEvent([
+      'BEGIN:VEVENT',
+      'UID:exdate-one-zone',
+      'DTSTART;TZID=Europe/Berlin:20260315T100000',
+      'EXDATE;TZID=Europe/Berlin:20260316T100000',
+      'EXDATE;TZID=Europe/Berlin:20260318T100000',
+      'END:VEVENT',
+    ].join('\r\n'));
+    expect(event.exdateParams).toEqual({ TZID: 'Europe/Berlin' });
+    expect(event.exdateTzids).toBeUndefined();
+  });
 });
 
 // ── VALARM parsing ──

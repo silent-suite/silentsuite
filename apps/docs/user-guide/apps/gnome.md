@@ -44,6 +44,6 @@ If GNOME Online Accounts doesn't show CalDAV/CardDAV:
 2. GNOME may take a moment to discover collections. Wait 30 seconds and refresh.
 3. Try restarting `gnome-calendar`.
 
-### System tray not visible
+### No tray icon
 
-GNOME removed native tray support. Install the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) to see the bridge tray icon.
+The bridge downloads have no tray icon. Open `http://localhost:37358/` to check the status. If you run the bridge from source with the tray installed, install the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) to see the icon on GNOME.
