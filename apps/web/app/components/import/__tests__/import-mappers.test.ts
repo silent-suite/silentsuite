@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { vEventToImportEvent, isCompletedVTodo } from '../import-mappers'
+import { parseVEvent } from '@silentsuite/core/utils/ical-parser'
 import type { VEvent, VTodo } from '@silentsuite/core/utils/ical-parser'
 
 // #886 / plan-v2 T1: the import payload carries floating identity so the store, serializer and
@@ -257,6 +258,15 @@ describe('vEventToImportEvent', () => {
     expect(payload.exceptions[0]!.getFullYear()).toBe(2026)
     expect(payload.exceptions[0]!.getMonth()).toBe(5)
     expect(payload.exceptions[0]!.getDate()).toBe(2)
+  })
+
+  it('reads each EXDATE value in its own line\'s zone', () => {
+    const payload = vEventToImportEvent(parseVEvent([
+      'BEGIN:VEVENT', 'UID:zones@example', 'DTSTART;TZID=Europe/Berlin:20260315T100000', 'RRULE:FREQ=DAILY;COUNT=4',
+      'EXDATE;TZID=Europe/Berlin:20260316T100000', 'EXDATE;TZID=America/New_York:20260317T050000', 'END:VEVENT',
+    ].join('\r\n')), 'cal-1')
+
+    expect(payload.exceptions.map((d) => d.toISOString())).toEqual(['2026-03-16T09:00:00.000Z', '2026-03-17T09:00:00.000Z'])
   })
 })
 

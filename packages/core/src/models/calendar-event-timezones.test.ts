@@ -3,6 +3,17 @@ import { deserializeCalendarEvent, serializeCalendarEvent, expandEventRecurrence
 import { parseVEvent } from '../utils/ical-parser.js';
 
 describe('imported event time zones', () => {
+  it('reads each EXDATE line in its own zone', () => {
+    const event = deserializeCalendarEvent([
+      'BEGIN:VEVENT', 'UID:exdate-zones', 'DTSTART;TZID=Europe/Berlin:20260315T100000', 'RRULE:FREQ=DAILY;COUNT=4',
+      'EXDATE;TZID=Europe/Berlin:20260316T100000', 'EXDATE;TZID=America/New_York:20260317T050000', 'END:VEVENT',
+    ].join('\r\n'));
+    expect(event.exceptions.map(d => d.toISOString())).toEqual(['2026-03-16T09:00:00.000Z', '2026-03-17T09:00:00.000Z']);
+    expect(expandEventRecurrence(event, { start: new Date('2026-03-15Z'), end: new Date('2026-03-19Z') }).map(d => d.toISOString())).toEqual([
+      '2026-03-15T09:00:00.000Z', '2026-03-18T09:00:00.000Z',
+    ]);
+  });
+
   it.each([
     ['"America/New_York"', '2026-11-17T15:00:00.000Z'],
     ['W. Europe Standard Time', '2026-11-17T09:00:00.000Z'],
