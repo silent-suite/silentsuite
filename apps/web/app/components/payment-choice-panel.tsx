@@ -890,7 +890,7 @@ export default function PaymentChoicePanel({
             onChange={setBitcoinCancelAcknowledged}
           />
         )}
-        <Button onClick={() => { void cancelCurrentFlow() }} disabled={cancellationDisabled || !currentFlow.cancellable} variant="outline" className="w-full">
+        <Button onClick={() => { void cancelCurrentFlow() }} disabled={cancellationDisabled || !currentFlow.cancellable} variant="outline" className="h-auto min-h-9 w-full whitespace-normal text-center">
           {loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         </Button>
         {!currentFlow.cancellable && (
