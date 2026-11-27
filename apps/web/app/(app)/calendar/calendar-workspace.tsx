@@ -17,6 +17,7 @@ import { CalendarGrid, type SlotClickEvent, type EventClickInfo } from './compon
 import { AgendaView } from './components/AgendaView'
 import { EventDialog } from './components/EventDialog'
 import { FloatingAddButton } from './components/FloatingAddButton'
+import { CalendarTimezoneNote } from './components/CalendarTimezoneNote'
 import { resolveUserTimezone } from '@/app/lib/tz'
 import { logCalendarPaintTiming } from '@/app/lib/sync-timing'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
@@ -244,6 +245,8 @@ function CalendarPageBody() {
     [currentDate, currentView, dateFormat, firstDayOfWeek, mobileCalendarMode],
   )
 
+  const currentDateForNote = currentDate instanceof Date ? currentDate : new Date(currentDate)
+
   // Active calendar-week indicator (#292). Shown in week view; respects the
   // first-day-of-week preference (ISO-8601 for Monday-start). Updates as the
   // user navigates because it derives from currentDate.
@@ -397,7 +400,7 @@ function CalendarPageBody() {
     <div className="flex h-full flex-col gap-3">
       {/* Desktop toolbar */}
       <div className="hidden md:flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <button
             onClick={navigateToday}
             className="no-min-size rounded-md border border-[rgb(var(--border))] px-3 py-1.5 text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
@@ -427,8 +430,9 @@ function CalendarPageBody() {
               Week {weekNumber}
             </span>
           )}
+          <CalendarTimezoneNote displayTz={userTz} refDate={currentDateForNote} />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <CalendarViewSwitcher />
           <button
             onClick={() => {
@@ -493,6 +497,7 @@ function CalendarPageBody() {
             </span>
           )}
         </div>
+        <CalendarTimezoneNote displayTz={userTz} refDate={currentDateForNote} className="px-1" />
         <div className="flex items-center gap-1 px-1" role="group" aria-label="Mobile calendar view">
           <button
             type="button"

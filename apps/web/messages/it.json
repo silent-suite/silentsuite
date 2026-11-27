@@ -62,6 +62,10 @@
     "tasksLoadFailedDescription": "Si è verificato un problema durante il caricamento. Le tue attività sono al sicuro.",
     "tasksLoadFailedRetry": "Riprova"
   },
+  "CalendarTimezone": {
+    "timesIn": "Orari in {zone}",
+    "timesInWithDevice": "Orari in {zone}, questo dispositivo: {device}"
+  },
   "Notes": {
     "title": "Note",
     "newNote": "Nuova nota",

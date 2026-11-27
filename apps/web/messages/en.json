@@ -62,6 +62,10 @@
     "tasksLoadFailedDescription": "Something went wrong while loading them. Your tasks are safe.",
     "tasksLoadFailedRetry": "Try again"
   },
+  "CalendarTimezone": {
+    "timesIn": "Times in {zone}",
+    "timesInWithDevice": "Times in {zone}, this device: {device}"
+  },
   "Notes": {
     "title": "Notes",
     "newNote": "New note",

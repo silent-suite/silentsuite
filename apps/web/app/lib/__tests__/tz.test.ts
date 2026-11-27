@@ -7,6 +7,8 @@ import {
   resolveUserTimezone,
   shortTimezoneLabel,
   timezoneOptions,
+  timezoneDisplayName,
+  zonesShowDifferentTimes,
 } from '../tz'
 
 describe('tz helpers', () => {
@@ -105,6 +107,32 @@ describe('tz helpers', () => {
       } finally {
         spy.mockRestore()
       }
+    })
+  })
+
+  describe('timezoneDisplayName', () => {
+    it('names the zone and its offset on the given date', () => {
+      expect(timezoneDisplayName('Europe/Berlin', new Date(Date.UTC(2026, 0, 15)))).toBe('Europe/Berlin (GMT+1)')
+      expect(timezoneDisplayName('Europe/Berlin', new Date(Date.UTC(2026, 6, 15)))).toBe('Europe/Berlin (GMT+2)')
+    })
+
+    it('reads underscores as spaces and does not repeat UTC', () => {
+      expect(timezoneDisplayName('America/New_York', new Date(Date.UTC(2026, 0, 15)))).toBe('America/New York (EST)')
+      expect(timezoneDisplayName('UTC')).toBe('UTC')
+    })
+  })
+
+  describe('zonesShowDifferentTimes', () => {
+    it('is false for the same zone or zones on the same clock', () => {
+      const winter = new Date(Date.UTC(2026, 0, 15, 12))
+      expect(zonesShowDifferentTimes('Europe/Berlin', 'Europe/Berlin', winter)).toBe(false)
+      expect(zonesShowDifferentTimes('Europe/Berlin', 'Europe/Paris', winter)).toBe(false)
+    })
+
+    it('is true when the clocks read differently', () => {
+      const winter = new Date(Date.UTC(2026, 0, 15, 12))
+      expect(zonesShowDifferentTimes('Europe/Berlin', 'UTC', winter)).toBe(true)
+      expect(zonesShowDifferentTimes('Europe/Berlin', 'America/New_York', winter)).toBe(true)
     })
   })
 })

@@ -10,6 +10,11 @@ export function resolveUserTimezone(preferred: string | undefined): string {
       // fall through
     }
   }
+  return deviceTimezone()
+}
+
+/** The IANA zone this browser/device runs in. */
+export function deviceTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
 }
 
@@ -108,4 +113,19 @@ export function shortTimezoneLabel(tz: string, refDate: Date = new Date()): stri
   } catch {
     return tz
   }
+}
+
+/** Readable zone name for labels, e.g. "Europe/Berlin (GMT+1)" or "UTC". */
+export function timezoneDisplayName(tz: string, refDate: Date = new Date()): string {
+  const name = tz.replace(/_/g, ' ')
+  const short = shortTimezoneLabel(tz, refDate)
+  return short === tz ? name : `${name} (${short})`
+}
+
+/** Whether clocks in `a` and `b` read differently at `refDate`. */
+export function zonesShowDifferentTimes(a: string, b: string, refDate: Date = new Date()): boolean {
+  if (a === b) return false
+  const pa = partsInZone(refDate, a)
+  const pb = partsInZone(refDate, b)
+  return pa.day !== pb.day || pa.hour !== pb.hour || pa.minute !== pb.minute
 }
