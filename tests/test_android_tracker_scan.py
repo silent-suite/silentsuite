@@ -606,9 +606,15 @@ PROHIBITED [domain] tracker-domain {repo}/android/security/fixtures/tracker-scan
 tracker scan failed: 1 prohibited finding(s)
 """, '', (1, 1, 0, 'fail')),
     "fixture-positive-identifier_api": (2, """\
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-ad-id-permission.txt: android.permission.ACCESS_ADSERVICES_AD_ID
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-adid.txt: android/adservices/adid
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-appsetid.txt: android/adservices/appsetid
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-measurement.txt: android/adservices/measurement
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-topics.txt: android/adservices/topics
 PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/input.txt: com/android/installreferrer
-tracker scan failed: 1 prohibited finding(s)
-""", '', (1, 1, 0, 'fail')),
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/play-services-ad-id-permission.txt: com.google.android.gms.permission.AD_ID
+tracker scan failed: 7 prohibited finding(s)
+""", '', (1, 7, 0, 'fail')),
     "fixture-positive-manifest_component": (2, """\
 PROHIBITED [package] tracker-package {repo}/android/security/fixtures/tracker-scan/positive/manifest_component/AndroidManifest.xml: io.sentry
 PROHIBITED [manifest_component] tracker-manifest-component {repo}/android/security/fixtures/tracker-scan/positive/manifest_component/AndroidManifest.xml: io.sentry.android.core.SentryInitProvider
