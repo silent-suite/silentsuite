@@ -32,7 +32,7 @@ import { PasswordKeyAcknowledgement, StepCreateVault } from './components/step-c
 import { StepCreatePaidAccount, type PaidAccountFormData } from './components/step-create-paid-account'
 import { QRCodeSVG } from 'qrcode.react'
 import { createEmailLinkContinuation } from '@/app/lib/signup-email-continuation'
-import { createSignupStepRecorder, signupStepFor, trackCheckoutInitiated, trackPlanSelected } from './commercial-funnel-analytics'
+import { createSignupStepRecorder, signupStepFor, trackCheckoutInitiated, trackInPageCheckoutReturned, trackPlanSelected } from './commercial-funnel-analytics'
 import {
   activateAnnualCheckout,
   consumeSignupEmailOwnership,
@@ -1492,6 +1492,8 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisioning, setProvisioning] = useState(false)
   const operationRef = useRef(false)
+  // One in-page checkout outcome per page load, even if account finalization is retried.
+  const inPageCheckoutReturnedRef = useRef(false)
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const [planView, setPlanView] = useState<PlanView>('cards')
   const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
@@ -2249,6 +2251,10 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const handlePaymentComplete = useCallback(async () => {
     if (operationRef.current) return
     operationRef.current = true
+    if (!inPageCheckoutReturnedRef.current) {
+      inPageCheckoutReturnedRef.current = true
+      trackInPageCheckoutReturned(cryptoPaymentSession ? 'btcpay' : 'stripe')
+    }
     setProvisioning(true)
     setProvisionError(null)
     try {
@@ -2262,7 +2268,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
       operationRef.current = false
       setProvisioning(false)
     }
-  }, [createAndFinalizePaidAccount])
+  }, [createAndFinalizePaidAccount, cryptoPaymentSession])
 
   const handlePaidAccountComplete = useCallback(async (data: PaidAccountFormData) => {
     await createAndFinalizePaidAccount(data.password)

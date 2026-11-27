@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_PAYMENT_RETURN_PATHS, SIGNUP_PAYMENT_RETURN_STEPS, type CommercialEventPayload, type SignupStep } from '@/app/lib/public-analytics'
+import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildInPageCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_PAYMENT_RETURN_PATHS, SIGNUP_PAYMENT_RETURN_STEPS, type CommercialEventPayload, type SignupStep } from '@/app/lib/public-analytics'
 import type { AnnualOffer } from '@/app/lib/billing-v2'
 
 // Same-origin relay (app/api/event/route.ts); the browser never contacts the analytics host.
@@ -28,6 +28,8 @@ export function CheckoutReturnAnalytics({ outcome, paymentMethod }: { outcome: '
 }
 export function trackPlanSelected(offer: AnnualOffer) { sendCommercialEvent(buildPlanSelectedPayload(offer)) }
 export function trackCheckoutInitiated(offer: AnnualOffer, paymentMethod: 'stripe' | 'btcpay') { sendCommercialEvent(buildCheckoutInitiatedPayload(offer, paymentMethod)) }
+/** A checkout that finished on /signup itself (card dialog, or Bitcoin settlement seen by polling). */
+export function trackInPageCheckoutReturned(paymentMethod: 'stripe' | 'btcpay') { sendCommercialEvent(buildInPageCheckoutReturnedPayload(paymentMethod)) }
 
 /**
  * Builds the step event for the page it is recorded on: any step on /signup,

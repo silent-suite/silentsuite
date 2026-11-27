@@ -7,7 +7,7 @@ import {
   signupStepFor,
   signupStepPayloadFor,
 } from '../commercial-funnel-analytics'
-import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_STEPS } from '@/app/lib/public-analytics'
+import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildInPageCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_STEPS } from '@/app/lib/public-analytics'
 
 const annualOffer = {
   planId: 'early_annual' as const,
@@ -43,6 +43,9 @@ describe('commercial funnel analytics transport boundary', () => {
     const returned = buildCheckoutReturnedPayload('returned', 'stripe')
     expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup/success'), returned, 'true')).toBe(true)
     expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup'), returned, 'true')).toBe(false)
+    const inPage = buildInPageCheckoutReturnedPayload('stripe')
+    expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup'), inPage, 'true')).toBe(true)
+    expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup/success'), inPage, 'true')).toBe(false)
   })
 
   it('sends a route-bound beacon payload', async () => {
