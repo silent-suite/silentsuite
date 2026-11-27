@@ -144,7 +144,7 @@ export function StepCreatePaidAccount({
               type={showPassword ? "text" : "password"}
               autoComplete="new-password"
               aria-invalid={!!errors.password}
-              aria-describedby={errors.password ? 'paid-signup-password-error' : undefined}
+              aria-describedby={errors.password ? 'paid-signup-password-hint paid-signup-password-error' : 'paid-signup-password-hint'}
               {...register('password')}
               className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))] pr-12"
             />
@@ -159,6 +159,9 @@ export function StepCreatePaidAccount({
               {showPassword ? <Eye aria-hidden="true" className="h-4 w-4" /> : <EyeOff aria-hidden="true" className="h-4 w-4" />}
             </button>
           </div>
+          <p id="paid-signup-password-hint" className="text-xs text-[rgb(var(--muted))]">
+            We can&apos;t reset this password. If you lose it, your data can&apos;t be recovered. Store it in a password manager.
+          </p>
           {errors.password && <p id="paid-signup-password-error" role="alert" className="text-xs text-red-400">{errors.password.message}</p>}
           <PasswordStrength password={password} />
         </div>
