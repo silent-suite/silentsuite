@@ -653,5 +653,5 @@ open class LoginActivity : BaseActivity() {
         return true
     }
 
-    fun showHelp(item: MenuItem) = WebViewActivity.openUrl(this, Constants.helpUri)
+    fun showHelp(item: MenuItem) = WebViewActivity.openUrl(this, Constants.androidSignInDocsUri)
 }

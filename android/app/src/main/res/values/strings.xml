@@ -53,6 +53,7 @@
     <string name="startup_vendor_specific_bugs_open_faq">Open FAQ</string>
 
     <!-- AboutActivity -->
+    <string name="about_user_guide">User guide</string>
     <string name="about_license_terms">License terms</string>
     <string name="about_license_info_no_warranty">This program comes with ABSOLUTELY NO WARRANTY. It is free software, and you are welcome to redistribute it under certain conditions.</string>
 

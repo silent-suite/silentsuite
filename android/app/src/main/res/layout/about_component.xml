@@ -23,6 +23,32 @@
         android:paddingEnd="@dimen/spacing_16"
         android:paddingBottom="@dimen/spacing_24">
 
+        <LinearLayout
+            android:id="@+id/help_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="@dimen/spacing_24"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/help_user_guide"
+                style="@style/Widget.AppTheme.Material3.Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="@dimen/touch_target_min"
+                android:text="@string/about_user_guide" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/help_report_problem"
+                style="@style/Widget.AppTheme.Material3.Button.Outlined"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_8"
+                android:minHeight="@dimen/touch_target_min"
+                android:text="@string/report_problem_title" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/title"
             android:layout_width="match_parent"
