@@ -165,6 +165,13 @@ def test_background_keeps_an_explicit_log_file_and_passes_no_tray(bg, monkeypatc
     assert kwargs["env"]["SILENTSUITE_LOG_FILE"] == "D:\\logs\\bridge.log"
 
 
+def test_background_passes_the_server_url_to_the_copy():
+    argv = ["silentsuite-bridge", "--server", "https://dav.example", "--background"]
+
+    assert wb.child_argv(BINARY, argv=argv) == BINARY + [wb.CHILD_FLAG, "--server", "https://dav.example"]
+    assert wb.child_argv(BINARY, argv=["silentsuite-bridge", "--background"]) == BINARY + [wb.CHILD_FLAG]
+
+
 def test_background_retries_without_breakaway_when_the_job_refuses_it(bg):
     popen = FakePopen(refuse_breakaway=True)
 

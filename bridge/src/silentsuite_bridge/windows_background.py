@@ -41,6 +41,10 @@ def child_argv(binary_args, argv=None) -> list[str]:
     args = list(binary_args) + [CHILD_FLAG]
     if "--no-tray" in argv:
         args.append("--no-tray")
+    if "--server" in argv:
+        idx = argv.index("--server")
+        if idx + 1 < len(argv):
+            args += ["--server", argv[idx + 1]]
     return args
 
 
