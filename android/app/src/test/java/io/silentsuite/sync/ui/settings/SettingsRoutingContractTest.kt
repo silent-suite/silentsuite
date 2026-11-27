@@ -58,6 +58,21 @@ class SettingsRoutingContractTest {
     }
 
     @Test
+    fun accountDashboardRowReturnsToTheDashboardThatOpenedSettings() {
+        val drawer = File(sourceRoot, "ui/AccountActivity.kt").readText()
+        listOf("AppSettingsActivity.newIntent(this, account, accountCreationId).fromDashboard()",
+            "AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.ACCOUNT).fromDashboard()",
+            "AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.SYNC).fromDashboard()")
+            .forEach { assertTrue("the dashboard marks its Settings route: $it", drawer.contains(it)) }
+        assertTrue(drawer.contains("putExtra(AppSettingsActivity.EXTRA_FROM_DASHBOARD, true)"))
+        val row = File(sourceRoot, "ui/AppSettingsActivity.kt").readText()
+            .substringAfter("\"manage_account\"").substringBefore("requirePreference")
+        assertTrue("opened from the dashboard, the row finishes Settings", row.contains("if (host.openedFromDashboard) host.finish()"))
+        assertTrue("other routes still open the exact account's dashboard",
+            row.contains("else startActivity(AccountActivity.newIntent(requireContext(), exact, host.selectedCreationId!!))"))
+    }
+
+    @Test
     fun billingEntryPointsOpenTheWebSubscriptionPage() {
         val openBilling = "Intent(Intent.ACTION_VIEW, Uri.parse(BillingManager.BILLING_MANAGE_URL))"
         val accountXml = File(resourceRoot, "settings_account.xml").readText()

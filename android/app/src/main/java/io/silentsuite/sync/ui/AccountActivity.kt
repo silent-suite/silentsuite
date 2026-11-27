@@ -595,7 +595,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         when (item.itemId) {
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
             R.id.nav_app_settings -> launchExactAccountRoute(
-                AppSettingsActivity.newIntent(this, account, accountCreationId))
+                AppSettingsActivity.newIntent(this, account, accountCreationId).fromDashboard())
             R.id.nav_invitations -> launchExactAccountRoute(
                 InvitationsActivity.newIntent(this, account, accountCreationId))
             R.id.nav_notes -> launchExactAccountRoute(
@@ -1399,9 +1399,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     findViewById<ScrollView>(R.id.parent).smoothScrollTo(0, findViewById<View>(target).top)
                 }
                 AccountDashboardAction.OPEN_ACCOUNT_SETTINGS -> launchExactAccountRoute(
-                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.ACCOUNT))
+                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.ACCOUNT).fromDashboard())
                 AccountDashboardAction.OPEN_SYNC_SETTINGS -> launchExactAccountRoute(
-                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.SYNC))
+                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.SYNC).fromDashboard())
             }
         }
     }
@@ -1955,6 +1955,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         if (!exactAccountStillCurrent()) return
         collectionIntentLauncherOverride?.invoke(intent) ?: startActivity(intent)
     }
+
+    private fun Intent.fromDashboard(): Intent = putExtra(AppSettingsActivity.EXTRA_FROM_DASHBOARD, true)
 
     private fun launchExactAccountRoute(intent: Intent) {
         if (!exactAccountStillCurrent()) return
