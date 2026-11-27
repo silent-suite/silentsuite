@@ -18,6 +18,14 @@ describe('Schedule-X week layout CSS', () => {
   })
 })
 
+describe('Schedule-X mobile multi-day CSS', () => {
+  it('fits the 7-day view to the screen instead of a wider sideways-scrolling grid', () => {
+    const rule = globalsCss.match(/\.sx-silentsuite-calendar\[data-mobile-days="7"\]\s*\{([^}]*)\}/)
+    expect(rule).not.toBeNull()
+    expect(rule![1]).toMatch(/min-width:\s*0;/)
+  })
+})
+
 describe('Schedule-X month layout CSS', () => {
   it('allows connected multi-day bars to keep the width calculated by Schedule-X', () => {
     expect(globalsCss).toMatch(

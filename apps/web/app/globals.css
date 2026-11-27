@@ -631,10 +631,9 @@
   }
 
   .sx-silentsuite-calendar[data-mobile-days="7"] {
-    /* Seven columns are not readable when squeezed into a phone viewport.
-       Match common mobile calendar patterns: keep a vertical schedule grid,
-       but make the week swipe horizontally with usable day columns. */
-    min-width: 780px;
+    /* Fit all seven days on screen as narrow columns. A wider grid scrolled
+       sideways, hid most of the week and took the hour column with it. */
+    min-width: 0;
   }
 
   .sx-silentsuite-calendar[data-mobile-days] .sx__time-axis {
