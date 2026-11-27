@@ -56,11 +56,12 @@ metadata, the server-data volume holds `secret.txt` and the encrypted item chunk
 dump on its own loses every item.
 
 Run each block below as root on the Dokploy host, as one script (for example save it and run
-`sh backup.sh`). Set the first lines: `app` is the service's App Name in Dokploy, `backup` a
-directory that does not exist yet. The scripts stop at the first error, find the volumes through
-the stack's own containers instead of typed volume names, and refuse to overwrite a service that
-already has accounts. CI runs these blocks exactly as written, with only those first lines
-changed.
+`sh backup.sh`). Set the first lines: `app` is the service's App Name in Dokploy. In a backup
+block, `backup` is a new directory that must not exist yet; in a restore block, it is the
+directory an earlier backup created. The scripts stop at the first error, find the volumes
+through the stack's own containers instead of typed volume names, check that the backup files
+are readable and refuse to overwrite a service that already has accounts before they remove
+anything. CI runs these blocks exactly as written, with only those first lines changed.
 
 ### Logical backup
 
@@ -92,6 +93,9 @@ backup=/root/silentsuite-backup
 code=/etc/dokploy/compose/$app/code
 set -eu
 cd "$code"
+for file in db.dump server-data.tar; do
+  [ -r "$backup/$file" ] || { echo "refusing: $backup/$file is missing" >&2; exit 1; }
+done
 users="$(docker compose exec -T silentsuite-postgres psql -U silentsuite -d silentsuite -tAc 'select count(*) from myauth_user')"
 [ "$users" = 0 ] || { echo "refusing: $app already has accounts" >&2; exit 1; }
 docker compose down --volumes
@@ -140,6 +144,9 @@ backup=/root/silentsuite-volumes
 code=/etc/dokploy/compose/$app/code
 set -eu
 cd "$code"
+for file in postgres-data.tar server-data.tar server-config.tar; do
+  [ -r "$backup/$file" ] || { echo "refusing: $backup/$file is missing" >&2; exit 1; }
+done
 users="$(docker compose exec -T silentsuite-postgres psql -U silentsuite -d silentsuite -tAc 'select count(*) from myauth_user')"
 [ "$users" = 0 ] || { echo "refusing: $app already has accounts" >&2; exit 1; }
 docker compose down --volumes

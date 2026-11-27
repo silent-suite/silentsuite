@@ -265,8 +265,9 @@ class Rendering(unittest.TestCase):
                 self.assertIn('mkdir -m 700 "$backup"', body)
                 self.assertIn("umask 077", body)
             else:
-                guard = body.index("refusing")
-                self.assertLess(guard, body.index("down --volumes"), name)
+                destructive = body.index("down --volumes")
+                self.assertLess(body.index('[ -r "$backup/$file" ]'), destructive, name)
+                self.assertLess(body.index("already has accounts"), destructive, name)
 
     def test_import_payload_is_the_template_site_format(self):
         result = run_render("import")

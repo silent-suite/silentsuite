@@ -233,6 +233,11 @@ if recipe logical-restore main "$work/backup-logical" > "$work/refusal.log" 2>&1
   echo "FAIL restore recipe ran against a service with accounts" >&2; exit 1
 fi
 grep -q "refusing: main already has accounts" "$work/refusal.log"
+if recipe logical-restore main "$work/no-such-backup" > "$work/refusal-missing.log" 2>&1; then
+  echo "FAIL restore recipe ran without its backup files" >&2; exit 1
+fi
+grep -q "refusing: $work/no-such-backup/db.dump is missing" "$work/refusal-missing.log"
+echo "PASS restore recipes refuse a live target and a missing backup before removing anything"
 chunk_check main "a refused restore into the live service"
 render restore-logical
 publish restore-logical 18082
