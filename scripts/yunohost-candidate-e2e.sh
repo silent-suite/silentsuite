@@ -7,6 +7,8 @@
 # Order: private install + boundary probes, purge; public install + boundary, data
 # witness, token and WebSocket checks; upgrade; failed upgrade with rollback;
 # backup, purge, restore; log-marker scan; remove.
+# Single-quoted strings below are run inside the container, on purpose.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -37,6 +39,7 @@ ct yunohost user create "$ADMIN_USER" --fullname "CI Admin" --domain "$DOMAIN" -
 ct yunohost user group add admins "$ADMIN_USER" >/dev/null
 ct yunohost user create "$USER_NAME" --fullname "CI User" --domain "$DOMAIN" --password "$USER_PASS" >/dev/null
 sudo incus file pull ynh/etc/yunohost/certs/yunohost.org/ca.pem "$CA_FILE"
+sudo chown "$(id -u):$(id -g)" "$CA_FILE"
 ip=$(sudo incus list ynh --format csv -c 4 | cut -d' ' -f1)
 echo "$ip $DOMAIN" | sudo tee -a /etc/hosts >/dev/null
 for f in yunohost-candidate-ws-responder.py yunohost-candidate-rollback-evidence.py; do
