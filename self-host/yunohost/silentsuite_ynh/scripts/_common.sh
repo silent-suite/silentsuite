@@ -97,7 +97,8 @@ _silentsuite_set_permissions() {
     chmod 755 "$install_dir"
     for tree in server web; do
         chown -R -h root:root "$install_dir/$tree"
-        find "$install_dir/$tree" -type d -exec chmod 755 {} +
+        # Symbolic mode: a numeric mode keeps setuid/setgid bits on directories.
+        find "$install_dir/$tree" -type d -exec chmod u=rwx,go=rx,ug-s {} +
         find "$install_dir/$tree" -type f -perm /u+x -exec chmod 755 {} +
         find "$install_dir/$tree" -type f ! -perm /u+x -exec chmod 644 {} +
     done

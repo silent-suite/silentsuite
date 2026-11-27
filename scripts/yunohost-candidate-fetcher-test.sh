@@ -132,7 +132,7 @@ expect_fetch_failure() {
 
 #=== Case a: containment across layers ======================================
 s1="$work/s1"; s2="$work/s2"
-mkdir -p "$s1/usr/local/bin" "$s1/opq" "$s1/hard" "$s1/tmp/ynh-outside-$rand" "$s2/opq" "$s2/escape" "$s2/up"
+mkdir -p "$s1/usr/local/bin" "$s1/opq" "$s1/hard" "$s1/sgid" "$s1/tmp/ynh-outside-$rand" "$s2/opq" "$s2/escape" "$s2/up"
 printf '#!/bin/sh\necho fixture\n' >"$s1/usr/local/bin/python"
 cp "$s1/usr/local/bin/python" "$s1/usr/local/bin/node"
 chmod 755 "$s1/usr/local/bin/python" "$s1/usr/local/bin/node"
@@ -141,7 +141,8 @@ ln "$s1/hard/a" "$s1/hard/b"
 printf '#!/bin/sh\n' >"$s1/suid"; chmod 4755 "$s1/suid"
 ln -s "/tmp/ynh-outside-$rand" "$s1/escape"   # absolute: host /tmp if followed naively
 ln -s .. "$s1/up"                             # relative: the fetch state dir if followed naively
-tar --numeric-owner --owner=0 --group=0 -cf "$work/a1.tar" -C "$s1" usr gone.txt opq hard suid tmp escape up
+chmod 2775 "$s1/sgid"  # a setgid directory, as Debian images ship (/var/mail)
+tar --numeric-owner --owner=0 --group=0 -cf "$work/a1.tar" -C "$s1" usr gone.txt opq hard sgid suid tmp escape up
 : >"$s2/.wh.gone.txt"; : >"$s2/opq/.wh..wh..opq"; echo new >"$s2/opq/new.txt"
 echo pwned >"$s2/escape/pwned"; echo pwned >"$s2/up/pwned-up-$rand"
 # File members only (no directory entries), so escape/ and up/ resolve through the layer-1 links.
