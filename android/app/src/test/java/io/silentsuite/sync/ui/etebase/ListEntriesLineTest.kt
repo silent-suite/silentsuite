@@ -10,6 +10,12 @@ class ListEntriesLineTest {
         assertEquals("Standup", ListEntriesFragment.getLine("BEGIN:VEVENT\nSUMMARY:Standup\nEND:VEVENT", "SUMMARY:"))
     }
 
+    @Test fun `a CRLF line break is not part of the field`() {
+        assertEquals("Jane Doe", ListEntriesFragment.getLine("BEGIN:VCARD\r\nFN:Jane Doe\r\nEND:VCARD\r\n", "FN:"))
+        assertEquals("Standup", ListEntriesFragment.getLine("BEGIN:VEVENT\r\nSUMMARY:Standup\r\nEND:VEVENT\r\n", "SUMMARY:"))
+        assertEquals("Standup", ListEntriesFragment.getLine("BEGIN:VEVENT\r\nSUMMARY:Standup\r\n", "SUMMARY:"))
+    }
+
     @Test fun `the last line needs no line break after it`() {
         // A single-line note body, or a field on the final line, used to throw StringIndexOutOfBounds.
         assertEquals("good body v2", ListEntriesFragment.getLine("good body v2", ""))
