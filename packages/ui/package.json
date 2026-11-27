@@ -5,7 +5,6 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "build": "tsc",
     "lint": "echo \"no lint yet\"",
     "test": "echo \"no tests yet\"",
     "type-check": "tsc --noEmit"

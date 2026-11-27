@@ -13,7 +13,6 @@
     "./utils/csv-parser": "./src/utils/csv-parser.ts"
   },
   "scripts": {
-    "build": "tsc",
     "lint": "echo \"no lint yet\"",
     "test": "vitest run",
     "type-check": "tsc --noEmit"
