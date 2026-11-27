@@ -172,6 +172,7 @@ check "a: directory modes 0755 only" none find "$S" "$W" -type d ! -perm 0755
 check "a: trees owned root:root" none find "$S" "$W" \( ! -uid 0 -o ! -gid 0 \)
 check "a: no leftover fetch dir" test ! -e "$fetch_dir"
 check "a: no leftover fetch state link" eval '[ ! -e /var/lib/silentsuite-fetch ] && [ ! -L /var/lib/silentsuite-fetch ]'
+check "a: fetch user removed" eval '! id -u silentsuite-fetch >/dev/null 2>&1'
 
 # Shared good server image for the failure cases.
 simple_layer "$work/good-server.tar" python good-server

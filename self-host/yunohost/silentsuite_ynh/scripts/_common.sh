@@ -13,7 +13,10 @@ web_repo="ghcr.io/silent-suite/silentsuite-web-selfhost"
 web_digest_amd64="sha256:3793c9e037c26d7b7e396cafd903362047aa8b7e2c6c6479eaa3d78d93bd0ef1"
 web_digest_arm64="sha256:f67dab2687f3fb3632606ce695cdeb770e61870ee45cb4039042b2f600b3c7d7"
 
-fetch_dir="/var/lib/private/silentsuite-fetch"
+# Transient identity and directory for the download, removed after each fetch.
+fetch_user="silentsuite-fetch"
+fetch_root="/var/lib/silentsuite-fetch"
+fetch_dir="$fetch_root/work"
 
 #=================================================
 # FETCH AND INSTALL THE IMAGE TREES
@@ -27,30 +30,43 @@ _silentsuite_image_ref() {
     echo "${!repo}@${!digest}"
 }
 
-# Download both images by digest and unpack them, as a throwaway DynamicUser in a
-# directory only root and that user can reach. skopeo checks every digest, umoci
-# applies the layers inside the tree. Nothing outside $fetch_dir is touched here.
+_silentsuite_cleanup_fetch() {
+    rm -rf "$fetch_root"
+    if id -u "$fetch_user" >/dev/null 2>&1; then
+        userdel "$fetch_user"
+    fi
+}
+
+# Download both images by digest and unpack them as a system user created for this
+# fetch only, in a directory only root and that user can reach. skopeo checks every
+# digest, umoci applies the layers inside the tree. (Not DynamicUser: it forbids the
+# setgid bits umoci restores from the image; they are cleared after promotion.)
 _silentsuite_fetch_images() {
-    rm -rf "$fetch_dir" "/var/lib/silentsuite-fetch"
-    systemd-run --wait --pipe --quiet --collect --unit="$app-fetch" \
-        -p DynamicUser=yes -p StateDirectory=silentsuite-fetch \
+    _silentsuite_cleanup_fetch
+    useradd --system --user-group --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin "$fetch_user"
+    install -d -m 0710 -o root -g "$fetch_user" "$fetch_root"
+    install -d -m 0700 -o "$fetch_user" -g "$fetch_user" "$fetch_dir"
+
+    if ! systemd-run --wait --pipe --quiet --collect --unit="silentsuite-fetch" \
+        -p User="$fetch_user" -p Group="$fetch_user" \
         -p PrivateTmp=yes -p ProtectSystem=strict -p ProtectHome=yes -p NoNewPrivileges=yes \
-        -p Environment=HOME=/var/lib/silentsuite-fetch \
+        -p ReadWritePaths="$fetch_dir" -p Environment=HOME="$fetch_dir" \
         /bin/sh -euc '
-            cd /var/lib/silentsuite-fetch
+            cd "$HOME"
             for pair in "$@"; do
                 name=${pair%%=*}
                 skopeo copy --quiet --retry-times 3 --preserve-digests "docker://${pair#*=}" "oci:oci-$name:img"
                 umoci raw unpack --rootless --image "oci-$name:img" "$name"
                 rm -rf "oci-$name"
             done
-        ' sh "server=$(_silentsuite_image_ref server)" "web=$(_silentsuite_image_ref web)" \
-        || ynh_die "Could not fetch and verify the SilentSuite images"
+        ' sh "server=$(_silentsuite_image_ref server)" "web=$(_silentsuite_image_ref web)"; then
+        _silentsuite_cleanup_fetch
+        ynh_die "Could not fetch and verify the SilentSuite images"
+    fi
 
     # The unit is gone once systemd-run returns; make sure nothing of it still runs.
-    local uid
-    uid=$(stat -c %u "$fetch_dir")
-    if pgrep -u "$uid" >/dev/null; then
+    if pgrep -u "$fetch_user" >/dev/null; then
         ynh_die "A process of the fetch unit is still running"
     fi
     [ -x "$fetch_dir/server/usr/local/bin/python" ] || ynh_die "The server image tree is incomplete"
@@ -70,7 +86,7 @@ _silentsuite_promote_images() {
     done
     # Mount points for the units (see conf/*.service).
     mkdir -p "$install_dir/server/etc/etebase-server" "$install_dir/web/app/apps/web/.next/cache"
-    rm -rf "$fetch_dir" "/var/lib/silentsuite-fetch"
+    _silentsuite_cleanup_fetch
     ynh_print_info "silentsuite: image trees swapped"
 }
 

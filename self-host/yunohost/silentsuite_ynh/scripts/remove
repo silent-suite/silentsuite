@@ -21,7 +21,7 @@ done
 
 ynh_config_remove_nginx
 
-rm -rf "$fetch_dir" "/var/lib/silentsuite-fetch"
+_silentsuite_cleanup_fetch
 
 #=================================================
 # END OF SCRIPT
