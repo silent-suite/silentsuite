@@ -660,6 +660,48 @@ describe('PaymentChoicePanel rate-limited cancellation', () => {
   })
 })
 
+// Review fix 2 SIGNUP-02: closing the dialog must not drop a cancellation in flight or its wait.
+describe('PaymentChoicePanel cancellation across close and reopen', () => {
+  const COOLDOWN_2 = 'Too many attempts. Wait 2 minutes, then retry cancellation. This payment is still active; do not start another payment.'
+  afterEach(() => { vi.useRealTimers() })
+
+  it('reports busy while a cancellation is in flight and keeps the Retry-After wait for the same payment after a reopen', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let releaseCancel: () => void = () => {}
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const { path, preview } = route(input)
+      if (path === '/subscription/payment-flows/current') return response({ flow: { ...activeFlow, authorityId: serverFlowId } })
+      if (path === '/subscription/offers/v2') return response(preview ? previewOffer : annualOffer)
+      if (path === '/subscription/payment-flows/cancel') {
+        await new Promise<void>((resolve) => { releaseCancel = resolve })
+        return new Response(JSON.stringify({ type: 'https://api.silentsuite.io/errors/rate-limit-exceeded', title: 'Too Many Requests', status: 429 }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '120' } })
+      }
+      return response({}, false)
+    })
+    const onBusyChange = vi.fn()
+    const first = render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} onBusyChange={onBusyChange} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment' }))
+    await waitFor(() => expect(onBusyChange).toHaveBeenLastCalledWith(true))
+
+    releaseCancel()
+    expect(await screen.findByText(COOLDOWN_2)).toBeInTheDocument()
+    await waitFor(() => expect(onBusyChange).toHaveBeenLastCalledWith(false))
+    first.unmount()
+
+    // Reopening the same payment keeps the wait: no early second cancellation.
+    render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    expect(await screen.findByText(COOLDOWN_2)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel card payment' })).toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel card payment' }))
+    expect(called('/subscription/payment-flows/cancel')).toHaveLength(1)
+
+    // The wait still ends when the server said it would.
+    await act(async () => { await vi.advanceTimersByTimeAsync(121_000) })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel card payment' })).toBeEnabled())
+    expect(screen.queryByText(COOLDOWN_2)).not.toBeInTheDocument()
+  })
+})
+
 // C1 review CR-4: a zero wait (Retry-After: 0 or a past HTTP date) is
 // immediately retryable; it must not show or keep a "Wait n minutes" message.
 describe('PaymentChoicePanel zero-delay rate-limited cancellation', () => {

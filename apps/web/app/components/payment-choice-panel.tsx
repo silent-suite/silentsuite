@@ -228,6 +228,12 @@ function BitcoinCancellationAcknowledgement({
   )
 }
 
+// A cancellation's Retry-After wait outlives the panel, so closing and reopening the dialog can't
+// re-enable an early retry for the same payment. Keyed by account and the authority Billing named;
+// an unnamed authority keeps its wait in panel state only, as before.
+const cancelWaits = new Map<string, { until: number; message: string }>()
+const cancelWaitKey = (accountId: string | null, authorityId: string) => `${accountId ?? ''}:${authorityId}`
+
 function safeBtcpayUrl(rawUrl: string): string {
   const checkoutUrl = resolveBtcpayUrl(rawUrl)
   if (!checkoutUrl) throw new Error('Cryptocurrency checkout returned an unexpected payment URL.')
@@ -279,6 +285,7 @@ export default function PaymentChoicePanel({
     if (!cancelBlockedUntil) return
     // Expiry only re-enables the control and retires its wait copy; it never sends a request.
     const timer = window.setTimeout(() => {
+      if (cancelBlockedUntil.authorityId) cancelWaits.delete(cancelWaitKey(owner.current.accountId, cancelBlockedUntil.authorityId))
       setCancelBlockedUntil(null)
       setError(current => current === cancelBlockedUntil.message ? null : current)
     }, Math.max(0, cancelBlockedUntil.until - Date.now()))
@@ -452,6 +459,16 @@ export default function PaymentChoicePanel({
   const cancellationBlocked = bitcoinAcknowledgementRequired && !bitcoinCancelAcknowledged
   // A 429 refusal holds the displayed authority's cancel controls until the
   // server's wait elapses; a different authority is never blocked by it.
+  // A wait recorded before the dialog was closed applies again once the same authority is shown.
+  useEffect(() => {
+    if (!displayedAuthorityId) return
+    const key = cancelWaitKey(owner.current.accountId, displayedAuthorityId)
+    const wait = cancelWaits.get(key)
+    if (!wait) return
+    if (wait.until <= Date.now()) { cancelWaits.delete(key); return }
+    setCancelBlockedUntil({ authorityId: displayedAuthorityId, ...wait })
+    setError(wait.message)
+  }, [displayedAuthorityId])
   const cancelRateLimited = cancelBlockedUntil !== null && cancelBlockedUntil.authorityId === displayedAuthorityId
   const cancellationDisabled = loading !== null || cancellationBlocked || cancelRateLimited
   // Identity of the provider authority currently on screen. A different
@@ -557,9 +574,9 @@ export default function PaymentChoicePanel({
     onDismissibilityChange?.(implicitDismissible)
   }, [implicitDismissible, onDismissibilityChange])
 
-  // Unmounting now would drop the start reply or the success handling, so the
-  // confirmation poll would never run for a payment that went through.
-  const busy = loading === 'stripe' || loading === 'btcpay' || cardProcessing || bitcoinCompleting
+  // Unmounting now would drop the start or cancellation reply or the success
+  // handling, so the confirmation poll would never run for a payment that went through.
+  const busy = loading === 'stripe' || loading === 'btcpay' || loading === 'cancel-flow' || cardProcessing || bitcoinCompleting
   useLayoutEffect(() => {
     onBusyChange?.(busy)
   }, [busy, onBusyChange])
@@ -595,13 +612,16 @@ export default function PaymentChoicePanel({
             return false
           }
           const message = rateLimitedCancellationCopy(Math.max(1, Math.ceil(result.retryAfterMs / 60_000)))
-          setCancelBlockedUntil({ authorityId: displayedAuthorityId, until: Date.now() + result.retryAfterMs, message })
+          const until = Date.now() + result.retryAfterMs
+          if (displayedAuthorityId) cancelWaits.set(cancelWaitKey(owner.current.accountId, displayedAuthorityId), { until, message })
+          setCancelBlockedUntil({ authorityId: displayedAuthorityId, until, message })
           setError(message)
           return false
         }
         setError(result.message)
         return false
       }
+      if (displayedAuthorityId) cancelWaits.delete(cancelWaitKey(owner.current.accountId, displayedAuthorityId))
       setCancelBlockedUntil(null)
       setCurrentFlow(null)
       setClientSecret(null)
