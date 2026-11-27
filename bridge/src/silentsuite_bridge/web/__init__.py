@@ -37,6 +37,10 @@ REAUTH_REQUIRED_TEXT = (
     "its changes are synced."
 )
 
+# Shown next to Sync Now when a sync cannot start.
+SYNC_NO_ACCOUNT_TEXT = "Sign in to an account first."
+SYNC_NOT_RUNNING_TEXT = "Sync isn't running yet. Try again in a moment, or restart the bridge."
+
 # Global sync log (thread-safe deque)
 _sync_log = deque(maxlen=50)
 _bridge_status = {
@@ -896,6 +900,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             font-size: 11px;
         }
         .copy-btn:hover { background: #444; }
+        #syncNowBtn:disabled { opacity: 0.5; cursor: default; }
         .account-card {
             background: #111;
             border: 1px solid #2a2a2a;
@@ -1142,7 +1147,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
 
         <div class="status-card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-            <button id="syncNowBtn" class="copy-btn" style="padding:8px 18px;font-size:13px;background:#1a7f37;color:#fff;" onclick="triggerSync()">Sync Now</button>
+            <button id="syncNowBtn" class="copy-btn" style="padding:8px 18px;font-size:13px;background:#1a7f37;color:#fff;" onclick="triggerSync()"{{SYNC_NOW_DISABLED}}>Sync Now</button>
+            <span id="syncNowStatus" role="status" style="font-size:12px;color:#888;">{{SYNC_NOW_HINT}}</span>
             <label style="font-size:13px;color:#888;">Sync every</label>
             <select id="syncInterval" onchange="updateInterval()" style="background:#111;color:#ccc;border:1px solid #333;border-radius:6px;padding:6px 10px;font-size:13px;">
                 <option value="60">1 min</option>
@@ -1339,28 +1345,35 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                             setTimeout(function() { pollSyncRequest(requestId, btn); }, 750);
                         }
                     })
-                    .catch(function() {
-                        btn.textContent = 'Error';
-                        btn.disabled = false;
-                    });
+                    .catch(function() { syncNowFailed(btn); });
+            }
+            // Puts the button back and says why, using the bridge's own reason when it gave one.
+            function syncNowFailed(btn, reason) {
+                btn.textContent = 'Sync Now';
+                btn.disabled = false;
+                var st = document.getElementById('syncNowStatus');
+                if (st) {
+                    st.textContent = reason || "Couldn't reach the bridge. Check that it is still running.";
+                    st.style.color = '#f87171';
+                }
             }
             function triggerSync() {
                 var btn = document.getElementById('syncNowBtn');
+                var st = document.getElementById('syncNowStatus');
+                if (st) st.textContent = '';
                 btn.textContent = 'Requesting...';
                 btn.disabled = true;
                 fetch('/.web/api/sync', {method:'POST', headers:{'X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}})
                     .then(function(r) {
-                        if (!r.ok) throw new Error('Sync request failed');
-                        return r.json();
+                        return r.json().catch(function() { return {}; }).then(function(data) {
+                            if (!r.ok || !data.request_id) {
+                                syncNowFailed(btn, data.error);
+                                return;
+                            }
+                            pollSyncRequest(data.request_id, btn);
+                        });
                     })
-                    .then(function(data) {
-                        if (!data.request_id) throw new Error('Missing sync request ID');
-                        pollSyncRequest(data.request_id, btn);
-                    })
-                    .catch(function() {
-                        btn.textContent = 'Error';
-                        btn.disabled = false;
-                    });
+                    .catch(function() { syncNowFailed(btn); });
             }
             // Interval saves are serialized: one request in flight at a time, the
             // selector disabled meanwhile, and the latest choice made while a save
@@ -1890,6 +1903,8 @@ def _render_dashboard():
     page = page.replace("{{LOGIN_TITLE}}", esc(login_title))
     page = page.replace("{{LOGIN_COPY}}", esc(login_copy))
     page = page.replace("{{SERVER_URL}}", esc(config.ETEBASE_SERVER_URL))
+    page = page.replace("{{SYNC_NOW_DISABLED}}", "" if users else " disabled")
+    page = page.replace("{{SYNC_NOW_HINT}}", "" if users else esc(SYNC_NO_ACCOUNT_TEXT))
 
     # Sync interval display
     interval = config.SYNC_INTERVAL
@@ -2490,9 +2505,11 @@ class Web(BaseWeb):
                 return _csrf_error()
             request = _create_sync_request()
             if request is None:
+                from ..accounts import list_accounts
+
                 return _json_response(503, {
                     "ok": False,
-                    "error": "No sync workers available",
+                    "error": SYNC_NOT_RUNNING_TEXT if list_accounts() else SYNC_NO_ACCOUNT_TEXT,
                 })
             log_sync_event("info", "Manual sync triggered from dashboard")
             return _json_response(202, {"ok": True, **request})

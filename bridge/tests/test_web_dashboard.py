@@ -569,6 +569,7 @@ def test_dashboard_sync_post_returns_request_id_without_waiting(monkeypatch):
 
 def test_dashboard_sync_post_fails_when_no_live_worker(monkeypatch):
     web_module._sync_requests.clear()
+    monkeypatch.setattr(accounts, "list_accounts", lambda: ["account@example.com"])
     thread = MagicMock()
     thread.is_alive.return_value = False
     monkeypatch.setattr(storage, "_sync_threads", {"account@example.com": thread})
@@ -585,8 +586,38 @@ def test_dashboard_sync_post_fails_when_no_live_worker(monkeypatch):
     assert headers["Content-Type"] == "application/json"
     assert json.loads(body) == {
         "ok": False,
-        "error": "No sync workers available",
+        "error": "Sync isn't running yet. Try again in a moment, or restart the bridge.",
     }
+
+
+def test_dashboard_sync_post_without_account_says_to_sign_in(monkeypatch):
+    web_module._sync_requests.clear()
+    monkeypatch.setattr(accounts, "list_accounts", lambda: [])
+    monkeypatch.setattr(storage, "_sync_threads", {})
+
+    status, _, body = Web.__new__(Web).post(
+        _post_environ(csrf_token=_dashboard_csrf_token), "", "/.web/api/sync", None,
+    )
+
+    assert status == 503
+    assert json.loads(body) == {"ok": False, "error": "Sign in to an account first."}
+
+
+def test_dashboard_disables_sync_now_until_an_account_is_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, _username: None)
+
+    html = _render_dashboard()
+    assert 'onclick="triggerSync()" disabled>Sync Now</button>' in html
+    assert 'color:#888;">Sign in to an account first.</span>' in html
+
+    creds = Credentials()
+    creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
+    creds.save()
+
+    html = _render_dashboard()
+    assert 'onclick="triggerSync()">Sync Now</button>' in html
+    assert 'Sign in to an account first.' not in html
 
 
 def test_dashboard_sync_request_reports_generation_completion(monkeypatch):
@@ -1293,6 +1324,47 @@ const cases = [
         assert.equal(btn.textContent, label);
         assert.equal(btn.disabled, false);
         assert.equal(reloaded, reloads, JSON.stringify(data));
+    }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run([NODE, "-e", functions + harness], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required to execute dashboard JavaScript")
+def test_sync_now_shows_the_bridge_reason_when_sync_cannot_start(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    html = _render_dashboard()
+    functions = "\n".join(_extract_js_function(html, name) for name in (
+        "syncNowFailed", "triggerSync",
+    ))
+    harness = r"""
+const assert = require('node:assert/strict');
+const reason = "Sync isn't running yet. Try again in a moment, or restart the bridge.";
+const offline = "Couldn't reach the bridge. Check that it is still running.";
+const cases = [
+    [async () => ({ok: false, status: 503, json: async () => ({ok: false, error: reason})}), reason],
+    [async () => ({ok: false, status: 502, json: async () => { throw new SyntaxError('not json'); }}), offline],
+    [async () => { throw new TypeError('Failed to fetch'); }, offline],
+];
+global.window = {SILENTSUITE_DASHBOARD_CSRF: 'csrf-test'};
+(async () => {
+    for (const [respond, expected] of cases) {
+        const btn = {textContent: 'Sync Now', disabled: false};
+        const status = {textContent: 'old message', style: {}};
+        global.document = {getElementById: (id) => id === 'syncNowBtn' ? btn : status};
+        global.fetch = async (url, options) => {
+            assert.equal(url, '/.web/api/sync');
+            assert.equal(options.headers['X-SilentSuite-CSRF'], 'csrf-test');
+            return respond();
+        };
+        triggerSync();
+        assert.equal(btn.disabled, true);
+        assert.equal(status.textContent, '');
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        assert.equal(btn.textContent, 'Sync Now');
+        assert.equal(btn.disabled, false);
+        assert.equal(status.textContent, expected);
     }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
