@@ -432,6 +432,33 @@ export default function SubscriptionPage() {
     : null
   const offerPrice = liveOffer?.price ?? null
 
+  // An open crypto invoice is otherwise only found once the payment dialog opens. The same
+  // read-only status read the dialog makes (it starts or cancels nothing) lets the card say so;
+  // the dialog still re-checks the payment itself before anything new can start.
+  const [cryptoFlowNotice, setCryptoFlowNotice] = useState<{ owner: OperationOwner; sequence: number } | null>(null)
+  const cryptoFlowSequenceRef = useRef(0)
+  const readCryptoFlow = !!data && isHostedBillingAccount() && !showPlanSelection
+    && !paymentConfirmationPending && !paymentReturnFailure
+  useEffect(() => {
+    const sequence = ++cryptoFlowSequenceRef.current
+    setCryptoFlowNotice(null)
+    if (!readCryptoFlow) return
+    const owner = captureOwner()
+    if (!owner) return
+    const live = () => sequence === cryptoFlowSequenceRef.current && ownerCurrent(owner)
+    fetch(`${BILLING_API_URL}/subscription/payment-flows/current?preview=1`, { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok || !live()) return
+        const body: unknown = await res.json()
+        const flow = body && typeof body === 'object' ? (body as { flow?: unknown }).flow : null
+        const isCrypto = !!flow && typeof flow === 'object' && (flow as { flowKind?: unknown }).flowKind === 'btcpay_annual'
+        if (isCrypto && live()) setCryptoFlowNotice({ owner, sequence })
+      })
+      .catch(() => { /* No line; the dialog still checks the payment before anything starts. */ })
+  }, [readCryptoFlow, data, liveUser, captureOwner, ownerCurrent])
+  const showCryptoFlowNotice = !!cryptoFlowNotice && cryptoFlowNotice.sequence === cryptoFlowSequenceRef.current
+    && ownerCurrent(cryptoFlowNotice.owner)
+
   useEffect(() => {
     const { hasStripeParameters, paymentIntent, redirectStatus } = stripePaymentReturn
     if (hasStripeParameters) {
@@ -813,6 +840,15 @@ export default function SubscriptionPage() {
 
         {showAddCard && (
           <AddCardBanner daysRemaining={countdown?.daysLeft ?? null} onChoosePayment={openPaymentRecovery} />
+        )}
+
+        {showCryptoFlowNotice && (
+          <div className="space-y-3 border-t border-[rgb(var(--border))] pt-4">
+            <p className="text-sm text-[rgb(var(--foreground))]">You have a cryptocurrency payment in progress.</p>
+            <Button size="sm" variant="outline" className="w-full sm:w-auto min-h-11" onClick={openPaymentRecovery}>
+              View payment
+            </Button>
+          </div>
         )}
 
         {(showPaidRecovery || hasLiveSubscriptionActions) && (
