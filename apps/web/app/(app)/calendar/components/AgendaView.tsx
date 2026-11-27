@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 import { Clock, MapPin, Repeat2 } from 'lucide-react'
 import { CalendarEmptyState } from '@/app/components/empty-state'
 import { LabelChips } from '@/app/components/LabelEditor'
-import type { CalendarEvent, DateRange } from '@silentsuite/core'
+import { resolveTimeZone, type CalendarEvent, type DateRange } from '@silentsuite/core'
 import type { CalendarList } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { resolveUserTimezone, shortTimezoneLabel } from '@/app/lib/tz'
@@ -111,6 +111,7 @@ export function AgendaView({ events, currentDate, calendars = [], mode = 'day', 
       {agendaEvents.map((event, index) => {
         const calendarId = event.calendarId ?? 'default'
         const collection = calendarMeta.get(calendarId) ?? { name: collectionFallback(calendarId), color: '#10b981' }
+        const eventTz = event.timezone ? resolveTimeZone(event.timezone) : undefined
         return (
           <button
             key={event.id}
@@ -159,9 +160,17 @@ export function AgendaView({ events, currentDate, calendars = [], mode = 'day', 
                     <span>
                       {formatTime(event.startDate, userTz, use12h)} – {formatTime(event.endDate, userTz, use12h)}
                     </span>
-                    {event.timezone && event.timezone !== userTz && (
+                    {eventTz && eventTz !== userTz && (
+                      // The row shows display-zone times; the badge gives the event's own time
+                      // so its zone label matches what it labels (as EventDialog names both zones).
                       <span className="ml-1 rounded bg-[rgb(var(--surface-muted))] px-1 py-0.5 text-[10px] font-medium text-[rgb(var(--muted))]">
-                        {shortTimezoneLabel(event.timezone, event.startDate)}
+                        {formatTime(event.startDate, eventTz, use12h)} – {formatTime(event.endDate, eventTz, use12h)}{' '}
+                        {shortTimezoneLabel(eventTz, event.startDate)}
+                      </span>
+                    )}
+                    {event.timezone && !eventTz && (
+                      <span className="ml-1 rounded bg-[rgb(var(--surface-muted))] px-1 py-0.5 text-[10px] font-medium text-[rgb(var(--muted))]">
+                        {event.timezone}
                       </span>
                     )}
                   </div>

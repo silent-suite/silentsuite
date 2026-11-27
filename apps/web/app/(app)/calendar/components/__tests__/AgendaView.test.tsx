@@ -118,4 +118,22 @@ describe('AgendaView upcoming mode', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Daily standup/ })[0])
     expect(onEventClick).toHaveBeenCalledWith('daily-standup', new Date('2026-06-02T09:00:00Z'))
   })
+
+  it('labels an event-zone badge with the event-zone time, not the display-zone time', () => {
+    // 09:00-09:30 Europe/Berlin (CET, winter) is 08:00-08:30 UTC; the account displays UTC.
+    render(
+      <AgendaView
+        mode="upcoming"
+        currentDate={new Date('2026-12-01T06:00:00Z')}
+        events={[
+          makeEvent('berlin', 'Berlin sync', new Date('2026-12-01T08:00:00Z'), new Date('2026-12-01T08:30:00Z'), {
+            timezone: 'Europe/Berlin',
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('8:00 AM – 8:30 AM')).toBeInTheDocument()
+    expect(screen.getByText('9:00 AM – 9:30 AM GMT+1')).toBeInTheDocument()
+  })
 })
