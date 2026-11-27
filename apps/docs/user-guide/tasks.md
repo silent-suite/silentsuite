@@ -36,7 +36,7 @@ Click the checkbox again to reopen the task.
 
 ## Import
 
-**Settings → Import** accepts `.ics` files with `VTODO` entries and `.csv` files. The file is parsed in your browser, so its contents never reach the server unencrypted.
+**Settings → Import** accepts `.ics` files with `VTODO` entries and Todoist `.csv` exports. The file is parsed in your browser, so its contents never reach the server unencrypted.
 
 If you imported into the wrong place, use **Settings → Import → Manage imported data** to clear a task list's tasks or delete an extra task list and everything inside it.
 
