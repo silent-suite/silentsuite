@@ -87,7 +87,11 @@ class SiblingMaterialAccessibilityContractTest {
         assertTrue(activity.contains("ExactAccountRouting.validate"))
         assertTrue(activity.contains("accountCreationId = requireNotNull(creationId)"))
         assertTrue(activity.contains("findViewById<TextView>(R.id.account_name).text = account.name"))
-        assertTrue(layout.split("android:saveEnabled=\"false\"").size - 1 >= 2)
+        assertTrue(layout.split("android:saveEnabled=\"false\"").size - 1 >= 3)
+        assertTrue(layout.contains("@+id/confirm_new_encryption_password"))
+        assertTrue(layout.contains("@string/change_password_all_devices"))
+        assertFalse(activity.contains("R.string.setting_up_encryption"))
+        assertTrue(activity.contains("NewPasswordRules.matches(new_password, confirm_password)"))
         assertTrue(layout.contains("Widget.AppTheme.Material3.TextInputLayout"))
         assertTrue(activity.split("ExactAccountRouting.validate").size - 1 >= 4)
     }

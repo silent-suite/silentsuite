@@ -411,16 +411,23 @@
     <string name="setup_state_expired">Setup expired before it could finish. Please try signing in again.</string>
 
     <string name="account_creation_failed">Account creation failed</string>
-    <string name="wrong_encryption_password">Wrong encryption password</string>
     <string name="wrong_encryption_password_content">Got an integrity error while accessing your account, which most likely means you put in the wrong encryption password.\nPlease note that the username is case sensitive, so please also try different capitalizations, for example make the first character uppercase.\n\nError: %s</string>
 
 
     <!-- ChangeEncryptionPasswordActivity -->
-    <string name="change_encryption_password_title">Change Encryption Password</string>
-    <string name="change_encryption_password_new_password">New Encryption Password</string>
+    <string name="change_encryption_password_title">Change password</string>
+    <string name="change_password_all_devices">This changes the password you use to sign in to SilentSuite on all your devices.</string>
+    <string name="change_password_current">Current password</string>
+    <string name="change_encryption_password_new_password">New password</string>
+    <string name="change_password_confirm">Confirm new password</string>
+    <string name="change_password_too_short">Password must be at least %d characters</string>
+    <string name="change_password_mismatch">Passwords do not match</string>
     <string name="change_encryption_password_are_you_sure">Are you sure you would like to continue? The process can not be stopped half way or be undone, and may take a while to complete.</string>
-    <string name="change_encryption_password_success_title">Encryption Password Change</string>
-    <string name="change_encryption_password_success_body">Encryption password has been successfully changed!</string>
+    <string name="change_password_progress_title">Changing password</string>
+    <string name="change_password_progress_content">This may take a moment…</string>
+    <string name="change_password_failed">Couldn\'t change password</string>
+    <string name="change_encryption_password_success_title">Password changed</string>
+    <string name="change_encryption_password_success_body">Use your new password the next time you sign in on any device.</string>
 
     <!-- SetupUserInfoFragment -->
     <string name="login_user_info_error_title">Error Setting User Info</string>
@@ -460,8 +467,8 @@
     <string name="settings_password">Authentication Password</string>
     <string name="settings_password_summary">Use a different authentication password</string>
     <string name="settings_enter_password">Enter your password:</string>
-    <string name="settings_encryption_password">Encryption Password</string>
-    <string name="settings_encryption_password_summary">Change your encryption password</string>
+    <string name="settings_encryption_password">Password</string>
+    <string name="settings_encryption_password_summary">Change the password for all your devices</string>
     <string name="settings_enter_encryption_password">Enter your encryption password:</string>
     <string name="settings_sync">Synchronization</string>
     <string name="settings_sync_interval">Sync interval</string>
