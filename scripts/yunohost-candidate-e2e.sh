@@ -29,6 +29,17 @@ export DOMAIN=domain.tld CA_FILE="$work/ca.pem" NODE_EXTRA_CA_CERTS="$work/ca.pe
 export ADMIN_USER=ssadmin USER_NAME=ssuser
 ADMIN_PASS="Ci-$(secret)"; USER_PASS="Ci-$(secret)"; export ADMIN_PASS USER_PASS
 STATE="$work/witness.json"
+MARKERS="$work/markers"   # "kind<TAB>value" lines, collected across every stage
+: >"$MARKERS"
+add_marker() { printf '%s\t%s\n' "$1" "$2" >>"$MARKERS"; }
+state_markers() {
+    python3 - "$STATE" <<'PY' >>"$MARKERS"
+import json, sys
+s = json.load(open(sys.argv[1]))
+for kind, key in (("auth-token", "authToken"), ("collection-uid", "collectionUid"), ("item-uid", "itemUid")):
+    print(f"{kind}\t{s[key]}")
+PY
+}
 probe() { python3 "$repo/scripts/yunohost-candidate-probe.py" "$@"; }
 witness() { node "$repo/scripts/yunohost-candidate-witness.mjs" "$@" --state "$STATE"; }
 
@@ -62,12 +73,17 @@ install_app() {
     pass "install ($1)"
     OWNER_PASSWORD=$(ct yunohost app setting "$app" owner_password)
     echo "::add-mask::$OWNER_PASSWORD"; export OWNER_PASSWORD
+    add_marker owner-password "$OWNER_PASSWORD"
+    add_marker registration-token "$(ct yunohost app setting "$app" registration_token)"
+    # Control, reported but not counted: YunoHost core's own helpers trace this db_pwd.
+    add_marker control-db-pwd "$(ct yunohost app setting "$app" db_pwd)"
 }
 
 purge_app() {
     ct yunohost app remove "$app" --purge >/dev/null 2>&1 || fail "remove --purge"
     ct test ! -e "$install_dir" || fail "purge: install dir left"
     ct test ! -e "$data_dir" || fail "purge: data dir left"
+    ct test ! -e "/var/cache/$app-web" || fail "purge: web cache left"
     [ -z "$(ct sudo -u postgres psql -tAc "select 1 from pg_database where datname='$app'")" ] || fail "purge: database left"
     pass "remove --purge leaves nothing"
 }
@@ -77,7 +93,7 @@ check_perms() {
     local when=$1 pid
     ct sh -euc '
         d='"$install_dir"'
-        [ "$(stat -c %U:%G:%a "$d")" = root:root:755 ]
+        [ "$(stat -c %U:%G:%a "$d")" = root:'"$app"':750 ]
         [ "$(stat -c %U:%G:%a "$d/server.env")" = root:root:600 ]
         [ "$(stat -c %U:%G:%a "$d/etebase-server.ini")" = root:'"$app"':640 ]
         [ -z "$(find "$d/server" "$d/web" \( ! -uid 0 -o ! -gid 0 -o -perm /6000 \) -print -quit)" ]
@@ -86,9 +102,9 @@ check_perms() {
         [ ! -e "$d/server.old" ] && [ ! -e "$d/web.old" ]
         [ "$(systemctl show -p User --value '"$app"'-server)" = '"$app"' ]
         [ "$(systemctl show -p User --value '"$app"'-web)" = '"$app"' ]
-        ! sudo -u '"$app"' cat "$d/server.env" >/dev/null 2>&1
-        ! sudo -u '"$app"' touch "$d/server/x" 2>/dev/null
-        ! sudo -u '"$app"' touch "$d/x" 2>/dev/null
+        if sudo -u '"$app"' cat "$d/server.env" >/dev/null 2>&1; then exit 1; fi
+        if sudo -u '"$app"' touch "$d/server/x" 2>/dev/null; then exit 1; fi
+        if sudo -u '"$app"' touch "$d/x" 2>/dev/null; then exit 1; fi
     ' || fail "perms ($when): owners/modes"
     pid=$(ct systemctl show -p MainPID --value "$app-server")
     ct nsenter -t "$pid" -m -r -w -S "$(ct id -u $app)" -G "$(ct id -g $app)" \
@@ -110,6 +126,7 @@ media_list() { ct sh -c "cd $data_dir/media && find . -type f -exec sha256sum {}
 settings_hash() { ct sh -c "yunohost app setting $app owner_password; yunohost app setting $app registration_token" | sha256sum; }
 check_data() {
     witness verify || fail "witness ($1)"
+    state_markers
     [ "$(media_list)" = "$MEDIA" ] || fail "media files ($1)"
     [ "$(settings_hash)" = "$SETTINGS" ] || fail "installation secrets ($1)"
     pass "data intact ($1)"
@@ -128,6 +145,7 @@ install_app visitors
 check_perms "public install"
 probe boundary --mode public
 witness create
+state_markers
 MEDIA=$(media_list); SETTINGS=$(settings_hash)
 [ -n "$MEDIA" ] || fail "witness: no chunk files under media"
 pass "witness wrote chunk files"
@@ -159,11 +177,19 @@ sed -i -e 's|^server_repo=.*|server_repo="ghcr.io/silent-suite/silentsuite-web-s
     -e '/server\/usr\/local\/bin\/python" ] || ynh_die/d' "$common"
 grep -q 'silentsuite-web-selfhost"$' <(grep '^server_repo=' "$common") || fail "failed upgrade: test copy not built"
 push_pkg "$work/broken_ynh" broken_ynh
+# A writer keeps syncing during the attempt: every write the server acknowledged must
+# survive the rollback (the services stop before YunoHost's safety-backup dump).
+node "$repo/scripts/yunohost-candidate-witness.mjs" write-loop --state "$STATE" "$work/acks" "$work/stop-writer" &
+writer=$!
+sleep 5
 start=$(ct date -u +%s)
 if ct yunohost app upgrade "$app" -u /root/broken_ynh --force >"$work/failed-upgrade.log" 2>&1; then
     fail "failed upgrade: upgrade unexpectedly succeeded"
 fi
 end=$(ct date -u +%s)
+sleep 10
+touch "$work/stop-writer"
+wait "$writer" || fail "failed upgrade: write loop"
 grep -q "silentsuite: image trees swapped" "$work/failed-upgrade.log" || fail "failed upgrade: swap marker missing"
 pass "failed upgrade: swap completed"
 ct journalctl -u "$app-server" --since "@$start" --until "@$end" -o cat | grep -q "status=203/EXEC" \
@@ -176,6 +202,8 @@ curl -fsS -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/api/v1/authenticatio
 curl -fsS -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/signup" || fail "rollback: web not ready"
 check_perms "rollback"
 check_data "rollback"
+node "$repo/scripts/yunohost-candidate-witness.mjs" verify-acks --state "$STATE" "$work/acks" \
+    || fail "rollback: an acknowledged write was lost"
 
 #=== Backup, purge, restore ==================================================
 group "backup and restore"
@@ -188,42 +216,29 @@ check_data "restore"
 
 #=== F3: no secrets in output or logs ========================================
 group "log markers"
-ct systemctl stop "$app-web"
-curl -s -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/calendar" || true   # nginx upstream error
-ct systemctl start "$app-web"
-{
-    python3 - "$STATE" <<'PY'
-import json, sys
-s = json.load(open(sys.argv[1]))
-print(s["authToken"]); print(s["collectionUid"]); print(s["itemUid"])
-PY
-    ct yunohost app setting "$app" owner_password
-    ct yunohost app setting "$app" registration_token
-    # Control, reported but not counted: the database password YunoHost core generates
-    # for every app, which its own helpers trace into yunohost-cli.log.
-    ct yunohost app setting "$app" db_pwd
-} >"$work/markers"
-sudo incus file push "$work/markers" ynh/root/markers >/dev/null
-# Report which file and which kind of value matched, never the value itself.
+# A marked upstream error: the server is down and the request path carries a collection UID.
+uid=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["collectionUid"])' "$STATE")
+ct systemctl stop "$app-server"
+curl -s -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/api/v1/collection/$uid/item/" || true
+ct systemctl start "$app-server"
+sudo incus file push "$MARKERS" ynh/root/markers >/dev/null
+# Report only the kind of value and the file, never the value or the line.
 hits=$(ct sh -c '
     journalctl -o cat > /root/journal.txt
-    n=0; kind=1
-    for k in auth-token collection-uid item-uid owner-password registration-token control-db-pwd; do
-        m=$(sed -n "${kind}p" /root/markers)
-        for f in $(grep -rlF -e "$m" /var/log/yunohost /var/log/nginx /root/journal.txt 2>/dev/null); do
-            echo "HIT $k in $f" >&2
-            grep -F -e "$m" "$f" | head -3 | python3 -c "import sys; m=sys.argv[1]; [print(\"  line:\", l.replace(m, \"<redacted>\")[:220].rstrip(), file=sys.stderr) for l in sys.stdin]" "$m"
-            [ "$k" = control-db-pwd ] || n=$((n + 1))
+    n=0
+    while IFS="$(printf "\t")" read -r kind value; do
+        for f in $(grep -rlF -e "$value" /var/log/yunohost /var/log/nginx /root/journal.txt 2>/dev/null); do
+            echo "HIT $kind in $f" >&2
+            [ "$kind" = control-db-pwd ] || n=$((n + 1))
         done
-        kind=$((kind + 1))
-    done
+    done < /root/markers
     rm -f /root/markers /root/journal.txt
     echo "$n"')
 [ "$hits" = 0 ] || fail "log markers: $hits match(es) in container logs"
-head -5 "$work/markers" >"$work/own-markers"
+grep -v '^control-' "$MARKERS" | cut -f2 >"$work/own-markers"
 hits=$({ grep -lF -f "$work/own-markers" "$work"/*.log || true; } | wc -l)
 [ "$hits" = 0 ] || fail "log markers: $hits installer output file(s) contain a secret or identifier"
-pass "no secrets or identifiers in installer output, operation logs, nginx logs or the journal"
+pass "installation secrets of both installs, every auth token and the witness UIDs appear in no installer output, /var/log/yunohost, nginx log or journal (YunoHost's own db_pwd trace excepted)"
 
 group "remove"
 purge_app

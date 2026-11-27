@@ -21,6 +21,9 @@ done
 
 ynh_config_remove_nginx
 
+# The web app's Next.js cache (systemd CacheDirectory= of the web unit).
+ynh_safe_rm "/var/cache/$app-web"
+
 _silentsuite_cleanup_fetch
 
 #=================================================

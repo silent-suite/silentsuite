@@ -130,8 +130,9 @@ _silentsuite_add_config() {
 # $install_dir to the app user), before any service starts.
 _silentsuite_set_permissions() {
     local tree
-    chown root:root "$install_dir"
-    chmod 755 "$install_dir"
+    # No access for others: YunoHost's own checks require it of every install dir.
+    chown "root:$app" "$install_dir"
+    chmod 750 "$install_dir"
     for tree in server web; do
         chown -R -h root:root "$install_dir/$tree"
         # Symbolic mode: a numeric mode keeps setuid/setgid bits on directories.

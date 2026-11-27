@@ -602,7 +602,7 @@ unsure about.
 
 ## YunoHost
 
-A YunoHost package lives in [`yunohost/silentsuite_ynh`](yunohost/silentsuite_ynh/). It installs the published server and web images without Docker: each image is downloaded by its pinned digest, unpacked, and run under systemd. It needs a whole domain or subdomain with a trusted certificate, and is amd64 only for now. It is not in the YunoHost catalogue yet; install it from a local copy with `yunohost app install ./silentsuite_ynh`. The package's `doc/ADMIN.md` explains the installation password and which paths bypass the YunoHost login.
+A YunoHost package lives in [`self-host/yunohost/silentsuite_ynh`](https://github.com/silent-suite/silentsuite/tree/main/self-host/yunohost/silentsuite_ynh) in the source repository (it is not part of this release bundle). It installs the published server and web images without Docker: each image is downloaded by its pinned digest, unpacked, and run under systemd. It needs a whole domain or subdomain with a trusted certificate, and is amd64 only for now. It is not in the YunoHost catalogue yet; install it from a local copy with `yunohost app install ./silentsuite_ynh`. The package's `doc/ADMIN.md` explains the installation password and which paths bypass the YunoHost login.
 
 ## Full Documentation
 

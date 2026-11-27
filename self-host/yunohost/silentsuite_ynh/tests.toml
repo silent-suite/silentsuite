@@ -4,6 +4,10 @@ test_format = 1.0
 
 [default]
 
+    # SilentSuite's web app is built for the root of its own domain, so the package has
+    # no change_url script; there is nothing to test.
+    exclude = ["change_url"]
+
     # SilentSuite's own CI runs the stateful checks (permissions, accounts, data, rollback).
     [default.curl_tests]
     signup.path = "/signup"

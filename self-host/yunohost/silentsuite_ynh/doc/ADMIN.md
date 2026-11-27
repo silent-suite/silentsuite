@@ -16,4 +16,8 @@ This package does not include Redis, so live push notifications are off. Clients
 
 ### How it runs
 
-The services run the published SilentSuite images as plain file trees under systemd (`RootDirectory=`), with no container runtime. The trees live in `__INSTALL_DIR__/server` and `__INSTALL_DIR__/web` and are owned by root; the app only writes to `__DATA_DIR__`.
+The services run the published SilentSuite images as plain file trees under systemd (`RootDirectory=`), with no container runtime. The trees live in `__INSTALL_DIR__/server` and `__INSTALL_DIR__/web` and are owned by root. The server writes only to `__DATA_DIR__`; the web app writes only its page cache in `/var/cache/__APP__-web`, which is removed with the app.
+
+### HTTPS port
+
+The installation-owner login compares the browser's origin with the requested host. Use the standard HTTPS port 443 (the YunoHost default); a port-mapped front end on another port breaks account creation.

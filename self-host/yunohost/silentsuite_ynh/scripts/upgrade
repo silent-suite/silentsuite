@@ -8,21 +8,17 @@ source _common.sh
 source /usr/share/yunohost/helpers
 
 #=================================================
-# DOWNLOAD, CHECK AND UNPACK SOURCE
+# STOP SYSTEMD SERVICE, DOWNLOAD, CHECK AND UNPACK SOURCE
 #=================================================
-ynh_script_progression "Fetching and verifying the SilentSuite images..."
+ynh_script_progression "Stopping $app and fetching the SilentSuite images..."
 
-# Fetch first, so a failed download leaves the running version untouched.
-_silentsuite_fetch_images
-
-#=================================================
-# STOP SYSTEMD SERVICE
-#=================================================
-ynh_script_progression "Stopping $app's systemd services..."
-
+# The services are already stopped when YunoHost made its safety backup (see the backup
+# script). Stop them again for upgrades run without one: any write accepted after that
+# backup would be lost if this upgrade fails and YunoHost restores it.
 ynh_systemctl --service="$app-web" --action="stop"
 ynh_systemctl --service="$app-server" --action="stop"
 
+_silentsuite_fetch_images
 _silentsuite_promote_images
 
 #=================================================

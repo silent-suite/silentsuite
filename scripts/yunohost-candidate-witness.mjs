@@ -5,13 +5,19 @@
 //                         one item with >= 200 KiB of random content; writes the state (mode 600)
 //   verify --state FILE   SDK login on the native path (no cookie), fetch and download the item,
 //                         compare its sha256 with the state, store the fresh auth token
+//   write-loop --state FILE ACKS STOP
+//                         keep writing small items into the witness collection until the file STOP
+//                         exists (failures while the server is down are expected); append each
+//                         acknowledged item's uid and sha256 to ACKS
+//   verify-acks --state FILE ACKS
+//                         every acknowledged item from ACKS must still exist with the same content
 //
 // Environment: DOMAIN (default domain.tld), ADMIN_USER, ADMIN_PASS, OWNER_PASSWORD, and
 // NODE_EXTRA_CA_CERTS pointing at the YunoHost CA. Prints check names only, never secrets,
 // tokens or UIDs. Exits 1 on the first failed check.
 
 import { createHash, randomBytes } from 'node:crypto'
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { request } from 'node:https'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
@@ -130,11 +136,59 @@ async function verify(file) {
   pass('state auth token refreshed')
 }
 
-const [command, flag, file] = process.argv.slice(2)
-if (!['create', 'verify'].includes(command) || flag !== '--state' || !file) {
-  console.error('usage: yunohost-candidate-witness.mjs create|verify --state FILE')
+async function writeLoop(file, acks, stop) {
+  await Etebase.ready
+  const state = JSON.parse(readFileSync(file, 'utf8'))
+  const account = await step('write loop: SDK login', () => Etebase.Account.login(state.username, state.password, SERVER_URL))
+  const collectionManager = account.getCollectionManager()
+  const collection = await step('write loop: fetch the witness collection', () => collectionManager.fetch(state.collectionUid))
+  const itemManager = collectionManager.getItemManager(collection)
+  const deadline = Date.now() + 30 * 60_000
+  let acknowledged = 0
+  while (!existsSync(stop) && Date.now() < deadline) {
+    const content = randomBytes(1024)
+    try {
+      const item = await itemManager.create({ type: 'text/calendar', name: 'loop.ics', mtime: Date.now() }, new Uint8Array(content))
+      await itemManager.batch([item])
+      appendFileSync(acks, `${item.uid} ${sha256(content)}\n`, { mode: 0o600 })
+      acknowledged += 1
+    } catch {
+      // The server is stopped during part of the upgrade: an unacknowledged write is fine.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  console.log(`INFO write loop: ${acknowledged} acknowledged writes`)
+}
+
+async function verifyAcks(file, acks) {
+  await Etebase.ready
+  const state = JSON.parse(readFileSync(file, 'utf8'))
+  const lines = existsSync(acks) ? readFileSync(acks, 'utf8').trim().split('\n').filter(Boolean) : []
+  if (lines.length === 0) fail('write loop acknowledged at least one write')
+  pass('write loop acknowledged at least one write')
+  const account = await step('acks: SDK login', () => Etebase.Account.login(state.username, state.password, SERVER_URL))
+  const collectionManager = account.getCollectionManager()
+  const collection = await step('acks: fetch the witness collection', () => collectionManager.fetch(state.collectionUid))
+  const itemManager = collectionManager.getItemManager(collection)
+  for (const line of lines) {
+    const [uid, digest] = line.split(' ')
+    const item = await itemManager.fetch(uid).catch(() => undefined)
+    if (!item) fail('every acknowledged write survived (one is missing)')
+    if (item.isMissingContent) await itemManager.downloadContent(item)
+    if (sha256(Buffer.from(item.getContent())) !== digest) fail('every acknowledged write survived (content differs)')
+  }
+  pass(`every acknowledged write survived (${lines.length})`)
+}
+
+const [command, flag, file, ...rest] = process.argv.slice(2)
+const commands = { create: 0, verify: 0, 'write-loop': 2, 'verify-acks': 1 }
+if (!(command in commands) || flag !== '--state' || !file || rest.length !== commands[command]) {
+  console.error('usage: yunohost-candidate-witness.mjs create|verify --state FILE | write-loop --state FILE ACKS STOP | verify-acks --state FILE ACKS')
   process.exit(2)
 }
-await (command === 'create' ? create(file) : verify(file))
+if (command === 'create') await create(file)
+else if (command === 'verify') await verify(file)
+else if (command === 'write-loop') await writeLoop(file, rest[0], rest[1])
+else await verifyAcks(file, rest[0])
 // The SDK may leave sockets or timers behind; the result is already printed.
 process.exit(0)

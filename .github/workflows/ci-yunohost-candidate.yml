@@ -214,7 +214,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -q
           sudo apt-get install -y -q incus lynx jq btrfs-progs python3-jsonschema python3-toml \
-            python3-packaging python3-pyparsing python3-six python3-pycurl python3-pip
+            python3-packaging python3-pyparsing python3-six python3-pycurl python3-pip python3-bs4
           sudo incus admin init --minimal
           sudo iptables -I DOCKER-USER -i incusbr0 -j ACCEPT
           sudo iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
@@ -224,6 +224,10 @@ jobs:
           git -C "$pc" fetch -q --depth 1 https://github.com/YunoHost/package_check "$PACKAGE_CHECK_SHA"
           git -C "$pc" checkout -q FETCH_HEAD
           test "$(git -C "$pc" rev-parse HEAD)" = "$PACKAGE_CHECK_SHA"
+          # On a failed test package_check uploads the YunoHost log to paste.yunohost.org
+          # (lib/tests_coordination.sh). Nothing from this CI is published: remove that call.
+          sed -i '/log_share(/d' "$pc/lib/tests_coordination.sh"
+          ! grep -rn "log_share" "$pc/lib" "$pc/package_check.sh"
           # package_check always runs `git fetch origin && git reset --hard origin/main` in
           # ./package_linter (lib/common.sh fetch_or_upgrade_package_linter). Point origin at
           # a local mirror whose only ref is main = the pinned commit.
@@ -260,5 +264,21 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bin"
           printf '#!/bin/sh\nfor h; do :; done\nexec curl -fsS -o /dev/null --max-time 10 "https://$h/"\n' > "$RUNNER_TEMP/bin/ping"
           chmod +x "$RUNNER_TEMP/bin/ping"
-          sg incus-admin -c "PATH=$RUNNER_TEMP/bin:\$PATH ./package_check.sh $RUNNER_TEMP/silentsuite_ynh"
+          sg incus-admin -c "PATH=$RUNNER_TEMP/bin:\$PATH ./package_check.sh $RUNNER_TEMP/silentsuite_ynh" || true
           test "$(git -C package_linter rev-parse HEAD)" = "$PACKAGE_LINTER_SHA"
+          # package_check exits 0 even when tests fail: judge its own result summary.
+          # Its nested linter test fails on the two catalogue findings of an unlisted app;
+          # the lint job above checks everything else.
+          python3 - results_0.json <<'PY'
+          import json, sys
+          tests = json.load(open(sys.argv[1]))["tests"]
+          for t in tests:
+              print(f"{t['test_type']} {t['test_arg'] or ''}: {t['main_result']}")
+          required = {"TEST_INSTALL", "TEST_UPGRADE", "TEST_BACKUP_RESTORE"}
+          judged = [t for t in tests if t["test_type"] != "TEST_PACKAGE_LINTER"]
+          missing = required - {t["test_type"] for t in judged}
+          failed = [t for t in judged if t["main_result"] != "success"]
+          if missing or failed:
+              print(f"missing: {sorted(missing)}; failed: {len(failed)}")
+              sys.exit(1)
+          PY
