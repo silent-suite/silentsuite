@@ -208,4 +208,10 @@ jobs:
 
       - name: Container states on failure
         if: failure()
-        run: docker ps -a --format '{{.Names}} {{.Status}}'
+        run: |
+          docker ps -a --format '{{.Names}} {{.Status}}'
+          # Router (nginx) and initializer output only; they log no requests and no secrets.
+          for container in $(docker ps -a --format '{{.Names}}' | grep -E -- '-silentsuite-(1|init-1)$'); do
+            echo "== $container restarts=$(docker inspect -f '{{.RestartCount}}' "$container")"
+            docker logs --tail 20 "$container" 2>&1
+          done

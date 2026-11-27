@@ -111,10 +111,6 @@ def deploy(args):
     check("first Dokploy owner signs up", status == 200)
     if status != 200:
         return
-    # The auto-sign-in session predates the owner's organization membership; a fresh sign-in
-    # gets a session whose active organization is set (Dokploy auth session hook).
-    status, _ = api.post("/api/auth/sign-in/email", {"email": "ci-owner@example.test", "password": owner_password})
-    check("Dokploy owner signs in", status == 200)
     project = api.mutation("project.create", {"name": "silentsuite-ci", "description": "", "env": ""})
     compose = api.mutation("compose.create", {
         "name": "silentsuite", "environmentId": environment_id(api, project),
@@ -133,6 +129,7 @@ def deploy(args):
     status, body = api._send(urllib.request.Request(DOKPLOY + "/api/auth/get-session"))
     organization = (json.loads(body).get("session") or {}).get("activeOrganizationId") if status == 200 else None
     if not organization:
+        # The auto-sign-in session from the first sign-up predates the owner's membership.
         organizations = api.query("organization.all", None)
         organization = organizations[0]["id"] if organizations else None
     check("Dokploy session has an active organization", bool(organization))
