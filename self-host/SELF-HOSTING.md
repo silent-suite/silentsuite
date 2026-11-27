@@ -600,6 +600,10 @@ unsure about.
 - The server image is selected by an immutable digest, never by a mutable tag, so the bytes you verified at install time are the bytes that keep running.
 - Built on the [Etebase protocol](https://docs.etebase.com), an open standard for E2E encrypted data sync.
 
+## YunoHost
+
+A YunoHost package lives in [`yunohost/silentsuite_ynh`](yunohost/silentsuite_ynh/). It installs the published server and web images without Docker: each image is downloaded by its pinned digest, unpacked, and run under systemd. It needs a whole domain or subdomain with a trusted certificate, and is amd64 only for now. It is not in the YunoHost catalogue yet; install it from a local copy with `yunohost app install ./silentsuite_ynh`. The package's `doc/ADMIN.md` explains the installation password and which paths bypass the YunoHost login.
+
 ## Full Documentation
 
 For more details, see [docs.silentsuite.io/self-hosting](https://docs.silentsuite.io/self-hosting/).

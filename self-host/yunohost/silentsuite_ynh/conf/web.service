@@ -17,6 +17,8 @@ ExecStart=/usr/local/bin/node apps/web/server.js
 Restart=on-failure
 TimeoutStartSec=300
 
+# No fresh /proc, /sys or /dev in the tree: unprivileged LXC/Incus refuse those mounts.
+MountAPIVFS=no
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=+/app/apps/web/.next/cache
@@ -28,7 +30,6 @@ RestrictRealtime=yes
 DevicePolicy=closed
 ProtectClock=yes
 ProtectHostname=yes
-ProtectProc=invisible
 ProtectControlGroups=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
