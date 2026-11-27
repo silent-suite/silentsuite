@@ -310,7 +310,10 @@ RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "fir
 RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launcher-recovery"}
 RUNTIME_LEDGER_COUNT_LINES = (
     "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':134,'29:sibling-routes':48,'35:all':242,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':134}\n",
-    "if len(canonical) < 242 or len(expected) < expected_sizes[key]:\n",
+    "if len(canonical) < 242 or len(expected) < expected_sizes[key]:\n"
+    "  raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')\n",
+    "missing=expected-set(counts)\n"
+    "if missing: raise SystemExit(f'missing {sorted(missing)}')\n",
     "'29:account-dashboard':(owned('36:account-dashboard')|owned('36:launcher-recovery'))-mixed,\n",
     "elif key in {'36:account-dashboard','36:first-run-setup','36:launcher-recovery','36:sibling-routes','36:status-routes'}:\n",
 )
@@ -690,6 +693,13 @@ def test_gradle_jobs_restore_but_never_save_the_gradle_cache(candidate):
             assert restores == [], name
         if name != "build-pr":
             assert not any(_uses(step).startswith(("actions/cache@", "actions/cache/save@")) for step in steps), name
+    # build-pr is the one writer, and it saves under the key and paths every reader restores.
+    writers = [step for step in jobs["build-pr"]["steps"] if _uses(step).startswith(("actions/cache@", "actions/cache/save@"))]
+    assert writers == [{
+        "name": "Cache Gradle",
+        "uses": GRADLE_RESTORE["uses"].replace("actions/cache/restore@", "actions/cache@"),
+        "with": GRADLE_RESTORE["with"],
+    }]
 
 
 def test_emulator_jobs_skip_main_pushes_and_build_pr_does_not(candidate):
