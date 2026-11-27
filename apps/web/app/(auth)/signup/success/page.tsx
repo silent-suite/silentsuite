@@ -195,9 +195,9 @@ function SignupSuccessInner() {
           Payment confirmation required
         </h2>
         <p className="text-sm leading-relaxed text-[rgb(var(--muted))]">
-          This page can't tell whether your payment went through. Open payment recovery to
-          check your signup. If that doesn't work, go back to the tab where you signed up or
-          contact support. Don't start another payment.
+          This page can&apos;t tell whether your payment went through. Open payment recovery to
+          check your signup. If that doesn&apos;t work, go back to the tab where you signed up or
+          contact support. Don&apos;t start another payment.
         </p>
       </div>
       <Button onClick={() => router.push('/signup?recovery=payment')} className="w-full">
