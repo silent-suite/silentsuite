@@ -24,6 +24,7 @@
     "@hookform/resolvers": "^5.2.2",
     "@lezer/highlight": "^1.2.3",
     "@schedule-x/calendar": "4.3.1",
+    "@schedule-x/current-time": "4.3.1",
     "@schedule-x/events-service": "4.3.1",
     "@schedule-x/react": "4.1.0",
     "@schedule-x/theme-default": "4.3.1",

@@ -8,6 +8,7 @@ import {
   type CalendarEventExternal,
 } from '@schedule-x/calendar'
 import { createEventsServicePlugin } from '@schedule-x/events-service'
+import { createCurrentTimePlugin } from '@schedule-x/current-time'
 import { useTheme } from 'next-themes'
 import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
@@ -282,6 +283,18 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
   }, [calendars])
 
   const [eventsPlugin] = useState(() => createEventsServicePlugin())
+  // Draws the "now" line in today's column, in the calendar's configured timezone.
+  const [currentTimePlugin] = useState(() => createCurrentTimePlugin())
+  // Schedule-X 4.3.1 does not tell plugins when we push a new timezone or day
+  // boundaries through the config signals, so redraw the line ourselves.
+  const refreshCurrentTimeLine = useCallback(() => {
+    if (!currentTimePlugin.$app) return
+    try {
+      currentTimePlugin.onTimezoneChange()
+    } catch {
+      // The line is decorative; never let it break the grid.
+    }
+  }, [currentTimePlugin])
 
   // Keep the browser-local range only for existing pointer-coordinate math.
   const viewRange = useMemo(() => getViewRange(currentDate, effectiveView, firstDayOfWeek), [currentDate, effectiveView, firstDayOfWeek])
@@ -519,7 +532,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       eventOverlap: false,
       nDays: effectiveWeekDays,
     },
-    plugins: [eventsPlugin],
+    plugins: [eventsPlugin, currentTimePlugin],
     callbacks: {
       onEventClick: handleEventClick,
       onClickDateTime: handleClickDateTime,
@@ -548,11 +561,12 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       const tzSignal = app?.config?.timezone
       if (tzSignal && tzSignal.value !== userTz) {
         tzSignal.value = userTz
+        refreshCurrentTimeLine()
       }
     } catch {
       // Schedule-X internals may not be ready
     }
-  }, [calendar, userTz])
+  }, [calendar, userTz, refreshCurrentTimeLine])
 
   // Push first-day-of-week changes to the Schedule-X config signal. Week/month
   // use the user's preference; mobile 3-day mode anchors the first rendered
@@ -624,11 +638,12 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       const next = toScheduleXDayBoundariesInternal(displayDayStartHour, displayDayEndHour)
       if (boundariesSignal) {
         boundariesSignal.value = next
+        refreshCurrentTimeLine()
       }
     } catch {
       // Schedule-X internals may not be ready
     }
-  }, [calendar, displayDayStartHour, displayDayEndHour])
+  }, [calendar, displayDayStartHour, displayDayEndHour, refreshCurrentTimeLine])
 
   // Sync view AND date changes from store → Schedule-X via internal API.
   // CalendarApp has NO public navigation methods. We access the private $app

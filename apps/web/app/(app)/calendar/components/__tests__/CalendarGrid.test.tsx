@@ -353,6 +353,36 @@ describe('CalendarGrid timed-event integration', () => {
     })
   })
 
+  it('registers the current-time plugin next to the events service, in the display timezone', () => {
+    mocks.calendar.$app.config.timezone.value = 'UTC'
+    mocks.preferencesState.defaultTimezone = 'Europe/Berlin'
+    render(<CalendarGrid events={[]} />)
+
+    const plugins = mocks.latestConfig?.plugins as Array<{ name?: string; set?: unknown }>
+    expect(plugins).toHaveLength(2)
+    expect(plugins[0].set).toBe(mocks.setEvents)
+    expect(plugins[1].name).toBe('currentTime')
+    expect(mocks.latestConfig?.timezone).toBe('Europe/Berlin')
+    expect(packageJson.dependencies['@schedule-x/current-time']).toBe('4.3.1')
+  })
+
+  it('redraws the current-time line when the display timezone changes', async () => {
+    mocks.calendar.$app.config.timezone.value = 'UTC'
+    const { rerender } = render(<CalendarGrid events={[]} />)
+    const plugin = (mocks.latestConfig?.plugins as Array<Record<string, any>>)
+      .find((p) => p.name === 'currentTime')!
+    plugin.$app = mocks.calendar.$app
+    const redraw = vi.spyOn(plugin, 'onTimezoneChange').mockImplementation(() => {})
+
+    mocks.preferencesState.defaultTimezone = 'Asia/Tokyo'
+    rerender(<CalendarGrid events={[]} />)
+
+    await waitFor(() => {
+      expect(mocks.calendar.$app.config.timezone.value).toBe('Asia/Tokyo')
+      expect(redraw).toHaveBeenCalled()
+    })
+  })
+
   it('suppresses mouse and touch gesture side effects for projected segments', () => {
     const { container, target, eventElement: projectedEvent } = renderGestureHarness(true)
     const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
