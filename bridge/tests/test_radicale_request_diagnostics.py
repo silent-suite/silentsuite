@@ -276,13 +276,22 @@ def test_dav_requests_stay_dav_requests(tmp_path, method, path):
     assert output == f"INFO DAV request received (method={method})"
 
 
-def test_suppressed_placeholders_are_debug_only(tmp_path):
+@pytest.mark.parametrize(
+    "pathname, warning",
+    (
+        # Radicale's request handlers: a warning is a rejected request.
+        (APP_PATHNAMES[0], "WARNING Radicale request was rejected"),
+        # Any other Radicale module: a warning is a generic failure.
+        ("radicale/log.py", "WARNING Radicale failure"),
+    ),
+)
+def test_suppressed_placeholders_are_debug_only(tmp_path, pathname, warning):
     template = "Sanitized path: %r"
     args = (MARKER_PATH,)
 
-    assert _emit(tmp_path, template, args, logger_level=logging.INFO) == ""
+    assert _emit(tmp_path, template, args, pathname=pathname, logger_level=logging.INFO) == ""
     assert (
-        _emit(tmp_path, template, args, logger_level=logging.DEBUG)
+        _emit(tmp_path, template, args, pathname=pathname, logger_level=logging.DEBUG)
         == "DEBUG Radicale diagnostic suppressed"
     )
     assert (
@@ -291,9 +300,10 @@ def test_suppressed_placeholders_are_debug_only(tmp_path):
             template,
             args,
             level=logging.WARNING,
+            pathname=pathname,
             logger_level=logging.INFO,
         )
-        == "WARNING Radicale failure"
+        == warning
     )
 
 
