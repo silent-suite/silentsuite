@@ -748,7 +748,7 @@ describe('email-link seven-day no-card continuation', () => {
       }))
       // The unattempted claim is released; then Back from the plans keeps the original password.
       fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-      await screen.findByRole('heading', { name: /choose your plan/i })
+      await screen.findByRole('heading', { name: /choose your free trial/i })
       fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
       expect(await screen.findByRole('alert')).toHaveTextContent('Your original password remains unchanged')
       expect(screen.queryByRole('heading', { name: 'Choose your password' })).not.toBeInTheDocument()
