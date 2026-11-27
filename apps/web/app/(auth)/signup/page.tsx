@@ -2356,7 +2356,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   if (paymentRecoveryRequested || (!paymentReceiptReceived && (initialPaymentRecovery || navigation.recovery === 'payment'))) return <PendingPaymentPage onReleased={handleRecoveredPaymentRelease} />
   if (paymentNeedsVerification) return <div className="space-y-4">
     <h1 className="text-xl font-semibold">Verify email to choose a payment method</h1>
-    <p>Payment cancelled. Your email verification on this browser has expired. Verify your email again to see payment choices.</p>
+    <p>Payment cancelled. Please verify your email again to continue.</p>
     <Button onClick={() => { setPaymentNeedsVerification(false); setStep('account') }}>Verify email again</Button>
   </div>
   if (navigation.recovery) {
