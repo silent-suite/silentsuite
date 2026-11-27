@@ -24,8 +24,12 @@ object ICalPreprocessor {
 
     private val TZOFFSET_REGEXP = Regex("^(TZOFFSET(FROM|TO):[+\\-]?)((18|19|[2-6]\\d)\\d\\d)$", RegexOption.MULTILINE)
 
-    /** RRULE/EXRULE line (group 1: name, parameters and colon; group 2: value, including folded continuation lines) */
-    private val RECUR_REGEXP = Regex("^((?:RRULE|EXRULE)(?:;[^:\\r\\n]*)?:)([^\\r\\n]*(?:\\r?\\n[ \\t][^\\r\\n]*)*)",
+    /**
+     * RRULE/EXRULE line (group 1: name, parameters and colon; group 2: value, including folded continuation lines).
+     * UNIX_LINES (?d): a line starts only after LF, not after a lone CR or U+0085/U+2028/U+2029 inside a text value.
+     * Parameter values may be quoted and contain colons.
+     */
+    private val RECUR_REGEXP = Regex("(?d)^((?:RRULE|EXRULE)(?:;(?:\"[^\"]*\"|[^:;\"\\r\\n])*)*:)([^\\r\\n]*(?:\\r?\\n[ \\t][^\\r\\n]*)*)",
             setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE))
     private val FOLDING_REGEXP = Regex("\\r?\\n[ \\t]")
 
@@ -84,18 +88,27 @@ object ICalPreprocessor {
      * only accepts upper case (`RRULE:freq=weekly` fails with "A recurrence rule MUST contain a FREQ rule part")
      * and fails on rule parts without a value (like `BYDAY=`).
      *
-     * Rewrites values of all RRULE and EXRULE properties to upper case and drops empty rule parts.
+     * Rewrites values of all RRULE and EXRULE properties to upper case (except values of X- rule parts)
+     * and drops empty rule parts.
      *
      * @param reader Reader that reads the potentially broken iCalendar (which for instance contains `RRULE:freq=weekly;BYDAY=`)
      * @return Reader that reads the fixed iCalendar (for instance `RRULE:FREQ=WEEKLY`)
      */
     fun fixInvalidRecurrenceRules(reader: Reader): Reader {
+        // upper-case each rule part's name, and its value unless it's an opaque X- extension value
+        fun normalizePart(part: String): String {
+            val name = part.substringBefore('=').uppercase(Locale.ROOT)
+            if (!part.contains('='))
+                return name
+            val value = part.substringAfter('=')
+            return name + "=" + (if (name.startsWith("X-")) value else value.uppercase(Locale.ROOT))
+        }
+
         fun normalize(value: String) =
                 value.replace(FOLDING_REGEXP, "")
-                        .uppercase(Locale.ROOT)
                         .split(';')
                         .filter { part -> part.isNotBlank() && !part.endsWith("=") }
-                        .joinToString(";")
+                        .joinToString(";") { part -> normalizePart(part) }
 
         val resetSupported = try {
             reader.reset()

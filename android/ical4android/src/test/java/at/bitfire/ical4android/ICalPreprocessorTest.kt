@@ -77,6 +77,25 @@ class ICalPreprocessorTest {
     }
 
     @Test
+    fun testFixInvalidRecurrenceRules_OnlyRuleValues() {
+        fun fix(ics: String) = ICalPreprocessor.fixInvalidRecurrenceRules(StringReader(ics)).readText()
+
+        // a line starts only after LF: text after U+2028 inside DESCRIPTION is not a property
+        val description = "BEGIN:VEVENT\r\nDESCRIPTION:notes\u2028RRULE:call Alice\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\n"
+        assertEquals(description, fix(description))
+        // quoted parameter value with a colon stays untouched
+        assertEquals("BEGIN:VEVENT\r\nRRULE;X-REF=\"https://example.org/aBc\":FREQ=WEEKLY\r\nEND:VEVENT\r\n",
+                fix("BEGIN:VEVENT\r\nRRULE;X-REF=\"https://example.org/aBc\":freq=weekly\r\nEND:VEVENT\r\n"))
+        val quotedValid = "BEGIN:VEVENT\r\nRRULE;X-REF=\"https://example.org/aBc\":FREQ=WEEKLY\r\nEND:VEVENT\r\n"
+        assertEquals(quotedValid, fix(quotedValid))
+        // X- rule part values are opaque
+        assertEquals("BEGIN:VEVENT\r\nRRULE:FREQ=WEEKLY;X-ID=aBc\r\nEND:VEVENT\r\n",
+                fix("BEGIN:VEVENT\r\nRRULE:freq=weekly;x-id=aBc\r\nEND:VEVENT\r\n"))
+        assertEquals("BEGIN:VEVENT\r\nRRULE:FREQ=WEEKLY;X-ID=aBc\r\nEND:VEVENT\r\n",
+                fix("BEGIN:VEVENT\r\nRRULE:freq=weekly;X-ID=aBc\r\nEND:VEVENT\r\n"))
+    }
+
+    @Test
     fun testParseInvalidRecurrenceRules() {
         fun rRule(rule: String) = Event.eventsFromReader(StringReader(
                 listOf("BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:test", "BEGIN:VEVENT", "UID:recur",
