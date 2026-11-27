@@ -176,6 +176,13 @@ The stage directory must not exist yet, and its parent must be a directory you
 own that other local users cannot write. Like an install, it is created by a
 single atomic `mkdir` only after every check it performs has passed.
 
+## Dokploy
+
+If you run [Dokploy](https://dokploy.com), you can deploy SilentSuite as a Compose service from the
+blueprint in [`dokploy/`](dokploy/README.md). Dokploy generates the secrets and provides the
+HTTPS certificate. Switch the domain to HTTPS before the first signup. The package README covers
+install, the first account, backup and restore, and updates.
+
 ## Manual Setup
 
 > `install.sh --version vX.Y.Z --stage-only ./staged` performs the release-tag,
