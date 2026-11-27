@@ -163,7 +163,7 @@ describe('signup Billing session boundary', () => {
     await waitFor(() => expect(continueToOptions).toBeEnabled())
     fireEvent.click(continueToOptions)
     const choose = async () => {
-      fireEvent.click(await screen.findByRole('button', { name: /7 day free trial/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /7-day free trial/i }))
       fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
       // No review screen: the password-loss acknowledgement gates the only creation step.
       const action = await screen.findByRole('button', { name: /continue to your workspace/i })
@@ -176,7 +176,7 @@ describe('signup Billing session boundary', () => {
     expect(useAuthStore.getState().pendingSignup?.etebaseAccountReady).toBe(true)
     expect(provisions).toBe(0)
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-    await screen.findByRole('heading', { name: /choose your plan/i })
+    await screen.findByRole('heading', { name: /choose your free trial/i })
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
     expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
     expect(screen.getByText(/original password remains unchanged/i)).toBeVisible()

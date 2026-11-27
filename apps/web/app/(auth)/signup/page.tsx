@@ -545,7 +545,7 @@ function StepCreateAccount({
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Choose your plan (2-card selection + inline payment sub-step)
+// Step 2: Choose your free trial (2-card selection + inline payment sub-step)
 // ---------------------------------------------------------------------------
 
 type PlanView = 'cards' | 'method' | 'confirm' | 'payment' | 'crypto'
@@ -990,7 +990,7 @@ function StepChoosePlan({
               type="button"
               onClick={handleSelectBitcoin}
               disabled={provisioning}
-              aria-label={`Pay ${formatAnnualOfferAmount(annualOfferDetails)} with Bitcoin, Lightning and Monero for ${annualOfferPlanLabel(annualOfferDetails)}, paid now with a 30-day money-back guarantee`}
+              aria-label={`Pay ${formatAnnualOfferAmount(annualOfferDetails)} with Bitcoin, Lightning and Monero for ${annualOfferPlanLabel(annualOfferDetails)}, paid now with no free trial and a 30-day money-back guarantee`}
               className="group w-full rounded-xl border-2 border-slate-700/50 bg-[rgb(var(--surface))] p-4 text-left transition-all hover:border-amber-500/70 hover:bg-amber-500/5 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <div className="flex items-start gap-3">
@@ -1000,7 +1000,7 @@ function StepChoosePlan({
                 <div className="flex-1">
                   <h3 className="font-semibold text-[rgb(var(--foreground))]">Bitcoin, Lightning and Monero</h3>
                   <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                    Payment has to be made with account creation, but we offer a 30-day, no-questions-asked money-back guarantee.
+                    Pay now, no free trial. You get a 30-day, no-questions-asked money-back guarantee.
                   </p>
                   <p className="mt-1 text-sm text-[rgb(var(--muted))]">
                     {formatAnnualOfferAmount(annualOfferDetails)} for one year, paid now. No automatic renewal.
@@ -1109,17 +1109,17 @@ function StepChoosePlan({
   return (
     <div ref={contentRef} className="space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-left-4 duration-300 motion-reduce:animate-none">
       <div className="space-y-2 text-center">
-        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
+        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Choose your free trial</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
           {annualOfferPlanLabel(annualOfferDetails)}
         </p>
       </div>
 
       <div className="space-y-3 sm:space-y-4">
-        {/* Card A: 7 Day Free Trial — no card */}
+        {/* Card A: 7-day free trial — no card */}
         <button
           onClick={() => setSelectedTrial('7day')}
-          aria-label="7 Day Free Trial — full access, no credit card required"
+          aria-label="7-day free trial — no card needed, full access to all features"
           className={`group w-full rounded-xl border-2 p-4 sm:p-5 text-left transition-all ${
             selectedTrial === '7day'
               ? 'border-emerald-500 bg-emerald-500/5'
@@ -1131,27 +1131,23 @@ function StepChoosePlan({
               <Gift className="h-5 w-5 text-[rgb(var(--muted))]" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-[rgb(var(--foreground))]">7 Day Free Trial</h3>
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">7-day free trial</h3>
+              <p className="mt-1 text-sm text-[rgb(var(--foreground))]">No card needed.</p>
               <ul className="mt-2 space-y-1.5">
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                   Full access to all features
-                </li>
-                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  No credit card required
                 </li>
               </ul>
             </div>
           </div>
         </button>
 
-        {/* Card B: 30-day free trial. Heading, badge and feature bullet are the
-            pre-annual-rollout copy (82019158^, introduced by #123 8bff947d);
-            price and payment-method terms are stated on the next screen. */}
+        {/* Card B: 30-day free trial. It states that a card is needed before the
+            choice; price and payment-method terms are stated on the next screen. */}
         <button
           onClick={() => setSelectedTrial('30day')}
-          aria-label="30-day free trial — full access to all features"
+          aria-label="30-day free trial — card required, no charge for 30 days, full access to all features"
           className={`group w-full rounded-xl border-2 p-4 sm:p-6 text-left transition-all ${
             selectedTrial === '30day'
               ? 'border-emerald-500 bg-emerald-500/5'
@@ -1169,7 +1165,8 @@ function StepChoosePlan({
                   Recommended
                 </span>
               </div>
-              <ul className="mt-3 space-y-1.5">
+              <p className="mt-1 text-sm text-[rgb(var(--foreground))]">Card required. No charge for 30 days.</p>
+              <ul className="mt-2 space-y-1.5">
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                   Full access to all features
