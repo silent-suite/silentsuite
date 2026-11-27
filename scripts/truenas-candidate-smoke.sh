@@ -94,7 +94,12 @@ negative "a trailing space in the database password" "must not start or end with
 negative "a leading space in the database password" "must not start or end with spaces" 'v["silentsuite"]["db_password"] = " " + v["silentsuite"]["db_password"]'
 negative "a line break in the database password" "must not start or end with spaces" 'v["silentsuite"]["db_password"] = "abc\ndef"'
 negative "neither a certificate nor the HTTPS proxy option" "Select a certificate" 'v["network"]["behind_https_proxy"] = False'
-negative "mismatched web and server release tags" "same release tag" 'v["images"] = {"web_image": {"repository": "ghcr.io/silent-suite/silentsuite-web-selfhost", "tag": "v0.0.1-beta"}}'
+# Test values cannot override images, so mimic a one-image bot bump in ix_values.yaml.
+cp "$app/ix_values.yaml" "$work/ix_values.yaml"
+sed -i '/repository: ghcr.io\/silent-suite\/silentsuite-web-selfhost/{n;s/tag: "v[^@]*@/tag: "v0.0.1-beta@/}' "$app/ix_values.yaml"
+! cmp -s "$app/ix_values.yaml" "$work/ix_values.yaml" || fail "could not stage the mismatched web tag"
+negative "mismatched web and server release tags" "same release tag" 'pass'
+cp "$work/ix_values.yaml" "$app/ix_values.yaml"
 
 # ── Private fixture helpers ────────────────────────────────────────────
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=SilentSuite CI CA" \
