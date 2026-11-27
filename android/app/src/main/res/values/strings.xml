@@ -256,7 +256,6 @@
     <string name="members_owner_only">Only the owner of this collection (%s) is allowed to view its members.</string>
     <string name="collection_shared_with_us">Shared with us</string>
     <string name="collection_recent_activity_loading">Loading recent activity...</string>
-    <string name="collection_recent_activity_none">No recent activity yet</string>
     <string name="collection_activity_accessibility">%1$s. %2$s. %3$s</string>
     <string name="not_allowed_title">Not Allowed</string>
     <string name="edit_owner_only">Only the owner of this collection (%s) is allowed to edit it.</string>

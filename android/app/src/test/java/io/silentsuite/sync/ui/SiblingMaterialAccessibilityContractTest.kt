@@ -167,4 +167,13 @@ class SiblingMaterialAccessibilityContractTest {
         assertTrue(fragment.contains("if (stats.text != status)"))
         assertTrue(fragment.contains("stats.text = status"))
     }
+
+    @Test
+    fun collectionScreenShowsItsNameOnceAndOneEmptyMessage() {
+        val fragment = source("java/io/silentsuite/sync/ui/etebase/ViewCollectionFragment.kt")
+
+        assertTrue(fragment.contains("findViewById<View>(R.id.display_name).visibility = View.GONE"))
+        assertTrue(fragment.contains("R.id.stats_row).visibility = if (count == 0) View.GONE else View.VISIBLE"))
+        assertFalse(source("res/values/strings.xml").contains("collection_recent_activity_none"))
+    }
 }
