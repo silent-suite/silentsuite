@@ -59,6 +59,29 @@ class ICalPreprocessorTest {
     }
 
     @Test
+    fun testFixWeekDurations() {
+        val cases = mapOf(
+            "TRIGGER:-P1W2DT15H" to "TRIGGER:-P9DT15H",     // Proton Calendar, all-day event reminder
+            "TRIGGER:-P1WT2H" to "TRIGGER:-P7DT2H",
+            "TRIGGER:P1W2D" to "TRIGGER:P9D",
+            "TRIGGER;RELATED=END:+P2W1DT1H30M" to "TRIGGER;RELATED=END:+P15DT1H30M",
+            "DURATION:P1W1DT12H" to "DURATION:P8DT12H",
+            "trigger:-p1w2dt15h" to "trigger:-p9Dt15h",
+            // valid or other values stay as they are
+            "TRIGGER:-P2W" to "TRIGGER:-P2W",
+            "TRIGGER:-P5D" to "TRIGGER:-P5D",
+            "TRIGGER:-PT15H" to "TRIGGER:-PT15H",
+            "TRIGGER;VALUE=DATE-TIME:20261210T090000Z" to "TRIGGER;VALUE=DATE-TIME:20261210T090000Z",
+            "DESCRIPTION:TRIGGER:-P1W2DT15H" to "DESCRIPTION:TRIGGER:-P1W2DT15H",
+            "TRIGGER:-P99999999999999999999W1D" to "TRIGGER:-P99999999999999999999W1D"
+        )
+        for ((original, fixed) in cases) {
+            val ics = "BEGIN:VALARM\r\nACTION:DISPLAY\r\n$original\r\nEND:VALARM\r\n"
+            assertEquals(ics.replace(original, fixed), ICalPreprocessor.fixWeekDurations(StringReader(ics)).readText())
+        }
+    }
+
+    @Test
     fun testMsTimeZones() {
         javaClass.classLoader!!.getResourceAsStream("events/outlook1.ics").use { stream ->
             val reader = InputStreamReader(stream, Charsets.UTF_8)

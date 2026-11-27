@@ -206,6 +206,43 @@ class EventTest {
     }
 
     @Test
+    fun testAlarmWithWeeksAndDays() {
+        // Proton Calendar exports reminders of all-day events like "1 week 2 days before at 09:00"
+        // with weeks and days in one duration. java.time.Duration can't parse that, and the
+        // DateTimeParseException stopped the whole calendar's sync.
+        val ics = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:-//Proton AG//WebCalendar 5.0.0//EN
+            BEGIN:VEVENT
+            UID:qa-tmp-trigger-weeks-20261127
+            DTSTAMP:20261127T120000Z
+            DTSTART;VALUE=DATE:20261224
+            DTEND;VALUE=DATE:20261225
+            SUMMARY:weeks
+            BEGIN:VALARM
+            ACTION:DISPLAY
+            TRIGGER:-P1W2DT15H
+            END:VALARM
+            BEGIN:VALARM
+            ACTION:DISPLAY
+            TRIGGER:-P2W
+            END:VALARM
+            BEGIN:VALARM
+            ACTION:DISPLAY
+            TRIGGER:-PT15H
+            END:VALARM
+            END:VEVENT
+            END:VCALENDAR
+        """.trimIndent().replace("\n", "\r\n") + "\r\n"
+        val e = Event.eventsFromReader(StringReader(ics)).single()
+        assertEquals(3, e.alarms.size)
+        assertEquals(Duration.ofDays(-9).minusHours(15), e.alarms[0].trigger.duration)
+        assertEquals(java.time.Period.ofWeeks(-2), e.alarms[1].trigger.duration)
+        assertEquals(Duration.ofHours(-15), e.alarms[2].trigger.duration)
+    }
+
+    @Test
     fun testZoneNotBundledWithIcal4jWithoutVTimeZone() {
         // ical4j 3.0.20 doesn't bundle Europe/Kyiv and generates its definition; the web app's
         // .ics import stores events without VTIMEZONE
