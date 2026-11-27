@@ -1,5 +1,5 @@
 /**
- * Hosted login email change (experimental) and the session's server identity.
+ * Hosted login email change and the session's server identity.
  *
  * The login name lives on the Etebase server; Billing only keeps a contact
  * address. Re-authentication always uses the saved session's own username,
