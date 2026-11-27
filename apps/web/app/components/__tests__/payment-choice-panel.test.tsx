@@ -702,6 +702,71 @@ describe('PaymentChoicePanel cancellation across close and reopen', () => {
   })
 })
 
+// Review fix 3 SIGNUP-02: a flow Billing names no authority for keeps its wait by its own identity.
+describe('PaymentChoicePanel unnamed-flow cancellation across close and reopen', () => {
+  const COOLDOWN_2 = 'Too many attempts. Wait 2 minutes, then retry cancellation. This payment is still active; do not start another payment.'
+  afterEach(() => { vi.useRealTimers() })
+
+  function routeFlows(flows: Array<Record<string, unknown>>) {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const { path, preview } = route(input)
+      if (path === '/subscription/payment-flows/current') return response({ flow: flows[0] })
+      if (path === '/subscription/offers/v2') return response(preview ? previewOffer : annualOffer)
+      if (path === '/subscription/payment-flows/cancel') {
+        return new Response(JSON.stringify({ type: 'https://api.silentsuite.io/errors/rate-limit-exceeded', title: 'Too Many Requests', status: 429 }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '120' } })
+      }
+      return response({}, false)
+    })
+  }
+
+  it('keeps the Retry-After wait for the same unnamed payment after a reopen', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    routeFlows([activeFlow])
+    const first = render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment' }))
+    expect(await screen.findByText(COOLDOWN_2)).toBeInTheDocument()
+    expect(called('/subscription/payment-flows/cancel')).toHaveLength(1)
+    first.unmount()
+
+    render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    expect(await screen.findByText(COOLDOWN_2)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel card payment' })).toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel card payment' }))
+    expect(called('/subscription/payment-flows/cancel')).toHaveLength(1)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(121_000) })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel card payment' })).toBeEnabled())
+    expect(screen.queryByText(COOLDOWN_2)).not.toBeInTheDocument()
+  })
+
+  it('never blocks a different unnamed payment with that wait', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    // Creation times no other test uses: the waits recorded here outlive their panels.
+    const flows: Array<Record<string, unknown>> = [{ ...activeFlow, createdAt: '2026-08-10T12:15:00Z' }]
+    routeFlows(flows)
+    const first = render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment' }))
+    expect(await screen.findByText(COOLDOWN_2)).toBeInTheDocument()
+    first.unmount()
+
+    // Another payment of the same kind, created later.
+    flows[0] = { ...activeFlow, createdAt: '2026-08-10T12:30:00Z' }
+    const second = render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    await screen.findByText(/card payment in progress/i)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel card payment' })).toBeEnabled())
+    expect(screen.queryByText(COOLDOWN_2)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel card payment' }))
+    await waitFor(() => expect(called('/subscription/payment-flows/cancel')).toHaveLength(2))
+    second.unmount()
+
+    // An account with no payment in progress keeps its plain Cancel.
+    flows[0] = null as unknown as Record<string, unknown>
+    render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled())
+    expect(screen.queryByText(COOLDOWN_2)).not.toBeInTheDocument()
+  })
+})
+
 // C1 review CR-4: a zero wait (Retry-After: 0 or a past HTTP date) is
 // immediately retryable; it must not show or keep a "Wait n minutes" message.
 describe('PaymentChoicePanel zero-delay rate-limited cancellation', () => {

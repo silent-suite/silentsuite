@@ -229,10 +229,10 @@ function BitcoinCancellationAcknowledgement({
 }
 
 // A cancellation's Retry-After wait outlives the panel, so closing and reopening the dialog can't
-// re-enable an early retry for the same payment. Keyed by account and the authority Billing named;
-// an unnamed authority keeps its wait in panel state only, as before.
+// re-enable an early retry for the same payment. Keyed by account and the payment's identity (see
+// cancelWaitId), so it never blocks another payment or an account with no payment in progress.
 const cancelWaits = new Map<string, { until: number; message: string }>()
-const cancelWaitKey = (accountId: string | null, authorityId: string) => `${accountId ?? ''}:${authorityId}`
+const cancelWaitKey = (accountId: string | null, waitId: string) => `${accountId ?? ''}:${waitId}`
 
 function safeBtcpayUrl(rawUrl: string): string {
   const checkoutUrl = resolveBtcpayUrl(rawUrl)
@@ -280,12 +280,12 @@ export default function PaymentChoicePanel({
   const [cardProcessing, setCardProcessing] = useState(false)
   const [bitcoinCompleting, setBitcoinCompleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [cancelBlockedUntil, setCancelBlockedUntil] = useState<{ authorityId: string | null; until: number; message: string } | null>(null)
+  const [cancelBlockedUntil, setCancelBlockedUntil] = useState<{ waitId: string | null; until: number; message: string } | null>(null)
   useEffect(() => {
     if (!cancelBlockedUntil) return
     // Expiry only re-enables the control and retires its wait copy; it never sends a request.
     const timer = window.setTimeout(() => {
-      if (cancelBlockedUntil.authorityId) cancelWaits.delete(cancelWaitKey(owner.current.accountId, cancelBlockedUntil.authorityId))
+      if (cancelBlockedUntil.waitId) cancelWaits.delete(cancelWaitKey(owner.current.accountId, cancelBlockedUntil.waitId))
       setCancelBlockedUntil(null)
       setError(current => current === cancelBlockedUntil.message ? null : current)
     }, Math.max(0, cancelBlockedUntil.until - Date.now()))
@@ -460,16 +460,24 @@ export default function PaymentChoicePanel({
   // A 429 refusal holds the displayed authority's cancel controls until the
   // server's wait elapses; a different authority is never blocked by it.
   // A wait recorded before the dialog was closed applies again once the same authority is shown.
+  // The payment a wait belongs to: the authority Billing named, else the current flow's own kind and
+  // creation time. A displayed session without a named authority has no stable identity, so its
+  // wait stays in panel state only (null).
+  const cancelWaitId = displayedAuthorityId
+    ? `authority:${displayedAuthorityId}`
+    : !bitcoinSession && !clientSecret && currentFlow
+      ? `flow:${currentFlow.flowKind}:${currentFlow.createdAt}`
+      : null
   useEffect(() => {
-    if (!displayedAuthorityId) return
-    const key = cancelWaitKey(owner.current.accountId, displayedAuthorityId)
+    if (!cancelWaitId) return
+    const key = cancelWaitKey(owner.current.accountId, cancelWaitId)
     const wait = cancelWaits.get(key)
     if (!wait) return
     if (wait.until <= Date.now()) { cancelWaits.delete(key); return }
-    setCancelBlockedUntil({ authorityId: displayedAuthorityId, ...wait })
+    setCancelBlockedUntil({ waitId: cancelWaitId, ...wait })
     setError(wait.message)
-  }, [displayedAuthorityId])
-  const cancelRateLimited = cancelBlockedUntil !== null && cancelBlockedUntil.authorityId === displayedAuthorityId
+  }, [cancelWaitId])
+  const cancelRateLimited = cancelBlockedUntil !== null && cancelBlockedUntil.waitId === cancelWaitId
   const cancellationDisabled = loading !== null || cancellationBlocked || cancelRateLimited
   // Identity of the provider authority currently on screen. A different
   // authority must never inherit a previous acknowledgement.
@@ -613,15 +621,15 @@ export default function PaymentChoicePanel({
           }
           const message = rateLimitedCancellationCopy(Math.max(1, Math.ceil(result.retryAfterMs / 60_000)))
           const until = Date.now() + result.retryAfterMs
-          if (displayedAuthorityId) cancelWaits.set(cancelWaitKey(owner.current.accountId, displayedAuthorityId), { until, message })
-          setCancelBlockedUntil({ authorityId: displayedAuthorityId, until, message })
+          if (cancelWaitId) cancelWaits.set(cancelWaitKey(owner.current.accountId, cancelWaitId), { until, message })
+          setCancelBlockedUntil({ waitId: cancelWaitId, until, message })
           setError(message)
           return false
         }
         setError(result.message)
         return false
       }
-      if (displayedAuthorityId) cancelWaits.delete(cancelWaitKey(owner.current.accountId, displayedAuthorityId))
+      if (cancelWaitId) cancelWaits.delete(cancelWaitKey(owner.current.accountId, cancelWaitId))
       setCancelBlockedUntil(null)
       setCurrentFlow(null)
       setClientSecret(null)
