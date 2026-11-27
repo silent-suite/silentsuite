@@ -41,18 +41,23 @@ from selfhost_release_contract import (  # noqa: E402
 # Fixed epoch for every archive member and for the gzip header. Determinism is
 # what lets an auditor rebuild the bundle from the tag and compare checksums.
 FIXED_MTIME = 0
+# Separately packaged app-store trees under self-host/ (one per platform).
+SEPARATE_PACKAGE_DIRS = frozenset({"casaos", "dokploy", "startos", "truenas", "umbrel", "yunohost"})
 
 
 def build_archive(self_host_dir: Path, tag: str, manifest_bytes: bytes) -> bytes:
     prefix = bundle_prefix(tag)
-    # self-host/umbrel is the separately packaged Umbrel app tree, not part of the
-    # flat release bundle. Its one real, non-symlink directory entry may coexist
-    # next to the admitted flat files; every other entry — including a regular
-    # file or any symlink named "umbrel" — must still match the inventory exactly.
+    # self-host/<platform> trees are separately packaged app-store packages, not
+    # part of the flat release bundle. Only real, non-symlink directories with
+    # these exact names may coexist next to the admitted flat files; every other
+    # entry — including a regular file or any symlink with one of these names —
+    # must still match the inventory exactly.
     present = sorted(
         entry.name
         for entry in self_host_dir.iterdir()
-        if not (entry.name == "umbrel" and entry.is_dir() and not entry.is_symlink())
+        if not (
+            entry.name in SEPARATE_PACKAGE_DIRS and entry.is_dir() and not entry.is_symlink()
+        )
     )
     expected = sorted(BUNDLE_SOURCE_FILES)
     if present != expected:
