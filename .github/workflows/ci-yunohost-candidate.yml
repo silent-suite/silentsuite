@@ -227,7 +227,7 @@ jobs:
           # On a failed test package_check uploads the YunoHost log to paste.yunohost.org
           # (lib/tests_coordination.sh). Nothing from this CI is published: remove that call.
           sed -i '/log_share(/d' "$pc/lib/tests_coordination.sh"
-          ! grep -rn "log_share" "$pc/lib" "$pc/package_check.sh"
+          if grep -rn "log_share" "$pc/lib" "$pc/package_check.sh"; then exit 1; fi
           # package_check always runs `git fetch origin && git reset --hard origin/main` in
           # ./package_linter (lib/common.sh fetch_or_upgrade_package_linter). Point origin at
           # a local mirror whose only ref is main = the pinned commit.
