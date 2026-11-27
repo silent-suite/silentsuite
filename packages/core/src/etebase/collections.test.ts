@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createItem, deleteCollection, listCollections, updateCollectionMeta, updateItem } from './collections.js';
+import { createItem, deleteCollection, listCollections, updateCollectionMeta, updateItem, updateItemIfUnchanged } from './collections.js';
 
 describe('listCollections', () => {
   it('filters deleted collection tombstones', async () => {
@@ -286,6 +286,76 @@ describe('updateItem', () => {
 
     expect(item.setMeta).toHaveBeenCalledWith({ name: 'New title', mtime: 2 });
     expect(item.setContent).toHaveBeenCalledWith('new body');
+    expect(itemManager.batch).toHaveBeenCalledWith([item]);
+  });
+});
+
+describe('saving over metadata that is not a map', () => {
+  // Metadata another client stored as text, a list, or an object that is not a plain map.
+  const notAMap: Array<[string, unknown]> = [
+    ['text', 'metadata written as text'],
+    ['a list', ['first', 'second']],
+    ['an object with a foreign prototype', Object.create({ inherited: true })],
+  ];
+
+  function itemWithMeta(current: unknown) {
+    const item = {
+      uid: 'item-1',
+      getMeta: vi.fn().mockReturnValue(current),
+      setMeta: vi.fn().mockResolvedValue(undefined),
+      setContent: vi.fn().mockResolvedValue(undefined),
+      encryptedItem: { lastEtag: 'etag-1' },
+      _clone: () => item,
+    };
+    const itemManager = {
+      batch: vi.fn().mockResolvedValue(undefined),
+      transaction: vi.fn().mockResolvedValue(undefined),
+    };
+    const account = {
+      getCollectionManager: vi.fn().mockReturnValue({
+        getItemManager: vi.fn().mockReturnValue(itemManager),
+      }),
+    };
+    return { item, itemManager, account };
+  }
+
+  it.each(notAMap)('updateItem refuses the save when the metadata is %s', async (_label, current) => {
+    const { item, itemManager, account } = itemWithMeta(current);
+
+    await expect(updateItem(account as any, { uid: 'col-1' } as any, item as any, 'new body', { name: 'New title', mtime: 2 }))
+      .rejects.toMatchObject({ name: 'ItemMetaNotAMapError' });
+
+    expect(item.setMeta).not.toHaveBeenCalled();
+    expect(item.setContent).not.toHaveBeenCalled();
+    expect(itemManager.batch).not.toHaveBeenCalled();
+  });
+
+  it.each(notAMap)('updateItemIfUnchanged refuses the save when the metadata is %s', async (_label, current) => {
+    const { item, itemManager, account } = itemWithMeta(current);
+
+    await expect(updateItemIfUnchanged(account as any, { uid: 'col-1' } as any, item as any, 'new body', { name: 'New title', mtime: 2 }))
+      .rejects.toMatchObject({ name: 'ItemMetaNotAMapError' });
+
+    expect(item.setMeta).not.toHaveBeenCalled();
+    expect(itemManager.transaction).not.toHaveBeenCalled();
+  });
+
+  it('still saves over missing metadata, and over a map with a null prototype', async () => {
+    const missing = itemWithMeta(undefined);
+    await updateItem(missing.account as any, { uid: 'col-1' } as any, missing.item as any, 'body', { name: 'Title', mtime: 2 });
+    expect(missing.item.setMeta).toHaveBeenCalledWith({ name: 'Title', mtime: 2 });
+
+    const bare = Object.assign(Object.create(null), { name: 'Old', peer: 'kept' });
+    const nullProto = itemWithMeta(bare);
+    await updateItemIfUnchanged(nullProto.account as any, { uid: 'col-1' } as any, nullProto.item as any, 'body', { name: 'Title', mtime: 2 });
+    expect(nullProto.item.setMeta).toHaveBeenCalledWith({ name: 'Title', peer: 'kept', mtime: 2 });
+    expect(nullProto.itemManager.transaction).toHaveBeenCalled();
+  });
+
+  it('does not save a metadata change when updateItem is given none', async () => {
+    const { item, itemManager, account } = itemWithMeta('metadata written as text');
+    await updateItem(account as any, { uid: 'col-1' } as any, item as any, 'new body');
+    expect(item.setMeta).not.toHaveBeenCalled();
     expect(itemManager.batch).toHaveBeenCalledWith([item]);
   });
 });
