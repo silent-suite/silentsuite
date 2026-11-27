@@ -1,0 +1,160 @@
+name: CI StartOS Candidate
+
+# Builds the StartOS package (self-host/startos) into DEVELOPMENT .s9pk files and runs
+# its container wiring with Docker. No registry publication, signing key, release or
+# deployment: the packing key is a throwaway generated per run.
+on:
+  pull_request:
+    paths:
+      - "self-host/startos/**"
+      - "self-host/umbrel/silentsuite/data/bootstrap/**"
+      - "scripts/startos-candidate-*"
+      - "apps/web/app/lib/__tests__/startos-package-contract.test.ts"
+      - ".github/workflows/ci-startos-candidate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: startos-candidate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  START_CLI_VERSION: "2.8.0"
+
+jobs:
+  contract:
+    name: StartOS package contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Run directly: the test reads files outside the web app's Turbo cache inputs.
+      - name: Run the StartOS package contract test
+        run: pnpm --filter @silentsuite/web test app/lib/__tests__/startos-package-contract.test.ts
+
+  candidate:
+    name: StartOS development candidate (${{ matrix.arch }})
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86
+            runner: ubuntu-24.04
+            start_cli_sha256: 05a9a1c00207fb83c5d36eeb801655d5e02272a5a01c34d3588982c39fbca689
+          - arch: aarch64
+            target: arm
+            runner: ubuntu-24.04-arm
+            start_cli_sha256: 9ad5b64283dc5d77cdc691738d86a78205442b09026841fe51a487974a197b63
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      ARCH: ${{ matrix.arch }}
+      TARGET: ${{ matrix.target }}
+      START_CLI_SHA256: ${{ matrix.start_cli_sha256 }}
+
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Assert pinned image inputs before packing
+        working-directory: self-host/startos
+        run: |
+          upstream="$(sed -n "s/^ *version: '\([^':]*\):[0-9]*',$/\1/p" startos/versions/current.ts)"
+          test -n "$upstream"
+          for name in serverImage webImage postgresImage routerImage; do
+            ref="$(sed -n "/^export const ${name} =\$/{n;s/^ *'\\([^']*\\)'\$/\\1/p;}" startos/manifest/index.ts)"
+            echo "$name $ref"
+            [[ "$ref" =~ ^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$ ]]
+          done
+          grep -q "silentsuite-server:v${upstream}@sha256:" startos/manifest/index.ts
+          grep -q "silentsuite-web-selfhost:v${upstream}@sha256:" startos/manifest/index.ts
+          echo "UPSTREAM=$upstream" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Install pinned start-cli
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/start-cli" \
+            "https://github.com/Start9Labs/start-technologies/releases/download/start-cli/v${START_CLI_VERSION}/start-cli_${ARCH}-linux"
+          echo "${START_CLI_SHA256}  $RUNNER_TEMP/start-cli" | sha256sum -c -
+          sudo install -m 755 "$RUNNER_TEMP/start-cli" /usr/local/bin/start-cli
+          start-cli --version
+
+      - name: Install the wrapper's locked dependencies
+        working-directory: self-host/startos
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Generate a throwaway packing key
+        working-directory: self-host/startos
+        run: |
+          start-cli init-key
+          mkdir -p .startos
+          cp ~/.startos/id.key.pem .startos/build.key.pem
+
+      - name: Pack the development s9pk
+        working-directory: self-host/startos
+        run: make "$TARGET"
+
+      - name: Fail if packing reformatted or added tracked sources
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Inspect the packed manifest
+        working-directory: self-host/startos
+        run: |
+          file="silentsuite_${ARCH}.s9pk"
+          start-cli s9pk inspect "$file" manifest > "$RUNNER_TEMP/manifest.json"
+          jq -e --arg arch "$ARCH" --arg version "${UPSTREAM}:0" --arg head "$HEAD_SHA" '
+            .id == "silentsuite"
+            and .version == $version
+            and (.images | keys) == ["postgres", "router", "server", "web"]
+            and ([.images[].arch] | all(. == [$arch]))
+            and .gitHash == $head
+          ' "$RUNNER_TEMP/manifest.json"
+
+      - name: Run the container wiring smoke test
+        run: env -i PATH="$PATH" HOME="$HOME" RUNNER_TEMP="$RUNNER_TEMP" bash scripts/startos-candidate-smoke.sh
+
+      - name: Upload development s9pk
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: startos-development-candidate-${{ github.event.pull_request.head.sha }}-${{ matrix.arch }}
+          path: self-host/startos/silentsuite_${{ matrix.arch }}.s9pk
+          if-no-files-found: error
+          retention-days: 7
