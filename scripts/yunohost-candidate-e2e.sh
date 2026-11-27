@@ -220,7 +220,8 @@ hits=$(ct sh -c '
     rm -f /root/markers /root/journal.txt
     echo "$n"')
 [ "$hits" = 0 ] || fail "log markers: $hits match(es) in container logs"
-hits=$(grep -lF -f "$work/markers" "$work"/*.log | wc -l)
+head -5 "$work/markers" >"$work/own-markers"
+hits=$({ grep -lF -f "$work/own-markers" "$work"/*.log || true; } | wc -l)
 [ "$hits" = 0 ] || fail "log markers: $hits installer output file(s) contain a secret or identifier"
 pass "no secrets or identifiers in installer output, operation logs, nginx logs or the journal"
 
