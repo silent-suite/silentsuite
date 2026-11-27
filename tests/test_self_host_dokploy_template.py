@@ -221,6 +221,8 @@ class Rendering(unittest.TestCase):
         env_file = directory / "code/.env"
         self.assertEqual(env_file.stat().st_mode & 0o777, 0o600)
         env = dict(line.split("=", 1) for line in env_file.read_text(encoding="utf-8").splitlines())
+        self.assertEqual(env.pop("APP_NAME"), "silentsuite-ci")
+        self.assertEqual(env.pop("COMPOSE_PROJECT_NAME"), "silentsuite-ci")
         self.assertEqual(set(env), set(SECRETS))
         self.assertEqual(len(set(env.values())), 3)
         for name, length in SECRETS.items():
@@ -249,6 +251,22 @@ class Rendering(unittest.TestCase):
         first = self.render()
         second = self.render("--carry-from", str(first / "code/.env"))
         self.assertEqual((first / "code/.env").read_text(), (second / "code/.env").read_text())
+
+    def test_readme_recipes_are_fail_closed_scripts(self):
+        readme = (ROOT / "self-host/dokploy/README.md").read_text(encoding="utf-8")
+        recipes = re.findall(r"```sh\n# recipe: ([a-z-]+)\n(.*?)```", readme, re.S)
+        self.assertEqual([name for name, _ in recipes], ["logical-backup", "logical-restore", "volume-backup", "volume-restore"])
+        for name, body in recipes:
+            lines = body.splitlines()
+            self.assertTrue(lines[0].startswith("app=") and lines[1].startswith("backup=") and lines[2].startswith("code="), name)
+            self.assertEqual(lines[3], "set -eu", name)
+            self.assertNotRegex(body, r"-v [\"']?[a-z<$]*_silentsuite-", name)  # no typed volume names
+            if name.endswith("backup"):
+                self.assertIn('mkdir -m 700 "$backup"', body)
+                self.assertIn("umask 077", body)
+            else:
+                guard = body.index("refusing")
+                self.assertLess(guard, body.index("down --volumes"), name)
 
     def test_import_payload_is_the_template_site_format(self):
         result = run_render("import")

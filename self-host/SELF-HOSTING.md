@@ -179,7 +179,7 @@ single atomic `mkdir` only after every check it performs has passed.
 ## Dokploy
 
 If you run [Dokploy](https://dokploy.com), you can deploy SilentSuite as a Compose service from the
-blueprint in [`dokploy/`](dokploy/README.md). Dokploy generates the secrets and provides the
+blueprint in [`self-host/dokploy/`](https://github.com/silent-suite/silentsuite/blob/main/self-host/dokploy/README.md). Dokploy generates the secrets and provides the
 HTTPS certificate. Switch the domain to HTTPS before the first signup. The package README covers
 install, the first account, backup and restore, and updates.
 

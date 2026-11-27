@@ -18,6 +18,7 @@ work="$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/dokploy-stack.XXXXXXX
 export DOCKER_CONFIG="$work/docker-config"
 mkdir -m 700 "$DOCKER_CONFIG" "$work/backup"
 projects=()
+isolated_networks=()
 cleanup() {
   status=$?
   trap - EXIT HUP INT TERM
@@ -25,7 +26,7 @@ cleanup() {
     docker compose -p "$project" --project-directory "$work/$project/code" down --volumes --remove-orphans >/dev/null 2>&1 || true
   done
   docker rm -f silentsuite-ci-decoy-server silentsuite-ci-decoy-web silentsuite-ci-decoy-postgres silentsuite-ci-decoy-db >/dev/null 2>&1 || true
-  docker network rm dokploy-network silentsuite-iso >/dev/null 2>&1 || true
+  docker network rm dokploy-network "${isolated_networks[@]}" >/dev/null 2>&1 || true
   sudo rm -rf -- "$work"
   exit "$status"
 }
@@ -41,16 +42,16 @@ REQUIREMENTS
 "$work/venv/bin/pip" install --disable-pip-version-check --quiet --require-hashes --only-binary=:all: -r "$work/requirements.txt"
 py="$work/venv/bin/python"
 blueprint="$root/self-host/dokploy/silentsuite/docker-compose.yml"
-umbrel="$root/self-host/umbrel/silentsuite/docker-compose.yml"
 
 image_of() { "$py" -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["services"][sys.argv[2]]["image"])' "$1" "$2"; }
 new_web="$(image_of "$blueprint" silentsuite-web)"
 new_server="$(image_of "$blueprint" silentsuite-server)"
-old_web="$(image_of "$umbrel" web)"
-old_server="$(image_of "$umbrel" server)"
+# Upgrade fixture: the previous published release, pinned here independently of any package.
+old_web="ghcr.io/silent-suite/silentsuite-web-selfhost:v0.5.20-beta@sha256:5156f5d9b67db5c7a6dcdf51c603b104e4c3ec6e2789ad2a6552431fd66e8088"
+old_server="ghcr.io/silent-suite/silentsuite-server:v0.5.20-beta@sha256:6a5ab47d21feeed4fc05379258e8c2686e1fa67138dbd6570900eea732b0c7bb"
 router_ref="$(image_of "$blueprint" silentsuite)"
 postgres_ref="$(image_of "$blueprint" silentsuite-postgres)"
-[ "$old_web" != "$new_web" ] && [ "$old_server" != "$new_server" ] || { echo "Upgrade needs older Umbrel pins" >&2; exit 1; }
+[ "$old_web" != "$new_web" ] && [ "$old_server" != "$new_server" ] || { echo "Upgrade fixture equals the blueprint pins" >&2; exit 1; }
 
 echo "== Image identity"
 "$py" - "$identity" "$new_web" "$new_server" <<'PY'
@@ -75,7 +76,21 @@ for reference in "$new_web" "$new_server"; do
 done
 echo "PASS images pulled by digest for $platform; app image revisions equal the release source commit"
 
-render() { "$py" "$root/scripts/dokploy-template-render.py" render "$work/$1" "${@:2}"; }
+render() { "$py" "$root/scripts/dokploy-template-render.py" render "$work/$1" --app-name "$1" "${@:2}"; }
+wait_healthy() {
+  for _ in $(seq 80); do
+    [ "$(docker inspect -f '{{.State.Health.Status}}' "$1-silentsuite-server-1" 2>/dev/null)" = healthy ] && return 0
+    sleep 3
+  done
+  echo "FAIL $1 server never became healthy" >&2; exit 1
+}
+# Runs a README backup/restore block verbatim; only its app=, backup= and code= lines change.
+recipe() {
+  local name="$1" project="$2" backup="$3"
+  "$py" "$root/scripts/dokploy-template-render.py" recipe "$name" --app "$project" --backup "$backup" \
+    --code "$work/$project/code" > "$work/recipe-$name-$project.sh"
+  (cd "$work/$project/code" && COMPOSE_FILE=docker-compose.yml:ci-port.yml sh "$work/recipe-$name-$project.sh")
+}
 compose() { local project="$1"; shift; docker compose -p "$project" --project-directory "$work/$project/code" -f "$work/$project/code/docker-compose.yml" -f "$work/$project/code/ci-port.yml" "$@"; }
 publish() { printf 'services:\n  silentsuite:\n    ports:\n      - "127.0.0.1:%s:8080"\n' "$2" > "$work/$1/code/ci-port.yml"; projects+=("$1"); }
 probe_env() {
@@ -208,47 +223,49 @@ for alias in server web postgres db; do
 done
 echo "PASS no request reached the generic-name decoys"
 
-echo "== Logical backup and restore"
-compose main stop silentsuite silentsuite-web silentsuite-server >/dev/null
-compose main exec -T silentsuite-postgres pg_dump -U silentsuite -d silentsuite --format=custom > "$work/backup/db.dump"
-docker run --rm --pull=never --network none --entrypoint tar -v main_silentsuite-server-data:/data:ro -v "$work/backup:/backup" \
-  "$postgres_ref" -C /data -cpf /backup/server-data.tar .
+echo "== Logical backup and restore (README recipes)"
+recipe logical-backup main "$work/backup-logical"
+test "$(stat -c '%a' "$work/backup-logical")" = 700
+test "$(stat -c '%a' "$work/backup-logical/db.dump")" = 600
+echo "PASS logical backup lands in a private directory"
+probe_env main 18080 --after-restart
+if recipe logical-restore main "$work/backup-logical" > "$work/refusal.log" 2>&1; then
+  echo "FAIL restore recipe ran against a service with accounts" >&2; exit 1
+fi
+grep -q "refusing: main already has accounts" "$work/refusal.log"
+chunk_check main "a refused restore into the live service"
 render restore-logical
 publish restore-logical 18082
-compose restore-logical create >/dev/null 2>&1
-compose restore-logical start silentsuite-postgres >/dev/null
-for _ in $(seq 60); do compose restore-logical exec -T silentsuite-postgres pg_isready -U silentsuite -d silentsuite >/dev/null 2>&1 && break; sleep 2; done
-compose restore-logical exec -T silentsuite-postgres pg_restore -U silentsuite -d silentsuite --no-owner --exit-on-error < "$work/backup/db.dump"
-docker run --rm --pull=never --network none --entrypoint tar -v restore-logical_silentsuite-server-data:/data -v "$work/backup:/backup:ro" \
-  "$postgres_ref" -C /data --numeric-owner -xpf /backup/server-data.tar
+compose restore-logical up -d >/dev/null
+wait_healthy restore-logical
+recipe logical-restore restore-logical "$work/backup-logical"
 compose restore-logical up -d >/dev/null
 probe_env restore-logical 18082 --after-restart
 chunk_check restore-logical "logical restore into a fresh project"
 
-echo "== Physical backup and restore"
-compose main stop >/dev/null
-docker logs main-silentsuite-postgres-1 2>&1 | grep -q "database system is shut down"
+echo "== Volume backup and restore (README recipes)"
+recipe volume-backup main "$work/backup-volumes"
 echo "PASS PostgreSQL shut down cleanly before the volume copy"
-for volume in silentsuite-postgres-data silentsuite-server-data silentsuite-server-config; do
-  docker run --rm --pull=never --network none --entrypoint tar -v "main_$volume:/v:ro" -v "$work/backup:/backup" \
-    "$postgres_ref" -C /v -cpf "/backup/$volume.tar" .
-done
 render restore-physical --carry-from "$work/main/code/.env"
 publish restore-physical 18083
-compose restore-physical create >/dev/null 2>&1
-for volume in silentsuite-postgres-data silentsuite-server-data silentsuite-server-config; do
-  docker run --rm --pull=never --network none --entrypoint tar -v "restore-physical_$volume:/v" -v "$work/backup:/backup:ro" \
-    "$postgres_ref" -C /v --numeric-owner -xpf "/backup/$volume.tar"
-done
+compose restore-physical up -d >/dev/null
+wait_healthy restore-physical
+recipe volume-restore restore-physical "$work/backup-volumes"
 compose restore-physical up -d >/dev/null
 probe_env restore-physical 18083 --after-restart
 chunk_check restore-physical "volume restore into a fresh project"
 
-echo "== Isolated deployment mode"
-docker network create silentsuite-iso >/dev/null
-render isolated --isolated --isolated-volumes --app-name silentsuite-iso
-publish isolated 18084
-compose isolated up -d >/dev/null
-probe_env isolated 18084
-admin_and_modes isolated 18084
+echo "== Isolated deployment mode, with and without volume suffixes"
+port=18084
+for variant in plain suffixed; do
+  project="isolated-$variant"
+  docker network create "$project" >/dev/null
+  isolated_networks+=("$project")
+  if [ "$variant" = suffixed ]; then render "$project" --isolated --isolated-volumes; else render "$project" --isolated; fi
+  publish "$project" "$port"
+  compose "$project" up -d >/dev/null
+  probe_env "$project" "$port"
+  admin_and_modes "$project" "$port"
+  port=$((port + 1))
+done
 echo "PASS stack $platform"

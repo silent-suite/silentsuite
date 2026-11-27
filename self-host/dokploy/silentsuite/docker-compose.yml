@@ -3,8 +3,8 @@
 # Only the router ("silentsuite") gets a Dokploy domain. Every name the router or the
 # server resolves starts with "silentsuite-", so services that other stacks expose on
 # the shared dokploy-network under generic names (server, web, postgres) are never
-# reached. Switch the domain to HTTPS before the first signup: the web app and the
-# installation-owner login refuse plain-HTTP origins.
+# reached. Switch the domain to HTTPS before the first signup: browser signup needs
+# HTTPS (secure context, and the owner login refuses http:// origins).
 #
 # The three secrets come from template.toml (Dokploy's crypto-random hash helper).
 # ":?" stops the stack when one is unset or empty, so it never starts with open signup.

@@ -5,6 +5,7 @@
   render OUT [...]     lay out OUT/code/docker-compose.yml, OUT/code/.env and OUT/files/** the way
                        Dokploy v0.31.4 does for a compose service created from the template
   import               print the base64 "Import" payload the Dokploy template site produces
+  recipe NAME [...]    print a README backup/restore block with its app/backup/code lines set (CI)
 
 The renderer ports Dokploy's processTemplate for the helpers this blueprint uses (domain, hash:N)
 and refuses every other helper. Secrets are written only to the private .env file, never printed.
@@ -221,12 +222,30 @@ def render(args) -> None:
     (out / "code/docker-compose.yml").write_text(compose_text, encoding="utf-8")
     descriptor = os.open(out / "code/.env", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        # Dokploy writes these two lines first (getCreateEnvFileCommand), so plain
+        # `docker compose` in code/ addresses the same project as Dokploy does.
+        handle.write(f"APP_NAME={args.app_name}\nCOMPOSE_PROJECT_NAME={args.app_name}\n")
         handle.write("".join(f"{key}={value}\n" for key, value in env.items()))
     for mount in template["config"]["mounts"]:
         relative = process_value(mount["filePath"], variables, args.host).lstrip("/")
         target = out / "files" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(process_value(mount["content"], variables, args.host), encoding="utf-8")
+
+
+def recipe(args) -> str:
+    """A backup/restore block of the package README, with only its app/backup/code lines set."""
+    readme = (ROOT / "self-host/dokploy/README.md").read_text(encoding="utf-8")
+    match = re.search(r"```sh\n# recipe: " + re.escape(args.name) + r"\n(.*?)```", readme, re.S)
+    if not match:
+        raise RenderError("README recipe not found")
+    lines = match.group(1).splitlines()
+    if not (lines[0].startswith("app=") and lines[1].startswith("backup=") and lines[2].startswith("code=")):
+        raise RenderError("README recipe must start with app=, backup= and code=")
+    for value in (args.app, args.backup, args.code):
+        if not re.fullmatch(r"[A-Za-z0-9_./-]+", value):
+            raise RenderError("recipe values must be plain paths or names")
+    return "\n".join([f"app={args.app}", f"backup={args.backup}", f"code={args.code}", *lines[3:]]) + "\n"
 
 
 def import_payload() -> str:
@@ -254,6 +273,11 @@ def main() -> int:
     rendering.add_argument("--empty", action="append", choices=SECRET_ENV)
     rendering.add_argument("--omit", action="append", choices=SECRET_ENV)
     commands.add_parser("import")
+    recipes = commands.add_parser("recipe")
+    recipes.add_argument("name")
+    recipes.add_argument("--app", required=True)
+    recipes.add_argument("--backup", required=True)
+    recipes.add_argument("--code", required=True)
     args = parser.parse_args()
     try:
         if args.command == "template":
@@ -266,6 +290,8 @@ def main() -> int:
                 sys.stdout.write(expected)
         elif args.command == "render":
             render(args)
+        elif args.command == "recipe":
+            sys.stdout.write(recipe(args))
         else:
             print(import_payload())
     except (RenderError, OSError, KeyError, ValueError) as error:

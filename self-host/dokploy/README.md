@@ -22,9 +22,10 @@ Until the blueprint is in the Dokploy catalogue, import it by hand:
    internet on port 80), turn on **HTTPS** with **Let's Encrypt**, and save.
 4. Deploy.
 
-Do the HTTPS step before anyone signs up. The web app needs a secure context for its encryption,
-and both the web app and the server refuse the installation-owner login from a plain-HTTP
-origin, so an HTTP-only install cannot create accounts.
+Do the HTTPS step before anyone enters the installation password. In a browser, signup only works
+over HTTPS: the web app needs a secure context for its encryption and will not send the
+installation password from a plain-HTTP page, and the server refuses an `http://` origin. Once
+HTTPS is on, Dokploy redirects plain HTTP to HTTPS.
 
 ## First account
 
@@ -50,52 +51,108 @@ CardDAV connect to the Bridge on your computer, and the Bridge syncs with this s
 
 ## Backup and restore
 
-Both recipes below are what CI runs on every change to this package. They need a shell on the
-Dokploy host. Dokploy keeps the stack in `/etc/dokploy/compose/<app>/code`, where `<app>` is
-the service's app name, and the `.env` file there sets the Compose project name, so run the
-commands from that directory. Volume names start with `<app>_`.
+Back up the database and the server-data volume together: the database holds accounts and
+metadata, the server-data volume holds `secret.txt` and the encrypted item chunks. A database
+dump on its own loses every item.
 
-Back up all of it: the database holds accounts and metadata, and the server-data volume holds
-`secret.txt` and the encrypted item chunks. A database dump on its own loses every item.
+Run each block below as root on the Dokploy host, as one script (for example save it and run
+`sh backup.sh`). Set the first lines: `app` is the service's App Name in Dokploy, `backup` a
+directory that does not exist yet. The scripts stop at the first error, find the volumes through
+the stack's own containers instead of typed volume names, and refuse to overwrite a service that
+already has accounts. CI runs these blocks exactly as written, with only those first lines
+changed.
 
 ### Logical backup
 
-This stops SilentSuite but keeps PostgreSQL running for the dump:
+SilentSuite stops while PostgreSQL keeps running for the dump:
 
 ```sh
-cd /etc/dokploy/compose/<app>/code
+# recipe: logical-backup
+app=silentsuite-abc123
+backup=/root/silentsuite-backup
+code=/etc/dokploy/compose/$app/code
+set -eu
+umask 077
+cd "$code"
+mkdir -m 700 "$backup"
 docker compose stop silentsuite silentsuite-web silentsuite-server
-docker compose exec -T silentsuite-postgres pg_dump -U silentsuite -d silentsuite --format=custom > ~/silentsuite-db.dump
-docker run --rm --network none --entrypoint tar -v <app>_silentsuite-server-data:/data:ro -v ~:/backup \
-  postgres:16.16-alpine -C /data -cpf /backup/silentsuite-server-data.tar .
+docker compose exec -T silentsuite-postgres pg_dump -U silentsuite -d silentsuite --format=custom > "$backup/db.dump"
+docker run --rm --network none --entrypoint tar --volumes-from "$(docker compose ps -aq silentsuite-init)" \
+  -v "$backup:/backup" postgres:16.16-alpine -C /data -cpf /backup/server-data.tar .
 docker compose start silentsuite-server silentsuite-web silentsuite
 ```
 
-To restore it, create and deploy a new SilentSuite service in Dokploy, then replace its empty data:
+To restore, create a new SilentSuite service in Dokploy and deploy it once without signing up,
+then run:
 
 ```sh
-cd /etc/dokploy/compose/<new-app>/code
+# recipe: logical-restore
+app=silentsuite-def456
+backup=/root/silentsuite-backup
+code=/etc/dokploy/compose/$app/code
+set -eu
+cd "$code"
+users="$(docker compose exec -T silentsuite-postgres psql -U silentsuite -d silentsuite -tAc 'select count(*) from myauth_user')"
+[ "$users" = 0 ] || { echo "refusing: $app already has accounts" >&2; exit 1; }
 docker compose down --volumes
 docker compose create
 docker compose start silentsuite-postgres
-until docker compose exec -T silentsuite-postgres pg_isready -U silentsuite -d silentsuite; do sleep 2; done
-docker compose exec -T silentsuite-postgres pg_restore -U silentsuite -d silentsuite --no-owner --exit-on-error < ~/silentsuite-db.dump
-docker run --rm --network none --entrypoint tar -v <new-app>_silentsuite-server-data:/data -v ~:/backup:ro \
-  postgres:16.16-alpine -C /data --numeric-owner -xpf /backup/silentsuite-server-data.tar
+until docker compose exec -T silentsuite-postgres pg_isready -h 127.0.0.1 -U silentsuite -d silentsuite >/dev/null 2>&1; do sleep 2; done
+docker compose exec -T silentsuite-postgres pg_restore -U silentsuite -d silentsuite --no-owner --exit-on-error < "$backup/db.dump"
+docker run --rm --network none --entrypoint tar --volumes-from "$(docker compose ps -aq silentsuite-init)" \
+  -v "$backup:/backup:ro" postgres:16.16-alpine -C /data --numeric-owner -xpf /backup/server-data.tar
 ```
 
-Then deploy the new service again from Dokploy.
+Then deploy the new service again in Dokploy. The wait uses TCP on purpose: on a new volume,
+PostgreSQL first runs a temporary socket-only server while it creates the database.
 
 ### Volume backup
 
-Stop the whole stack with `docker compose stop`, check
-that `docker compose logs silentsuite-postgres` ends with "database system is shut down", then
-archive the three volumes `<app>_silentsuite-postgres-data`, `<app>_silentsuite-server-data` and
-`<app>_silentsuite-server-config` the same way. A volume restore must keep the old
-`SILENTSUITE_DB_PASSWORD`, because the restored database still uses it: set all three secrets in
-the new service's Environment tab to the old values before you deploy it. Dokploy's own volume
-backups count as volume backups and are only safe while the whole stack is stopped; that feature
-itself is not covered by this package's CI.
+The whole stack stops, PostgreSQL included, before its files are copied:
+
+```sh
+# recipe: volume-backup
+app=silentsuite-abc123
+backup=/root/silentsuite-volumes
+code=/etc/dokploy/compose/$app/code
+set -eu
+umask 077
+cd "$code"
+mkdir -m 700 "$backup"
+docker compose stop
+docker compose logs silentsuite-postgres | tail -n 5 | grep -q "database system is shut down"
+docker run --rm --network none --entrypoint tar --volumes-from "$(docker compose ps -aq silentsuite-postgres)" \
+  -v "$backup:/backup" postgres:16.16-alpine -C /var/lib/postgresql/data -cpf /backup/postgres-data.tar .
+docker run --rm --network none --entrypoint sh --volumes-from "$(docker compose ps -aq silentsuite-init)" \
+  -v "$backup:/backup" postgres:16.16-alpine -c 'tar -C /data -cpf /backup/server-data.tar . && tar -C /config -cpf /backup/server-config.tar .'
+```
+
+Then deploy the service again in Dokploy to start it.
+
+The copied database still uses the old database password. To restore, create a new SilentSuite
+service, set its three secrets in the Environment tab to the old service's values before the
+first deploy, deploy it once without signing up, then run:
+
+```sh
+# recipe: volume-restore
+app=silentsuite-def456
+backup=/root/silentsuite-volumes
+code=/etc/dokploy/compose/$app/code
+set -eu
+cd "$code"
+users="$(docker compose exec -T silentsuite-postgres psql -U silentsuite -d silentsuite -tAc 'select count(*) from myauth_user')"
+[ "$users" = 0 ] || { echo "refusing: $app already has accounts" >&2; exit 1; }
+docker compose down --volumes
+docker compose create
+docker run --rm --network none --entrypoint tar --volumes-from "$(docker compose ps -aq silentsuite-postgres)" \
+  -v "$backup:/backup:ro" postgres:16.16-alpine -C /var/lib/postgresql/data --numeric-owner -xpf /backup/postgres-data.tar
+docker run --rm --network none --entrypoint sh --volumes-from "$(docker compose ps -aq silentsuite-init)" \
+  -v "$backup:/backup:ro" postgres:16.16-alpine -c 'tar -C /data --numeric-owner -xpf /backup/server-data.tar && tar -C /config --numeric-owner -xpf /backup/server-config.tar'
+```
+
+Then deploy the new service in Dokploy. All three archives go into empty volumes before anything
+starts. Dokploy's own volume backups are a volume backup too and are only safe while the whole
+stack is stopped; that feature itself is not covered by this package's CI.
 
 ## Updating
 
