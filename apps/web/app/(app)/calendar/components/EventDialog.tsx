@@ -24,6 +24,7 @@ import {
   instantFromWallClock,
   resolveUserTimezone,
   shortTimezoneLabel,
+  timezoneOptions,
 } from '@/app/lib/tz'
 import { inclusiveAllDayEndDate } from '../lib/all-day'
 import { overriddenOccurrence } from '../lib/calendar-grid-events'
@@ -487,9 +488,7 @@ export function EventDialog({
   // semantics, otherwise the picker's value.
   const formTz: string | undefined = allDay ? undefined : timezone
   const formatTime = makeFormatTime(timeFormat !== '24h', formTz ?? userTz)
-  const allTimezones = (() => {
-    try { return Intl.supportedValuesOf('timeZone') } catch { return ['UTC'] }
-  })()
+  const allTimezones = timezoneOptions(timezone)
 
   useEffect(() => {
     setStartTimeInput(formatEventTimeInput(startTime, timeFormat))
@@ -1311,7 +1310,6 @@ export function EventDialog({
                         aria-label="Event timezone"
                         className={`min-w-0 flex-1 ${compactFieldClass} ${disabledClass}`}
                       >
-                        {!allTimezones.includes(timezone) && <option value={timezone}>{timezone}</option>}
                         {allTimezones.map((tz) => (
                           <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
                         ))}

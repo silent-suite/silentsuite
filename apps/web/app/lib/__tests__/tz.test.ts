@@ -6,6 +6,7 @@ import {
   instantFromWallClock,
   resolveUserTimezone,
   shortTimezoneLabel,
+  timezoneOptions,
 } from '../tz'
 
 describe('tz helpers', () => {
@@ -72,6 +73,38 @@ describe('tz helpers', () => {
       expect(shortTimezoneLabel('Europe/Berlin')).toBe(
         shortTimezoneLabel('Europe/Berlin', fixedDate),
       )
+    })
+  })
+
+  describe('timezoneOptions', () => {
+    it('always offers UTC first, once', () => {
+      const options = timezoneOptions('UTC')
+      expect(options[0]).toBe('UTC')
+      expect(options.filter((tz) => tz === 'UTC')).toHaveLength(1)
+      expect(options).toContain('Europe/Berlin')
+    })
+
+    it('keeps a stored zone the browser does not list, such as a legacy alias', () => {
+      const options = timezoneOptions('US/Pacific')
+      expect(options.slice(0, 2)).toEqual(['US/Pacific', 'UTC'])
+    })
+
+    it('does not move a listed zone out of order', () => {
+      const options = timezoneOptions('Europe/Berlin')
+      expect(options[0]).toBe('UTC')
+      expect(options.filter((tz) => tz === 'Europe/Berlin')).toHaveLength(1)
+    })
+
+    it('still offers UTC and the stored zone when the list is unavailable', () => {
+      const spy = vi.spyOn(Intl, 'supportedValuesOf').mockImplementation(() => {
+        throw new TypeError('unsupported')
+      })
+      try {
+        expect(timezoneOptions('Europe/Berlin')).toEqual(['Europe/Berlin', 'UTC'])
+        expect(timezoneOptions()).toEqual(['UTC'])
+      } finally {
+        spy.mockRestore()
+      }
     })
   })
 })

@@ -5,6 +5,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import { formatDate } from '@/app/lib/date'
+import { timezoneOptions } from '@/app/lib/tz'
 import { getAccountEpoch } from '@/app/lib/account-epoch'
 import { createAuthenticatedPaymentFetch } from '@/app/lib/authenticated-payment-fetch'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
@@ -45,13 +46,7 @@ export default function AccountPage() {
 
   const hourOptions = useMemo(() => Array.from({ length: 25 }, (_, hour) => hour as DayBoundaryHour), [])
 
-  const allTimezones = useMemo(() => {
-    try {
-      return Intl.supportedValuesOf('timeZone')
-    } catch {
-      return ['UTC']
-    }
-  }, [])
+  const allTimezones = useMemo(() => timezoneOptions(defaultTimezone), [defaultTimezone])
 
   useEffect(() => {
     if (isSelfHosted) {

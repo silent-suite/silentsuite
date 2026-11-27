@@ -13,6 +13,24 @@ export function resolveUserTimezone(preferred: string | undefined): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
 }
 
+/**
+ * Timezone choices for a picker. `Intl.supportedValuesOf('timeZone')` leaves out
+ * "UTC" and legacy aliases, so a select bound to such a value would show the first
+ * entry instead. UTC always comes first, and `current` is kept when it is not listed.
+ */
+export function timezoneOptions(current?: string): string[] {
+  let supported: string[]
+  try {
+    supported = Intl.supportedValuesOf('timeZone')
+  } catch {
+    supported = []
+  }
+  const rest = supported.filter((tz) => tz !== 'UTC')
+  const head = ['UTC']
+  if (current && current !== 'UTC' && !rest.includes(current)) head.unshift(current)
+  return [...head, ...rest]
+}
+
 /** Wall-clock components of `date` as observed in `tz`. */
 export function partsInZone(date: Date, tz: string): {
   year: number
