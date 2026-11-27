@@ -1,17 +1,18 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgendaView } from '../AgendaView'
 import type { CalendarEvent } from '@silentsuite/core'
 import type { CalendarList } from '@/app/stores/use-calendar-list-store'
 
 const auth = vi.hoisted(() => ({ canWrite: true }))
+const prefs = vi.hoisted(() => ({ defaultTimezone: 'UTC' }))
 
 vi.mock('@/app/stores/use-auth-store', () => ({
   useAuthStore: (selector: (state: { canWrite: () => boolean }) => unknown) => selector({ canWrite: () => auth.canWrite }),
 }))
 
 vi.mock('@/app/stores/use-preferences-store', () => ({
-  usePreferencesStore: (selector: (state: { defaultTimezone: string }) => unknown) => selector({ defaultTimezone: 'UTC' }),
+  usePreferencesStore: (selector: (state: { defaultTimezone: string }) => unknown) => selector({ defaultTimezone: prefs.defaultTimezone }),
 }))
 
 function makeEvent(
@@ -141,6 +142,39 @@ describe('AgendaView upcoming mode', () => {
 
     expect(screen.getByText('8:00 AM – 8:30 AM')).toBeInTheDocument()
     expect(screen.getByText('9:00 AM – 9:30 AM GMT+1')).toBeInTheDocument()
+  })
+})
+
+describe('AgendaView floating events in another display zone (review fix: WEB-05)', () => {
+  const originalTz = process.env.TZ
+  afterEach(() => {
+    process.env.TZ = originalTz
+    prefs.defaultTimezone = 'UTC'
+  })
+
+  it('keeps a floating 00:15 event on its own day with a UTC browser and a Berlin display', () => {
+    process.env.TZ = 'UTC'
+    prefs.defaultTimezone = 'Europe/Berlin'
+    // Floating values keep their wall clock as browser-local fields.
+    render(
+      <AgendaView
+        currentDate={new Date(2026, 10, 27, 12)}
+        events={[
+          makeEvent('early', 'Early floating', new Date(2026, 10, 27, 0, 15), new Date(2026, 10, 27, 0, 45), { floating: true }),
+          makeEvent('late', 'Late floating', new Date(2026, 10, 26, 23, 30), new Date(2026, 10, 26, 23, 50), { floating: true }),
+          makeEvent('series', 'Floating series', new Date(2026, 10, 20, 0, 10), new Date(2026, 10, 20, 0, 20), {
+            floating: true,
+            recurrenceRule: 'FREQ=DAILY;COUNT=30',
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('Early floating')).toBeInTheDocument()
+    expect(screen.getByText('12:15 AM – 12:45 AM')).toBeInTheDocument()
+    expect(screen.getByText('Floating series')).toBeInTheDocument()
+    expect(screen.getByText('12:10 AM – 12:20 AM')).toBeInTheDocument()
+    expect(screen.queryByText('Late floating')).not.toBeInTheDocument()
   })
 })
 

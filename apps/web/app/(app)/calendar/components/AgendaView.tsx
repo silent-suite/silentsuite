@@ -90,15 +90,19 @@ export function AgendaView({ events, currentDate, calendars = [], mode = 'day', 
 
   const agendaEvents = useMemo(() => {
     const range = getAgendaRange(currentDate, mode)
+    // A floating event keeps its wall clock as browser-local fields, and the range's browser-local
+    // day is the display-zone day it names, so it is expanded and compared before the projection
+    // (as the grid converts its range for floating events). Projecting first would move a 00:15
+    // event out of its own day when the display and browser zones differ.
     return expandEventsForRange(events, range)
-      // A floating event shows its stored wall clock in the display zone.
-      .map((event) => event.floating
-        ? { ...event, startDate: floatingToDisplay(event.startDate, userTz), endDate: floatingToDisplay(event.endDate, userTz) }
-        : event)
       .filter((event) => {
         const endComparison = event.allDay ? event.endDate > range.start : event.endDate >= range.start
         return endComparison && event.startDate <= range.end
       })
+      // A floating event shows its stored wall clock in the display zone.
+      .map((event) => event.floating
+        ? { ...event, startDate: floatingToDisplay(event.startDate, userTz), endDate: floatingToDisplay(event.endDate, userTz) }
+        : event)
       .sort(compareEvents)
       .slice(0, mode === 'upcoming' ? 6 : undefined)
   }, [events, currentDate, mode, userTz])
