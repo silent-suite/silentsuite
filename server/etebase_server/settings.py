@@ -16,7 +16,7 @@ import re
 
 from django.core.exceptions import ImproperlyConfigured
 
-from .utils import get_secret_from_file
+from .utils import get_secret_from_file, signup_mode
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -63,6 +63,13 @@ ETEBASE_REGISTRATION_TOKEN = os.environ.get("ETEBASE_REGISTRATION_TOKEN", "")
 # Opt-in installation-owner login password (POST /api/v1/owner/login/). When set, it must be
 # 32-256 characters and differ from ETEBASE_REGISTRATION_TOKEN; otherwise owner login fails closed.
 ETEBASE_OWNER_PASSWORD = os.environ.get("ETEBASE_OWNER_PASSWORD", "")
+# Hosted only: every signup must carry a one-time pass Billing obtained from
+# POST /api/v1/billing/signup-pass/ (in the X-SilentSuite-Registration-Token header). Off by default.
+ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED = env_flag("ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED")
+# The signup mode name, logged at startup; refuses to start with conflicting signup settings.
+ETEBASE_SIGNUP_MODE = signup_mode(
+    ETEBASE_REGISTRATION_TOKEN, ETEBASE_OWNER_PASSWORD, ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED
+)
 # Largest accepted request body in bytes: authentication and billing-link routes, then all other
 # MsgpackRoute (sync API) routes. The owner-login router and Django admin are not covered.
 ETEBASE_MAX_AUTH_REQUEST_BYTES = env_byte_limit("ETEBASE_MAX_AUTH_REQUEST_BYTES", 65536, 65536, 1073741824)
