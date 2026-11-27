@@ -19,8 +19,10 @@ def test_root_android_toolchain_versions_are_pinned_consistently():
     build = read("android/build.gradle")
     wrapper = read("android/gradle/wrapper/gradle-wrapper.properties")
 
-    assert re.findall(r"(?:ext\.)?gradle_version\s*=\s*'([^']+)'", build) == ["8.11.1", "8.11.1"]
-    assert re.findall(r"(?:ext\.)?kotlin_version\s*=\s*'([^']+)'", build) == ["2.2.20", "2.2.20"]
+    # Declared once, in buildscript.ext, so plugins and subprojects read the same value.
+    assert re.findall(r"(?:ext\.)?gradle_version\s*=\s*'([^']+)'", build) == ["8.11.1"]
+    assert re.findall(r"(?:ext\.)?kotlin_version\s*=\s*'([^']+)'", build) == ["2.2.20"]
+    assert "ext.gradle_version = '8.11.1'" in build and "ext.kotlin_version = '2.2.20'" in build
     assert 'classpath "com.android.tools.build:gradle:$gradle_version"' in build
     assert 'classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"' in build
     assert "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.13-all.zip" in wrapper
