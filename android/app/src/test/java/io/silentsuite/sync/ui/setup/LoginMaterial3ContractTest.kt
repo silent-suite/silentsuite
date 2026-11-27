@@ -110,4 +110,12 @@ class LoginMaterial3ContractTest {
         assertTrue(choiceFragment.contains("requestHostedSignup"))
         assertTrue(credentialsLayout.contains("<net.cachapa.expandablelayout.ExpandableLayout"))
     }
+
+    @Test
+    fun emailAndPasswordErrorsShowInlineOnTheirTextInputLayouts() {
+        assertTrue(credentialsLayout.contains("android:id=\"@+id/user_name_layout\""))
+        assertTrue(credentialsFragment.contains("editUserNameLayout.error = getString(R.string.login_email_address_error)"))
+        assertTrue(credentialsFragment.contains("editUrlPassword.error = getString(R.string.login_password_required)"))
+        assertFalse(credentialsFragment.contains("editUserName.error"))
+    }
 }
