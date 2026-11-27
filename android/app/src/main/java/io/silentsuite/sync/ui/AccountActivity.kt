@@ -1335,8 +1335,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         else -> R.string.dashboard_services_title
     })
 
-    private fun relativeTime(timestamp: Long): CharSequence = DateUtils.getRelativeTimeSpanString(
-        timestamp, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
+    // Under a minute, Android would print "0 min. ago"; say "just now" instead.
+    private fun relativeTime(timestamp: Long): CharSequence {
+        val now = System.currentTimeMillis()
+        if (now - timestamp < DateUtils.MINUTE_IN_MILLIS) return getString(R.string.dashboard_time_just_now)
+        return DateUtils.getRelativeTimeSpanString(timestamp, now, DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
+    }
 
     private fun applyDashboardVisual(icon: ImageView, text: TextView, presentation: AccountDashboardPresentation) {
         icon.setImageResource(when (presentation.icon) {

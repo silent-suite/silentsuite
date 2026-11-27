@@ -23,6 +23,7 @@
         <item name="android:windowLightNavigationBar">false</item>
         <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
         <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
+        <item name="textAppearanceButton">@style/TextAppearance.AppTheme.Button</item>
     </style>
 
     <style name="AppTheme.NoActionBar">

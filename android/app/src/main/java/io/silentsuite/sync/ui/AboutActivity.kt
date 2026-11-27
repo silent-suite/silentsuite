@@ -153,7 +153,7 @@ class AboutActivity : BaseActivity() {
 
         private val components = arrayOf(ComponentInfo(
                 App.appName, BuildConfig.VERSION_NAME, Constants.webUri.toString(),
-                "Silent Suite",
+                "SilentSuite",
                 R.string.about_license_info_no_warranty, "gpl-3.0-standalone.html"
         ), ComponentInfo(
                 "AmbilWarna", null, "https://github.com/yukuku/ambilwarna",
