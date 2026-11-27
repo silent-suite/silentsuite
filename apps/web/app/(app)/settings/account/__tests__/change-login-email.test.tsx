@@ -1,8 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ enabled: true, user: null as any, request: vi.fn() }))
-vi.mock('@/app/hooks/use-login-email-change-enabled', () => ({ useLoginEmailChangeEnabled: () => mocks.enabled }))
+const mocks = vi.hoisted(() => ({ user: null as any, request: vi.fn() }))
 vi.mock('@/app/stores/use-auth-store', () => ({ useAuthStore: (selector: (s: any) => unknown) => selector({ user: mocks.user }) }))
 vi.mock('@/app/lib/login-email-change', async () => {
   const actual = await vi.importActual<any>('@/app/lib/login-email-change')
@@ -15,19 +14,14 @@ import { ChangeLoginEmail } from '../change-login-email'
 
 beforeEach(() => {
   localStorage.clear()
-  mocks.enabled = true
   mocks.user = { id: 'billing-1', email: 'contact@example.test', planId: 'annual' }
   mocks.request.mockReset()
 })
 
 describe('Change email button', () => {
-  it('appears only with the experiment on for a hosted account', () => {
+  it('appears for a hosted account without any opt-in, and not for self-hosted accounts', () => {
     const { rerender } = render(<ChangeLoginEmail />)
     expect(screen.getByRole('button', { name: 'Change email' })).toBeInTheDocument()
-    mocks.enabled = false
-    rerender(<ChangeLoginEmail />)
-    expect(screen.queryByRole('button', { name: 'Change email' })).not.toBeInTheDocument()
-    mocks.enabled = true
     localStorage.setItem('silentsuite-server-url', 'https://own.example.test')
     rerender(<ChangeLoginEmail />)
     expect(screen.queryByRole('button', { name: 'Change email' })).not.toBeInTheDocument()

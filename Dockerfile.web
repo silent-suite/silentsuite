@@ -14,7 +14,6 @@ COPY apps/web/package.json apps/web/
 COPY apps/docs/package.json apps/docs/
 COPY packages/core/package.json packages/core/
 COPY packages/ui/package.json packages/ui/
-COPY packages/config/package.json packages/config/
 
 RUN pnpm install --frozen-lockfile
 
@@ -37,9 +36,6 @@ ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
 ARG NEXT_PUBLIC_SENTRY_DSN=
 # Page-speed ratings on public pages (hosted production only). Default off.
 ARG NEXT_PUBLIC_WEB_VITALS_ENABLED=false
-# Durable encrypted local caching. Default-off: every build that does not pass
-# this argument explicitly, production included, ships with the flag disabled.
-ARG NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
 # Self-host build mode. With NEXT_PUBLIC_ETEBASE_SERVER_URL set empty, the web app
 # talks to the Etebase server on the browser's own origin.
 ARG NEXT_PUBLIC_SELF_HOSTED=false
@@ -52,7 +48,6 @@ ENV NEXT_PUBLIC_ETEBASE_SERVER_URL=$NEXT_PUBLIC_ETEBASE_SERVER_URL
 ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=$NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED
 ENV NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=$NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED
-ENV NEXT_PUBLIC_LOCAL_CACHE_ENABLED=$NEXT_PUBLIC_LOCAL_CACHE_ENABLED
 
 COPY --from=deps /app/ ./
 
@@ -61,8 +56,6 @@ COPY apps/web/ apps/web/
 
 # The SDK is consumed by the build plugin and need not survive standalone tracing.
 RUN node -e "const app = require('node:module').createRequire(process.cwd() + '/apps/web/package.json'); const version = app('@sentry/nextjs/package.json').version; require('node:assert/strict').equal(version, '10.75.2'); console.log('VERIFIED_WEB_BUILD_SENTRY_VERSION=' + version)" && \
-    pnpm --filter @silentsuite/core build && \
-    pnpm --filter @silentsuite/ui build && \
     pnpm --filter @silentsuite/web build
 
 # Omit debug maps before copying public assets into any runtime-image layer.

@@ -119,8 +119,8 @@ jobs:
       - name: Enforce annual billing copy
         run: pnpm run check:billing-copy
 
-      - name: Test closed annual-only public Stage A to Stage B handshake
-        run: pnpm run check:annual-public-handshake
+      - name: Check annual billing v2 contract
+        run: pnpm run check:annual-billing-v2-contract
 
       - name: Prove the pinned SSH transport rejects a changed server key
         env:
