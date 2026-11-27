@@ -1024,3 +1024,55 @@ class TestVCard4PhotoDowngrade:
         if getattr(stored, "note", None) is None or stored.note.value != "edited":
             raise RuntimeError("FIXTURE: client edit was not stored")
         assert self._media(stored, "photo") == served_photo, "BEHAVIOR: photo survives a client edit"
+
+
+class TestVCard3DataUriPhoto:
+    """A vCard 3.0 data: URI photo is served in the vCard 3.0 inline form.
+
+    vCard 3.0 has no data: URIs, so clients that read the value as a URL drop
+    the photo. Only the served copy changes; other vCard 3.0 photos stay as stored.
+    """
+
+    HREF = TestVCard4PhotoDowngrade.HREF
+    PAYLOAD = TestVCard4PhotoDowngrade.PAYLOAD
+    B64 = TestVCard4PhotoDowngrade.B64
+    URL = TestVCard4PhotoDowngrade.URL
+    _media = staticmethod(TestVCard4PhotoDowngrade._media)
+
+    @classmethod
+    def _serve(cls, mem_db, user, media_line):
+        stored = "\r\n".join([
+            "BEGIN:VCARD", "VERSION:3.0", "UID:photo-1", "FN:Synthetic Person",
+            media_line, "END:VCARD",
+        ])
+        collection, _, item = TestFavoriteCardDavRoundTrip._collection(
+            mem_db, user, stored, uid="photo-1", href=cls.HREF
+        )
+        served = dict(collection.get_multi([cls.HREF])).get(cls.HREF)
+        if served is None:
+            raise RuntimeError("FIXTURE: synthetic item was not served")
+        card = vobject.readOne(served.serialize())
+        if card.contents["version"][0].value != "3.0":
+            raise RuntimeError("FIXTURE: vCard 3 item was not served as vCard 3")
+        assert item.content == stored, "BEHAVIOR: serving must not rewrite the stored item"
+        return card
+
+    @pytest.mark.parametrize("media_line, group", [
+        ("PHOTO;VALUE=URI:data:image/jpeg;base64,{b64}", None),
+        ("PHOTO:data:image/jpeg;base64,{b64}", None),
+        ("item1.PHOTO;VALUE=uri:data:image/jpeg;base64,{b64}", "item1"),
+    ])
+    def test_data_uri_photo_is_served_as_vcard3_binary(self, mem_db, user, media_line, group):
+        card = self._serve(mem_db, user, media_line.format(b64=self.B64))
+        assert self._media(card, "photo") == [
+            (group, self.PAYLOAD, {"ENCODING": ["b"], "TYPE": ["jpeg"]})
+        ], f"BEHAVIOR: {media_line} served as vCard 3 inline photo"
+
+    @pytest.mark.parametrize("media_line, value, params", [
+        ("PHOTO;VALUE=URI:{url}", URL, {"VALUE": ["uri"]}),
+        ("PHOTO:{url}", URL, {}),
+        ("PHOTO;ENCODING=b;TYPE=JPEG:{b64}", PAYLOAD, {"ENCODING": ["b"], "TYPE": ["jpeg"]}),
+    ])
+    def test_other_vcard3_photos_are_served_as_stored(self, mem_db, user, media_line, value, params):
+        card = self._serve(mem_db, user, media_line.format(url=self.URL, b64=self.B64))
+        assert self._media(card, "photo") == [(None, value, params)], f"BEHAVIOR: {media_line} unchanged"

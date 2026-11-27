@@ -641,10 +641,12 @@ def _vcard4_media_line_to_3(name, params, value, group):
     return f"{group + '.' if group else ''}{name}{param_text}:{value}"
 
 
-def _vcard4_media_to_3(content):
+def _vcard4_media_to_3(content, data_uris_only=False):
     """Rewrite vCard 4 PHOTO/LOGO lines into the vCard 3.0 forms clients read.
 
     Works on unfolded content lines, so parameters and group prefixes are kept.
+    With ``data_uris_only`` (vCard 3.0 cards, which have no data: URIs) only
+    data: URI values are rewritten; other URIs are served as stored.
     A line that is already in a 3.0 form, or that cannot be converted, is left
     unchanged: dropping it would let a client edit delete the photo everywhere.
     """
@@ -655,7 +657,11 @@ def _vcard4_media_to_3(content):
             name, params, value, group = vobject.base.parseLine(line)
         except vobject.base.ParseError:
             name = None
-        if name is not None and name.upper() in ("PHOTO", "LOGO"):
+        if (
+            name is not None
+            and name.upper() in ("PHOTO", "LOGO")
+            and not (data_uris_only and not _DATA_URI_REGEX.match(value))
+        ):
             converted = _vcard4_media_line_to_3(name, params, value, group)
             if converted is not None:
                 line = converted
@@ -1121,6 +1127,14 @@ class Collection(BaseCollection):
 
                     item.contents["version"][0].value = "3.0"
                     _mark_yearless_birthdays(item)
+            elif (
+                item.name == "VCARD"
+                and item.contents["version"][0].value == "3.0"
+            ):
+                # Older web writes put data: URI photos into vCard 3.0 cards.
+                content = _vcard4_media_to_3(stored_content, data_uris_only=True)
+                if content != stored_content:
+                    item = vobject.readOne(content)
 
             if config.E2EE_LOCK_PREFIX:
                 for _key, line in _title_lines(item):
