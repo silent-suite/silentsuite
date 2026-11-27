@@ -337,6 +337,39 @@ describe('subscription card clarity', () => {
     expect(within(card()).getByRole('button', { name: action })).toBeInTheDocument()
   })
 
+  it('shows the card for a prepaid cryptocurrency account whose trialPath is crypto_annual', async () => {
+    route({ status: 'active', trialPath: 'crypto_annual' })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Early Adopter')).toBeInTheDocument()
+    expect(screen.queryByText('Unable to load subscription details.')).not.toBeInTheDocument()
+  })
+
+  // Shape from Billing's status route: a trialing account with an active trial and its stored trialPath.
+  const activeTrialWithPath = (trialPath: string) => ({
+    status: 'trialing', trialPath, renewalDate: null,
+    trial: { active: true, endsAt: future(10), daysRemaining: 10 },
+    capabilities: { ...capabilities, trialActive: true },
+  })
+
+  it('shows no trial type for an active trial whose path is crypto_annual', async () => {
+    route(activeTrialWithPath('crypto_annual'))
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(screen.queryByText('Trial type')).not.toBeInTheDocument()
+    expect(screen.queryByText('Paid + 14-day bonus')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['immediate', 'Paid + 14-day bonus'],
+    ['30day', '30-day trial'],
+  ])('keeps the trial type label for the known %s path', async (trialPath, label) => {
+    route(activeTrialWithPath(trialPath))
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText(label)).toBeInTheDocument()
+  })
+
   it('says a past-due payment failed and what Subscribe does (SIGNUP-05)', async () => {
     route({ status: 'past_due', capabilities: { ...capabilities, canStartPaidSubscription: true } })
     render(<SubscriptionPage />)

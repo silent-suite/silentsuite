@@ -1,6 +1,6 @@
 export interface SubscriptionBonusAccessData {
   status: 'none' | 'trialing' | 'active' | 'past_due' | 'cancelled' | 'expired'
-  trialPath: '7day' | '30day' | 'immediate' | null
+  trialPath: string | null
   trial: {
     endsAt: string | null
   }

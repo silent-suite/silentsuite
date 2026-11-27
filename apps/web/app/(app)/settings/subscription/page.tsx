@@ -43,7 +43,8 @@ interface SubscriptionData {
     daysRemaining: number | null
   }
   cancelAtPeriodEnd: boolean
-  trialPath: '7day' | '30day' | 'immediate' | null
+  /** Billing may send other paths (e.g. 'crypto_annual'); labels only key on the known ones. */
+  trialPath: string | null
   earlyAdopter: boolean
   capabilities?: SubscriptionCapabilities
   /** Additive Billing fields; parsed strictly where used, absent on older servers. */
@@ -65,8 +66,15 @@ function isSubscriptionData(value: unknown): value is SubscriptionData {
     && (typeof (trial as Record<string, unknown>).endsAt === 'string' || (trial as Record<string, unknown>).endsAt === null)
     && (typeof (trial as Record<string, unknown>).daysRemaining === 'number' || (trial as Record<string, unknown>).daysRemaining === null)
     && typeof subscription.cancelAtPeriodEnd === 'boolean'
-    && (subscription.trialPath === '7day' || subscription.trialPath === '30day' || subscription.trialPath === 'immediate' || subscription.trialPath === null)
+    && (typeof subscription.trialPath === 'string' || subscription.trialPath === null)
     && typeof subscription.earlyAdopter === 'boolean'
+}
+
+// Only these paths have a known trial type; any other path Billing sends gets no label.
+const TRIAL_PATH_LABELS: Record<string, string> = {
+  '7day': '7-day trial (no card)',
+  '30day': '30-day trial',
+  immediate: 'Paid + 14-day bonus',
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -736,6 +744,7 @@ export default function SubscriptionPage() {
       : 'Subscribe'
   const accessUntilFormatted = data.renewalDate ? formatDateStr(data.renewalDate) : 'the end of your current period'
   const paidBonusAccessDate = getPaidBonusAccessDate(data)
+  const trialPathLabel = data.trialPath && Object.hasOwn(TRIAL_PATH_LABELS, data.trialPath) ? TRIAL_PATH_LABELS[data.trialPath] : null
   const modalIsOpen = showCancelDialog || showPlanSelection
   return (
     <>
@@ -822,12 +831,10 @@ export default function SubscriptionPage() {
           )}
 
           {/* Trial path info */}
-          {data.trialPath && data.trial.active && (
+          {trialPathLabel && data.trial.active && (
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Trial type</p>
-              <p className="text-sm text-[rgb(var(--foreground))]">
-                {data.trialPath === '7day' ? '7-day trial (no card)' : data.trialPath === '30day' ? '30-day trial' : 'Paid + 14-day bonus'}
-              </p>
+              <p className="text-sm text-[rgb(var(--foreground))]">{trialPathLabel}</p>
             </div>
           )}
 
