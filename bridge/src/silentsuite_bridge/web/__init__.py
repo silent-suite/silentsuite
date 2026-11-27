@@ -1770,6 +1770,8 @@ def _render_dashboard():
                     '<div>'
                     '<label>CalDAV/CardDAV URL</label>'
                     f'<code id="{url_id}">{esc(dav_url)}</code>'
+                    '<div class="fingerprint-help">Username: your SilentSuite email &middot; '
+                    'Password: your SilentSuite password</div>'
                     '</div>'
                     f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
                     '</div>'
