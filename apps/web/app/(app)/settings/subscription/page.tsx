@@ -314,6 +314,9 @@ export default function SubscriptionPage() {
   // `inert` in the same commit that mounts the dialog, and the browser blurs
   // the CTA before any effect runs, so the dialog cannot discover it later.
   const [modalOpener, setModalOpener] = useState<HTMLElement | null>(null)
+  // Focus target when the opener is gone after a dialog closes (View payment unmounts while open).
+  const cardHeadingRef = useRef<HTMLHeadingElement>(null)
+  const dialogWasOpenRef = useRef(false)
   const stripeReturnHandledRef = useRef(false)
   // The page belongs to the account (id and boundary) it was opened for; a later account never
   // owns its data or actions. Each new operation captures the live user object of that account
@@ -637,6 +640,14 @@ export default function SubscriptionPage() {
   const endedNotice = notice?.kind === 'trial_ended' || notice?.kind === 'access_ended'
   useReportCardEndedNotice(!loading && !!data && endedNotice)
 
+  // The dialog's own restore runs first and does nothing for a detached opener; then focus goes to
+  // the card's heading, so it never lands on the page body.
+  useEffect(() => {
+    const open = showPlanSelection || showCancelDialog
+    if (dialogWasOpenRef.current && !open && modalOpener && !modalOpener.isConnected) cardHeadingRef.current?.focus()
+    dialogWasOpenRef.current = open
+  }, [showPlanSelection, showCancelDialog, modalOpener])
+
   if (loading) return <LoadingSkeleton />
 
   if (!data) {
@@ -737,7 +748,7 @@ export default function SubscriptionPage() {
       {/* Subscription details card */}
       <section className="rounded-lg border border-[rgb(var(--border))] p-4 space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Subscription</h2>
+          <h2 ref={cardHeadingRef} tabIndex={-1} className="text-sm font-semibold text-[rgb(var(--foreground))] focus:outline-none">Subscription</h2>
           {!notice && (
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-medium ${trialEnded ? STATUS_STYLES.expired : STATUS_STYLES[data.status] ?? STATUS_STYLES.none}`}

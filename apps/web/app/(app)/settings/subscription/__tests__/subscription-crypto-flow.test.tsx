@@ -75,6 +75,23 @@ describe('subscription card: open cryptocurrency payment', () => {
     expect(calls.writes()).toHaveLength(0)
   })
 
+  it('moves focus to the card after View payment\'s dialog closes, not to a removed button (review fix: SIGNUP-06)', async () => {
+    route(() => ({ ok: true, json: async () => ({ flow: cryptoFlow }) }))
+    render(<SubscriptionPage />)
+    const viewPayment = await within(await card()).findByRole('button', { name: 'View payment' })
+    viewPayment.focus()
+    fireEvent.click(viewPayment)
+    const dialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
+    await within(dialog).findByText('Payment already in progress')
+    // The notice and its button leave while the dialog is open.
+    expect(viewPayment.isConnected).toBe(false)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Subscription' })))
+    expect(document.activeElement?.isConnected).toBe(true)
+  })
+
   it.each([
     ['no payment in progress', () => ({ ok: true, json: async () => ({ flow: null }) })],
     ['a card payment', () => ({ ok: true, json: async () => ({ flow: { ...cryptoFlow, flowKind: 'stripe_pay_now' } }) })],
