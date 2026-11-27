@@ -20,6 +20,7 @@ vi.mock('next/navigation', () => ({
 }))
 
 vi.mock('@/app/stores/use-auth-store', () => ({
+  AUTH_REFRESH_RETRY_MESSAGE: 'restore-retry',
   useAuthStore: Object.assign((selector?: (s: typeof authState) => unknown) =>
     selector ? selector(authState) : authState, { getState: () => authState }),
 }))

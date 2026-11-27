@@ -501,7 +501,7 @@ const AUTH_RATE_LIMIT_MESSAGE =
 const AUTH_TEMPORARY_UNAVAILABLE_MESSAGE =
   'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.'
 
-const AUTH_REFRESH_RETRY_MESSAGE =
+export const AUTH_REFRESH_RETRY_MESSAGE =
   'Your session could not be confirmed. Please retry restoring your session. Your encrypted data is safe.'
 
 function refreshRetryDelayMs(value: string | null): number {

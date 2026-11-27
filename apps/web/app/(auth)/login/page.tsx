@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { ChevronRight } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
-import { useAuthStore } from '@/app/stores/use-auth-store'
+import { AUTH_REFRESH_RETRY_MESSAGE, useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/lib/server-url'
 import { safeReturnTo } from '@/app/lib/login-return'
 
@@ -23,8 +23,9 @@ type LoginFormData = z.infer<typeof loginSchema>
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { login, unlockEtebaseSession, isLoading, error, clearError, isAuthenticated } = useAuthStore()
+  const { login, unlockEtebaseSession, restoreSession, fetchSubscription, isLoading, error, clearError, isAuthenticated } = useAuthStore()
   const [serverUrl, setServerUrl] = useState('')
+  const [isRetryingRestore, setIsRetryingRestore] = useState(false)
   const [rememberDevice, setRememberDevice] = useState(false)
   const isUnlock = searchParams.get('reason') === 'unlock'
   const isBillingReauth = searchParams.get('reason') === 'billing'
@@ -51,6 +52,20 @@ export default function LoginPage() {
   useEffect(() => {
     return () => clearError()
   }, [clearError])
+
+  // The automatic restore gave up on a transient refresh problem: offer the
+  // same restore again, as the app runs it at startup. The form stays usable.
+  const showRestoreRetry = !isAuthenticated && (isRetryingRestore || error === AUTH_REFRESH_RETRY_MESSAGE)
+  const retryRestore = async () => {
+    if (isRetryingRestore) return
+    setIsRetryingRestore(true)
+    try {
+      await restoreSession()
+      await fetchSubscription()
+    } finally {
+      setIsRetryingRestore(false)
+    }
+  }
 
   const onSubmit = async (data: LoginFormData) => {
     const useHostedBilling = !serverUrl.trim()
@@ -87,6 +102,18 @@ export default function LoginPage() {
           <div role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
             {error}
           </div>
+        )}
+
+        {showRestoreRetry && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => { void retryRestore() }}
+            disabled={isRetryingRestore || isLoading}
+            className="w-full"
+          >
+            {isRetryingRestore ? 'Retrying...' : 'Retry'}
+          </Button>
         )}
 
         <div className="space-y-2">
