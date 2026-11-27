@@ -19,6 +19,7 @@ import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { EmptyState, TasksEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
+import { TaskDateInput } from './components/TaskDateInput'
 import type { Task, TaskStatus, Priority } from '@silentsuite/core'
 
 // ── Priority config ──
@@ -240,8 +241,10 @@ function TaskDialog({
 
   const [title, setTitle] = useState(task?.title ?? '')
   const [description, setDescription] = useState(task?.description ?? '')
-  const [startDate, setStartDate] = useState<string>(dateInputValue(task?.start_date))
-  const [dueDate, setDueDate] = useState<string>(dateInputValue(task?.due_date))
+  // An ISO day, '' for none, or null while the typed date is not valid (Save waits for a valid one).
+  const [startDate, setStartDate] = useState<string | null>(dateInputValue(task?.start_date))
+  const [dueDate, setDueDate] = useState<string | null>(dateInputValue(task?.due_date))
+  const datesValid = startDate !== null && dueDate !== null
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? (task?.completed ? 'completed' : 'needs-action'))
   const [percentComplete, setPercentComplete] = useState(task?.percent_complete ?? (task?.completed ? 100 : 0))
@@ -307,7 +310,7 @@ function TaskDialog({
 
   const handleSave = useCallback(async () => {
     const trimmed = title.trim()
-    if (!trimmed || creating || !canWrite) return
+    if (!trimmed || creating || !canWrite || startDate === null || dueDate === null) return
 
     const parsedStart = parseDateInput(startDate)
     const parsedDue = parseDateInput(dueDate)
@@ -389,7 +392,7 @@ function TaskDialog({
             </span>
             <button
               onClick={handleSave}
-              disabled={!title.trim() || creating || !canWrite}
+              disabled={!title.trim() || creating || !canWrite || !datesValid}
               className="shrink-0 rounded-md bg-emerald-600 px-3 py-1 max-md:min-h-[44px] text-sm font-medium text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title={!canWrite ? readOnlyTitle : undefined}
             >
@@ -426,12 +429,12 @@ function TaskDialog({
                 <span className="sr-only">Start date</span>
                 <div className="flex flex-1 items-center gap-2">
                   <span className="text-sm text-[rgb(var(--muted))]">Start</span>
-                  <input
-                    type="date"
+                  <TaskDateInput
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={setStartDate}
                     aria-label="Start date"
-                    className="min-w-0 flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    containerClassName="flex-1"
+                    className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
               </label>
@@ -440,12 +443,12 @@ function TaskDialog({
                 <span className="sr-only">Due date</span>
                 <div className="flex flex-1 items-center gap-2">
                   <span className="text-sm text-[rgb(var(--muted))]">Due</span>
-                  <input
-                    type="date"
+                  <TaskDateInput
                     value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
+                    onChange={setDueDate}
                     aria-label="Due date"
-                    className="min-w-0 flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    containerClassName="flex-1"
+                    className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
               </label>
@@ -701,6 +704,7 @@ function PrioritySelector({
 
 // ── DateInput ──
 
+// The expanded row saves the due date as soon as a valid one is entered and the field is left.
 function DateInput({
   value,
   onChange,
@@ -712,27 +716,16 @@ function DateInput({
   disabled?: boolean
   disabledTitle?: string
 }) {
-  const formatted = value
-    ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
-    : ''
-
   return (
     <div className="flex items-center gap-1">
       <Calendar className="h-3.5 w-3.5 text-[rgb(var(--muted))]" />
-      <input
-        type="date"
-        value={formatted}
-        onChange={(e) => {
-          if (e.target.value) {
-            const [y, m, d] = e.target.value.split('-').map(Number)
-            onChange(new Date(y!, m! - 1, d!))
-          } else {
-            onChange(null)
-          }
-        }}
+      <TaskDateInput
+        value={dateInputValue(value)}
+        onChange={(iso) => onChange(parseDateInput(iso ?? ''))}
+        commitOnBlur
         readOnly={disabled}
         aria-label="Task due date"
-        className={`bg-transparent text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1.5 border border-transparent hover:border-[rgb(var(--border))] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        className={`w-28 bg-transparent text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1.5 border border-transparent hover:border-[rgb(var(--border))] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         title={disabled ? disabledTitle : undefined}
       />
     </div>
