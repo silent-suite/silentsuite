@@ -21,6 +21,36 @@ export interface DisplayEvent {
   calendarId?: string
   categories?: string[]
   timezone?: string
+  /** True for a floating start (no TZID, no Z): its stored wall clock is shown in the display zone. */
+  floating?: true
+}
+
+/**
+ * A floating time (RFC 5545 §3.3.5) is a wall clock without a zone. The app keeps it as that wall
+ * clock in the browser's zone; shown in the calendar's display zone it keeps the same wall clock,
+ * whatever zone the browser is in. Returns the instant of that wall clock in `timeZone`.
+ */
+export function floatingToDisplay(date: Date, timeZone: string): Date {
+  try {
+    const wall = Temporal.PlainDateTime.from({
+      year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate(),
+      hour: date.getHours(), minute: date.getMinutes(), second: date.getSeconds(),
+      millisecond: date.getMilliseconds(),
+    })
+    return new Date(wall.toZonedDateTime(timeZone, { disambiguation: 'compatible' }).epochMilliseconds)
+  } catch {
+    return date
+  }
+}
+
+/** The inverse of `floatingToDisplay`: the floating value whose wall clock `date` shows in `timeZone`. */
+export function floatingFromDisplay(date: Date, timeZone: string): Date {
+  try {
+    const wall = Temporal.Instant.fromEpochMilliseconds(date.getTime()).toZonedDateTimeISO(timeZone)
+    return new Date(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute, wall.second, wall.millisecond)
+  } catch {
+    return date
+  }
 }
 
 type CalendarGridView = 'week' | 'month'
@@ -126,8 +156,9 @@ export function overriddenOccurrence(master: CalendarEvent, instance: Date): Cal
 
 function expandEvents(
   events: CalendarEvent[],
-  range: DateRange,
+  displayRange: DateRange,
   gridSemantics: boolean,
+  displayZone?: string,
 ): DisplayEventExpansion {
   const result: DisplayEvent[] = []
   let droppedCount = 0
@@ -135,6 +166,11 @@ function expandEvents(
   for (const event of events) {
     if (event.status?.toUpperCase() === 'CANCELLED' && !event.recurrenceRule
       && event.unknownProperties?.some(line => /^RECURRENCE-ID[;:]/i.test(line))) continue
+    // A floating event is shown at its wall clock in the display zone, so its range is that zone's.
+    const floating = event.floating === true && !event.allDay
+    const range = floating && displayZone
+      ? { start: floatingFromDisplay(displayRange.start, displayZone), end: floatingFromDisplay(displayRange.end, displayZone) }
+      : displayRange
     const replaced = new Set<number>()
     const replacements: DisplayEvent[] = []
     for (const block of event.overrides ?? []) {
@@ -142,7 +178,7 @@ function expandEvents(
       if (!override) continue
       replaced.add(override.instance.getTime())
       if (!override.changed) continue
-      const display = expandEvents([override.changed], range, gridSemantics)
+      const display = expandEvents([override.changed], displayRange, gridSemantics, displayZone)
       droppedCount += display.droppedCount
       replacements.push(...display.events.map(occurrence => ({
         ...occurrence, id: `${event.id}__${override.instance.getTime()}`, masterId: event.id,
@@ -170,6 +206,7 @@ function expandEvents(
           calendarId: event.calendarId,
           categories: event.categories,
           timezone: event.timezone,
+          ...(floating ? { floating: true as const } : {}),
         })
       }
     } else {
@@ -216,6 +253,7 @@ function expandEvents(
           calendarId: event.calendarId,
           categories: event.categories,
           timezone: event.timezone,
+          ...(floating ? { floating: true as const } : {}),
         })
       }
     }
@@ -234,8 +272,9 @@ export function expandEventsForRange(events: CalendarEvent[], range: DateRange):
 export function expandGridEventsForRange(
   events: CalendarEvent[],
   range: DateRange,
+  displayZone?: string,
 ): DisplayEventExpansion {
-  return expandEvents(events, range, true)
+  return expandEvents(events, range, true, displayZone)
 }
 
 export function toScheduleXEvents(
@@ -423,7 +462,16 @@ export function toScheduleXProjection(
     canonicalByRenderId.set(identity.id, identity.canonicalKey)
   }
 
-  for (const source of displayEvents) {
+  for (const original of displayEvents) {
+    // Floating events are drawn at their wall clock in the display zone; edits map back through
+    // the original, which keeps the stored value.
+    const source = original.floating && !original.allDay
+      ? {
+        ...original,
+        startDate: floatingToDisplay(original.startDate, userTz),
+        endDate: floatingToDisplay(original.endDate, userTz),
+      }
+      : original
     try {
       const sourceStartMs = source.startDate.getTime()
       const sourceEndMs = source.endDate.getTime()
@@ -454,7 +502,7 @@ export function toScheduleXProjection(
           droppedCount += 1
           continue
         }
-        addProjectedEvent(event, source, renderIdentityFor(source))
+        addProjectedEvent(event, original, renderIdentityFor(original))
         continue
       }
 
@@ -494,7 +542,7 @@ export function toScheduleXProjection(
               },
               _ssTimedSegment: true,
             }
-            addProjectedEvent(event, source, renderIdentityFor(source, date))
+            addProjectedEvent(event, original, renderIdentityFor(original, date))
           }
         }
         date = date.add({ days: 1 })

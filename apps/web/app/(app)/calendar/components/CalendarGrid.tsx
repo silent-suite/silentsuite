@@ -19,6 +19,7 @@ import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 import { startOfWeek, endOfWeek } from '@/app/lib/date'
 import {
   expandGridEventsForRange,
+  floatingFromDisplay,
   getRequiredTimedHourBounds,
   isTimeGridGestureEligible,
   toScheduleXProjection,
@@ -292,8 +293,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
     [visibleDates, userTz],
   )
   const expansion = useMemo(
-    () => expandGridEventsForRange(events, instantViewRange),
-    [events, instantViewRange],
+    () => expandGridEventsForRange(events, instantViewRange, userTz),
+    [events, instantViewRange, userTz],
   )
   const displayEvents = expansion.events
   const projectionView = effectiveView === 'month' ? 'month' : 'week'
@@ -942,7 +943,10 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       const durationHours = moveStart.duration / (60 * 60 * 1000)
       const maxStartHour = displayDayEndHour - durationHours
       const clampedHour = Math.max(displayDayStartHour, Math.min(snappedHour, maxStartHour))
-      const newStart = buildDateFromHour(dayInfo.date, clampedHour)
+      const droppedStart = buildDateFromHour(dayInfo.date, clampedHour)
+      // A floating event keeps the wall clock it was dropped at, as the grid shows it.
+      const floating = displayEvents.find((event) => event.id === moveStart.eventId)?.floating
+      const newStart = floating ? floatingFromDisplay(droppedStart, userTz) : droppedStart
       const newEnd = new Date(newStart.getTime() + moveStart.duration)
 
       if (newStart.getTime() !== moveStart.originalStart.getTime()) {
@@ -967,7 +971,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         isDragMovingRef.current = false
       }, 100)
     },
-    [getDayColumnInfo, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, displayDayStartHour, displayDayEndHour],
+    [getDayColumnInfo, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, displayDayStartHour, displayDayEndHour, displayEvents, userTz],
   )
 
   // Track mouse position for event click anchoring + drag-to-select start
@@ -1334,7 +1338,9 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         const origStartHour = origStart.getHours() + origStart.getMinutes() / 60
         const minEndHour = origStartHour + 0.5
         const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, displayDayEndHour))
-        const newEnd = buildDateFromHour(origStart, clampedEndHour)
+        const resizedEnd = buildDateFromHour(origStart, clampedEndHour)
+        const floating = displayEvents.find((event) => event.id === resizeStart.eventId)?.floating
+        const newEnd = floating ? floatingFromDisplay(resizedEnd, userTz) : resizedEnd
 
         if (newEnd.getTime() !== resizeStart.originalEnd.getTime()) {
           if (resizeStart.eventId.includes('__')) {
@@ -1407,7 +1413,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         isDraggingRef.current = false
       }, 100)
     },
-    [onSlotClick, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, completeDragMove, displayDayEndHour],
+    [onSlotClick, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, completeDragMove, displayDayEndHour, displayEvents, userTz],
   )
 
   // ESC key handler for cancelling drag-to-move and drag-to-resize

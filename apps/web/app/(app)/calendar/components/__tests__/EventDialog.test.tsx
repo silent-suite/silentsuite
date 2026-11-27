@@ -1194,3 +1194,53 @@ describe('EventDialog create that is not saved (WEB-04)', () => {
     await waitFor(() => expect(mocks.onClose).toHaveBeenCalledTimes(1))
   })
 })
+
+// WEB-05: a floating event opens and saves at its stored wall clock, whatever the device zone.
+describe.each(['UTC', 'Europe/Berlin'])('EventDialog floating times with the device in %s', (deviceZone) => {
+  const originalTz = process.env.TZ
+  beforeEach(() => {
+    process.env.TZ = deviceZone
+    mocks.updateEvent.mockReset().mockResolvedValue(undefined)
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+    return () => { process.env.TZ = originalTz }
+  })
+
+  const floatingEvent = () => fromVEvent([
+    'BEGIN:VEVENT', 'UID:floating-dialog', 'SUMMARY:Lunch',
+    'DTSTART:20261125T120000', 'DTEND:20261125T130000', 'END:VEVENT',
+  ].join('\r\n'))
+  const timedLines = (ics: string) => ics.split('\r\n').filter((line) => /^(DTSTART|DTEND)[:;]/.test(line))
+
+  it('opens at the stored wall clock and keeps it on an unrelated edit', async () => {
+    expect(new Date(2026, 10, 25).getTimezoneOffset()).toBe(deviceZone === 'UTC' ? 0 : -60)
+    const event = { ...floatingEvent(), calendarId: 'cal-a' }
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Start time')).toHaveValue('12:00')
+    expect(screen.getByLabelText('End time')).toHaveValue('13:00')
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Long lunch' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1))
+    const patch = mocks.updateEvent.mock.calls[0]![1] as Partial<CalendarEvent>
+    expect(patch).not.toHaveProperty('startDate')
+    expect(timedLines(serializeCalendarEvent({ ...event, ...patch })))
+      .toEqual(['DTSTART:20261125T120000', 'DTEND:20261125T130000'])
+  })
+
+  it('saves a typed time as that floating wall clock', async () => {
+    const event = { ...floatingEvent(), calendarId: 'cal-a' }
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '14:00' } })
+    fireEvent.change(screen.getByLabelText('End time'), { target: { value: '15:00' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1))
+    const patch = mocks.updateEvent.mock.calls[0]![1] as Partial<CalendarEvent>
+    const merged: CalendarEvent = { ...event, ...patch }
+    expect(merged.floating).toBe(true)
+    expect(timedLines(serializeCalendarEvent(merged))).toEqual(['DTSTART:20261125T140000', 'DTEND:20261125T150000'])
+  })
+})

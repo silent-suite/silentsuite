@@ -8,7 +8,7 @@ import { resolveTimeZone, type CalendarEvent, type DateRange } from '@silentsuit
 import type { CalendarList } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { resolveUserTimezone, shortTimezoneLabel } from '@/app/lib/tz'
-import { expandEventsForRange, type DisplayEvent } from '../lib/calendar-grid-events'
+import { expandEventsForRange, floatingToDisplay, type DisplayEvent } from '../lib/calendar-grid-events'
 
 interface AgendaViewProps {
   events: CalendarEvent[]
@@ -89,13 +89,17 @@ export function AgendaView({ events, currentDate, calendars = [], mode = 'day', 
   const agendaEvents = useMemo(() => {
     const range = getAgendaRange(currentDate, mode)
     return expandEventsForRange(events, range)
+      // A floating event shows its stored wall clock in the display zone.
+      .map((event) => event.floating
+        ? { ...event, startDate: floatingToDisplay(event.startDate, userTz), endDate: floatingToDisplay(event.endDate, userTz) }
+        : event)
       .filter((event) => {
         const endComparison = event.allDay ? event.endDate > range.start : event.endDate >= range.start
         return endComparison && event.startDate <= range.end
       })
       .sort(compareEvents)
       .slice(0, mode === 'upcoming' ? 6 : undefined)
-  }, [events, currentDate, mode])
+  }, [events, currentDate, mode, userTz])
 
   if (agendaEvents.length === 0) {
     return <CalendarEmptyState />

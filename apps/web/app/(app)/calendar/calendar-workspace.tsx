@@ -27,6 +27,7 @@ import { PlanningPanel } from './components/PlanningPanel'
 import { RightSidebarPortal } from '@/app/components/right-sidebar'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { planTask, plannableCalendars, TASK_DRAG_TYPE } from './lib/plan-task'
+import { floatingToDisplay } from './lib/calendar-grid-events'
 
 const PLANNING_SIDEBAR_KEY = 'silentsuite-planning-sidebar-open-v1'
 
@@ -385,7 +386,7 @@ function CalendarPageBody() {
               <span className="text-sm font-medium text-[rgb(var(--foreground))] truncate">{e.title || 'Untitled'}</span>
             </div>
             <div className="ml-4 text-xs text-[rgb(var(--muted))] truncate">
-              {calendarName ? `${calendarName} · ` : ''}{formatSearchResultDate(e.startDate, dateFormat, timeFormat, userTz, e.allDay)}
+              {calendarName ? `${calendarName} · ` : ''}{formatSearchResultDate(e.floating && !e.allDay ? floatingToDisplay(e.startDate, userTz) : e.startDate, dateFormat, timeFormat, userTz, e.allDay)}
             </div>
           </button>
         )

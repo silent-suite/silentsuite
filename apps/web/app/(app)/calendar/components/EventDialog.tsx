@@ -21,6 +21,7 @@ import { Globe } from 'lucide-react'
 import {
   formatDateForInputInZone,
   formatTimeForInputInZone,
+  deviceTimezone,
   instantFromWallClock,
   resolveUserTimezone,
   shortTimezoneLabel,
@@ -392,6 +393,9 @@ export function EventDialog({
   // ---------------------------------------------------------------------------
 
   const isEdit = mode === 'edit' && !!event
+  // A floating event's times are its stored wall clock, which the app keeps in the device zone, so
+  // the form reads and writes them there: they match what the calendar shows in its display zone.
+  const floatingZone = isEdit && event.floating && !event.allDay ? deviceTimezone() : undefined
   const isRecurring = isEdit && !!event.recurrenceRule
   // Delete and save go by whether the event is recurring now: another device may have made it
   // recurring, or single, since the dialog opened.
@@ -431,7 +435,7 @@ export function EventDialog({
   const initialFormTz: string | undefined = initialIsAllDay
     ? undefined
     : isEdit
-      ? (event.timezone ?? userTz)
+      ? (event.timezone ?? floatingZone ?? userTz)
       : userTz
 
   // ---------------------------------------------------------------------------
@@ -486,7 +490,9 @@ export function EventDialog({
   )
   // Active TZ for form fields and subtitle: undefined for all-day (local-midnight)
   // semantics, otherwise the picker's value.
-  const formTz: string | undefined = allDay ? undefined : timezone
+  // A floating event keeps its wall clock until its zone is changed (which makes it zoned).
+  const inputZone = floatingZone && timezone === (event?.timezone ?? defaultTimezone) ? floatingZone : timezone
+  const formTz: string | undefined = allDay ? undefined : inputZone
   const formatTime = makeFormatTime(timeFormat !== '24h', formTz ?? userTz)
   const allTimezones = timezoneOptions(timezone)
 
@@ -607,8 +613,8 @@ export function EventDialog({
       return new Date(y, m - 1, d, 0, 0, 0, 0)
     }
     const [h, min] = time.split(':').map(Number)
-    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(timezone) ?? 'UTC')
-  }, [allDay, timezone])
+    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(inputZone) ?? 'UTC')
+  }, [allDay, inputZone])
 
   const endFromInputs = useCallback((dateIso: string, time: string): Date => {
     const [y, m, d] = dateIso.split('-').map(Number)
@@ -619,8 +625,8 @@ export function EventDialog({
       return new Date(y, m - 1, d + 1, 0, 0, 0, 0)
     }
     const [h, min] = time.split(':').map(Number)
-    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(timezone) ?? 'UTC')
-  }, [allDay, timezone])
+    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(inputZone) ?? 'UTC')
+  }, [allDay, inputZone])
 
   const buildStartDate = useCallback(
     (): Date => startFromInputs(startDate, startTime),
