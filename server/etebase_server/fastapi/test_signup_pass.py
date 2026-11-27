@@ -214,16 +214,51 @@ def test_issue_deletes_expired_passes(client):
     }
 
 
-def test_issue_survives_a_failed_cleanup(client, monkeypatch):
+def test_issue_survives_a_failed_cleanup_and_logs_fixed_text_only(client, monkeypatch, caplog):
     from etebase_server.fastapi.routers import billing_link
 
     class Broken:
         def delete(self):
-            raise RuntimeError("cleanup failed")
+            raise RuntimeError("synthetic-detail victim@example.com")
 
     monkeypatch.setattr(billing_link.SignupPass.objects, "filter", lambda **_: Broken())
 
-    assert issue(client, EMAIL).status_code == 200
+    with caplog.at_level(logging.INFO):
+        assert issue(client, EMAIL).status_code == 200
+
+    assert "expired signup pass cleanup failed" in caplog.messages
+    assert "synthetic-detail" not in caplog.text
+    assert "victim@example.com" not in caplog.text
+    assert all(record.exc_info is None and record.exc_text is None for record in caplog.records)
+
+
+@pytest.mark.parametrize("length", [513, 60000])
+def test_issue_answers_unsupported_address_for_an_overlong_email(client, length):
+    response = issue(client, "a" * (length - len("@example.com")) + "@example.com")
+
+    assert response.status_code == 400
+    assert response.json() == {"code": "unsupported_address"}
+
+
+def test_issue_gives_the_full_lifetime_after_waiting_for_the_name_lock(client, monkeypatch):
+    import time
+
+    from etebase_server.fastapi.routers import billing_link
+
+    original = billing_link.claim_names
+    after_lock = []
+
+    def slow_lock(names):
+        original(names)
+        time.sleep(0.3)  # a wait for another transaction holding the name
+        after_lock.append(timezone.now())
+
+    monkeypatch.setattr(billing_link, "claim_names", slow_lock)
+
+    row = pass_row(issued(client))
+
+    assert row.created_at >= after_lock[0]
+    assert row.expires_at - row.created_at == timedelta(seconds=CONTRACT["ttlSeconds"])
 
 
 # ---------------------------------------------------------------------------
@@ -427,9 +462,12 @@ def test_signup_mode_refuses_the_pass_with_another_signup_gate(token, owner):
         signup_mode(token, owner, True)
 
 
-def _load_settings(extra_env):
+def _load_settings(extra_env, settings_module_dir=None):
     env = {key: value for key, value in os.environ.items() if not key.startswith("ETEBASE_")}
+    env.pop("PYTHONPATH", None)
     env.update({"DJANGO_SETTINGS_MODULE": "etebase_server.settings", **extra_env})
+    if settings_module_dir is not None:
+        env["PYTHONPATH"] = str(settings_module_dir)
     return subprocess.run(
         [sys.executable, "-c", "import django; django.setup(); from django.conf import settings; print(settings.ETEBASE_SIGNUP_MODE)"],
         cwd=SERVER_ROOT,
@@ -457,6 +495,33 @@ def test_startup_reads_the_setting(value, mode):
 
     assert result.returncode == 0, result.stderr[-500:]
     assert result.stdout.strip() == mode
+
+
+@pytest.mark.parametrize(
+    "env_value,module_body,mode",
+    [
+        ("false", "ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED = True\n", "hosted-pass"),
+        ("true", "ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED = False\n", "open"),
+    ],
+)
+def test_the_mode_follows_the_settings_module_override(tmp_path, env_value, module_body, mode):
+    (tmp_path / "etebase_server_settings.py").write_text(module_body)
+
+    result = _load_settings({"ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED": env_value}, settings_module_dir=tmp_path)
+
+    assert result.returncode == 0, result.stderr[-500:]
+    assert result.stdout.strip() == mode
+
+
+@pytest.mark.parametrize("name", ["ETEBASE_REGISTRATION_TOKEN", "ETEBASE_OWNER_PASSWORD"])
+def test_startup_refuses_a_conflict_introduced_by_the_settings_module(tmp_path, name):
+    (tmp_path / "etebase_server_settings.py").write_text(f'{name} = "synthetic-value"\n')
+
+    result = _load_settings({"ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED": "true"}, settings_module_dir=tmp_path)
+
+    assert result.returncode != 0
+    assert "ImproperlyConfigured" in result.stderr
+    assert "synthetic-value" not in result.stderr
 
 
 def test_startup_logs_the_mode_name_only(settings, caplog):

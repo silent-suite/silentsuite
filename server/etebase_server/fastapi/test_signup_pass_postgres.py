@@ -10,7 +10,12 @@ from django.db import connection
 
 from etebase_server.django.models import SignupPass, sha256_hex
 from etebase_server.fastapi.conftest import decode_response
-from etebase_server.fastapi.test_login_email_change import accepted_change, commit, make_app_client
+from etebase_server.fastapi.test_login_email_change import (
+    accepted_change,
+    commit,
+    make_app_client,
+    test_held_name_is_not_found_by_login_or_invitation_lookup as held_name_lookup,
+)
 from etebase_server.fastapi.test_login_email_change_postgres import Pause, fresh, overlap
 from etebase_server.fastapi.test_signup_pass import EMAIL, SIGNED_UP, issue, issued, signup
 from etebase_server.myauth.models import get_typed_user_model
@@ -55,6 +60,36 @@ def test_two_signups_for_one_address_create_one_account(client, login_pubkey, us
     assert User.objects.filter(username=EMAIL).count() == 1
     assert consumed() == 1
     assert SignupPass.objects.get(pass_hash=sha256_hex(first_pass)).consumed_at is not None
+
+
+def test_issue_after_waiting_for_the_name_lock_gets_the_full_lifetime(client, login_pubkey, user_salt, monkeypatch):
+    from django.utils import timezone
+
+    from etebase_server.fastapi.routers import authentication
+
+    value = issued(client)
+
+    # The paused signup holds the name lock, then fails (username differs from the pass address) and
+    # rolls back, so the waiting issue goes ahead.
+    refused, issued_late = overlap(
+        monkeypatch,
+        Pause(authentication, "signup_identity_taken"),
+        lambda: signup(fresh(client), login_pubkey, user_salt, email="other@example.com", passes=[value]),
+        lambda: issue(fresh(client), EMAIL),
+    )
+    finished = timezone.now()
+
+    assert refused.status_code == 403
+    assert issued_late.status_code == 200
+    row = SignupPass.objects.get(pass_hash=sha256_hex(issued_late.json()["signupPass"]))
+    # overlap() keeps the issue waiting at least 0.5 s; none of that comes off the lifetime.
+    assert (row.expires_at - finished).total_seconds() > 599.7
+
+
+def test_held_name_is_not_found_by_invitation_lookup(client, user_factory, signing_key):
+    held_name_lookup(client, user_factory, signing_key)
+
+    assert issue(client, "held@example.com").json() == {"code": "name_taken"}
 
 
 def test_issue_waits_for_a_signup_holding_the_name_and_then_refuses(client, login_pubkey, user_salt, monkeypatch):

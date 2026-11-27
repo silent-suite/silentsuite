@@ -478,7 +478,8 @@ SIGNUP_PASS_TTL_SECONDS = 600
 
 
 class SignupPassIn(BaseModel):
-    email: str = Field(max_length=512)
+    # No length cap here: the body limit bounds it and the canonical check refuses anything long.
+    email: str
 
 
 class SignupPassOut(BaseModel):
@@ -491,7 +492,8 @@ def delete_expired_signup_passes(now) -> None:
     try:
         SignupPass.objects.filter(expires_at__lte=now).delete()
     except Exception:
-        logger.warning("expired signup pass cleanup failed", exc_info=True)
+        # The fixed text only: a database error message could quote row values.
+        logger.warning("expired signup pass cleanup failed")
 
 
 @billing_link_router.post("/signup-pass/", response_model=SignupPassOut)
@@ -504,7 +506,6 @@ def issue_signup_pass(payload: SignupPassIn, x_etebase_billing_key: str | None =
     if canonical_login_email(email) != email:
         return login_email_error(status.HTTP_400_BAD_REQUEST, "unsupported_address")
     signup_pass = secrets.token_urlsafe(32)
-    now = timezone.now()
     try:
         with transaction.atomic():
             claim_names([email])
@@ -512,6 +513,8 @@ def issue_signup_pass(payload: SignupPassIn, x_etebase_billing_key: str | None =
             if signup_identity_taken(users, UserSignup(username=email, email=email)):
                 logger.warning("signup pass refused: reason=name_taken")
                 return login_email_error(status.HTTP_409_CONFLICT, "name_taken")
+            # After the name lock, which may wait: the pass gets its full lifetime from here.
+            now = timezone.now()
             SignupPass.objects.create(
                 pass_hash=sha256_hex(signup_pass),
                 email=email,
