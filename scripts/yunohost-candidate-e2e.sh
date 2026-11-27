@@ -39,9 +39,15 @@ ct yunohost user create "$ADMIN_USER" --fullname "CI Admin" --domain "$DOMAIN" -
 ct yunohost user group add admins "$ADMIN_USER" >/dev/null
 ct yunohost user create "$USER_NAME" --fullname "CI User" --domain "$DOMAIN" --password "$USER_PASS" >/dev/null
 # YunoHost signs its self-signed domain certificates with this local CA.
-ct cat /etc/ssl/certs/ca-yunohost_crt.pem > "$CA_FILE"
+ct cat /etc/ssl/certs/ca-yunohost_crt.pem "/etc/yunohost/certs/$DOMAIN/crt.pem" > "$CA_FILE"
 ip=$(sudo incus list ynh --format csv -c 4 | cut -d' ' -f1)
 echo "$ip $DOMAIN" | sudo tee -a /etc/hosts >/dev/null
+# Diagnostic only (no secrets): how the runner sees the container's certificate.
+echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" -CAfile "$CA_FILE" 2>/dev/null \
+    | grep -E "Verify return code|^subject=|^issuer=" || true
+ct sh -c "openssl x509 -in /etc/yunohost/certs/$DOMAIN/crt.pem -noout -subject -issuer -dates -ext subjectAltName -text" \
+    | grep -E "subject=|issuer=|notBefore|notAfter|DNS:|Signature Algorithm|Public-Key" | sort -u || true
+python3 -c "import ssl, sys; print(sys.version.split()[0], ssl.OPENSSL_VERSION)"
 for f in yunohost-candidate-ws-responder.py yunohost-candidate-rollback-evidence.py; do
     sudo incus file push "$repo/scripts/$f" "ynh/root/$f"
 done
