@@ -367,6 +367,9 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     const dialog = await screen.findByRole('dialog', { name: /cancel your subscription/i })
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(dialog).toHaveAttribute('aria-describedby')
+    // No resume control exists, so the dialog promises only what happens after the period (SIGNUP-13).
+    expect(dialog).toHaveTextContent(/you can subscribe again from this page/i)
+    expect(dialog).not.toHaveTextContent(/reactivate anytime/i)
     await waitFor(() => expect(document.activeElement).toHaveTextContent(/keep subscription/i))
 
     fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })

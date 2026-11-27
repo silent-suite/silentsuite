@@ -179,7 +179,7 @@ function CancelDialog({
   return (
     <ModalDialog
       title="Cancel your subscription"
-      description={`Your access continues until ${accessUntil}. After that, your account becomes read-only. Your encrypted data remains safe and can be exported or reactivated.`}
+      description={`Your access continues until ${accessUntil}. After that, your account becomes read-only until you subscribe again. Your encrypted data stays safe and you can export it anytime.`}
       onClose={onClose}
       closeOnEscape={!cancelling}
       closeOnBackdrop={!cancelling}
@@ -187,8 +187,9 @@ function CancelDialog({
     >
       <div className="space-y-4">
         <div className="space-y-2 text-sm text-[rgb(var(--foreground))]">
-          <p>Your access continues until {accessUntil}. After that, your account becomes read-only.</p>
-          <p>Your data stays safe and encrypted. You can export anytime. You can reactivate anytime.</p>
+          {/* Billing can't resume a pending cancellation; after the period ends this page offers Reactivate or Subscribe (SIGNUP-13). */}
+          <p>Your access continues until {accessUntil}. After that, your account becomes read-only, and you can subscribe again from this page.</p>
+          <p>Your data stays safe and encrypted. You can export it anytime.</p>
         </div>
         {error !== null && (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error || tError('description')}</p>
