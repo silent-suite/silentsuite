@@ -25,6 +25,11 @@ describe('TaskDateInput follows the date-format preference (WEB-21)', () => {
     expect(field()).toHaveValue(shown)
   })
 
+  it('asks for a keyboard that can type the date separators (review fix: WEB-21)', () => {
+    render(<TaskDateInput value="2026-11-20" onChange={() => {}} aria-label="Due date" />)
+    expect(field()).toHaveAttribute('inputmode', 'text')
+  })
+
   it('reports a typed date as an ISO day, an empty field as no date, and invalid text as null', () => {
     usePreferencesStore.setState({ dateFormat: 'DD.MM.YYYY' })
     const onChange = vi.fn()

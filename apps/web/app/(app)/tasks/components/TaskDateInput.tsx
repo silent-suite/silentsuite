@@ -78,7 +78,8 @@ export function TaskDateInput({
     <span className={`flex min-w-0 flex-col ${containerClassName}`}>
       <input
         type="text"
-        inputMode="numeric"
+        // Every accepted format needs a separator, which a digits-only keypad can't type.
+        inputMode="text"
         placeholder={dateFormatExample(dateFormat)}
         value={text}
         onChange={(e) => handleChange(e.target.value)}
