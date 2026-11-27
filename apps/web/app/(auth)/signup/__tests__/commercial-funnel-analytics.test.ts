@@ -77,6 +77,21 @@ describe('commercial funnel analytics transport boundary', () => {
     expect(fetcher).toHaveBeenCalledWith('/api/event', expect.objectContaining({ method: 'POST', keepalive: true }))
   })
 
+  it('swallows a rejected keepalive fetch', async () => {
+    const rejection = Promise.reject(new TypeError('offline'))
+    const fetcher = vi.fn(() => rejection)
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      sendCommercialEvent(buildPlanSelectedPayload(annualOffer), () => false, fetcher as unknown as typeof fetch, new URL('https://app.silentsuite.io/signup'), 'true')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
+  })
+
   it('sends nothing when the commercial flag is off', () => {
     const beacon = vi.fn(() => true)
     const fetcher = vi.fn()

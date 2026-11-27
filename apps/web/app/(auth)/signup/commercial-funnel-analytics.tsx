@@ -18,7 +18,8 @@ export function sendCommercialEvent(payload: CommercialEventPayload, beacon = na
   if (!shouldSendCommercialAnalytics(location, payload, enabled)) return
   const body = JSON.stringify(payload)
   if (beacon && beacon(ANALYTICS_RELAY_ENDPOINT, new Blob([body], { type: 'application/json' }))) return
-  void fetcher(ANALYTICS_RELAY_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true })
+  // A failed measurement is not an error the visitor or the error reporter should see.
+  void Promise.resolve(fetcher(ANALYTICS_RELAY_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true })).catch(() => undefined)
 }
 
 export function CheckoutReturnAnalytics({ outcome, paymentMethod }: { outcome: 'returned' | 'cancelled' | 'failed' | 'pending'; paymentMethod: 'stripe' | 'btcpay' | 'unknown' }) {
