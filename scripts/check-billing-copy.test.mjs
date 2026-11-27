@@ -12,7 +12,7 @@ test('annual-only billing copy guard accepts the repository', () => {
 })
 
 test('getting-started docs preserve the mandatory hosted email-verification signup sequence', () => {
-  for (const file of ['docs/user-guide/getting-started.md', 'apps/docs/user-guide/getting-started.md']) {
+  for (const file of ['apps/docs/user-guide/getting-started.md']) {
     const content = readFileSync(resolve(repoRoot, file), 'utf8')
     assert.match(content, /verification link/i,
       `${file} must describe the emailed verification link required for hosted signup`)

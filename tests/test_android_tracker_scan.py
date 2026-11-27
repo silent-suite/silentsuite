@@ -42,10 +42,15 @@ class AndroidTrackerScannerTest(unittest.TestCase):
         fixtures = {path.name for path in (FIXTURES / "positive").iterdir() if path.is_dir()}
         self.assertEqual(fixtures, expected)
         for category in sorted(expected):
-            with self.subTest(category=category):
-                result = self.run_scan(FIXTURES / "positive" / category)
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn(f"[{category}]", result.stdout)
+            # Every payload must fail on its own, so dropping one alternative from a
+            # signature pattern fails here even when the category has other payloads.
+            payloads = sorted(path for path in (FIXTURES / "positive" / category).iterdir() if path.is_file())
+            self.assertTrue(payloads, category)
+            for payload in payloads:
+                with self.subTest(category=category, payload=payload.name):
+                    result = self.run_scan(payload)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn(f"[{category}]", result.stdout)
 
     def test_scans_nested_apk_aab_split_dex_and_native_payloads(self):
         with tempfile.TemporaryDirectory() as tmp:

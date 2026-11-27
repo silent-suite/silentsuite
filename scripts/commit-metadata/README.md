@@ -19,10 +19,8 @@ The same three files are kept identical in the public and private repositories.
 From a checkout of the reviewed revision:
 
 ```sh
-# public repository: protected integration branch main
-node scripts/commit-metadata/install-hooks.mjs --repo <public checkout> --base main
-# private repository: feature branches target dev; promotions target main
-node scripts/commit-metadata/install-hooks.mjs --repo <private checkout> --base dev --base main
+# the protected integration branch is main
+node scripts/commit-metadata/install-hooks.mjs --repo <checkout> --base main
 ```
 
 The installer copies a snapshot of `guard.mjs` to `<common git dir>/hooks/` next to
@@ -35,21 +33,10 @@ changes, review and re-install (remove the three installed files first). Linked
 worktrees or hook settings added later are not re-checked; re-run the installer.
 
 `pre-push` checks every commit in the pushed tip that is not reachable from
-`refs/remotes/<remote>/<target>`, independent of the previous remote branch head, so
+`refs/remotes/<remote>/<base>`, independent of the previous remote branch head, so
 already-pushed violations, new branches and ancestors imported by merges are covered,
-while violations already in the target are not. With one `--base` (public) the target is
-automatic. With several (private `dev` and `main`) the target is never guessed: a push
-to exactly `refs/heads/dev` or `refs/heads/main` selects itself; any other branch must
-declare the base its pull request will target, once per local branch:
-
-```sh
-git config branch.<branch>.commitMetadataBase dev    # feature branch for a PR into dev
-git config branch.<branch>.commitMetadataBase main   # dev-to-main promotion branch
-```
-
-A missing, unknown, repeated or conflicting declaration (for example declared `dev`
-but pushed to `refs/heads/main`) fails closed. The declaration is a local claim; the CI
-check uses the actual PR target. Deletions are skipped. Missing remote-tracking bases
+while violations already in the base are not. `--base` takes exactly one branch; a
+second one fails closed. Deletions are skipped. Missing remote-tracking bases
 or pushes to an unnamed URL fail closed (`git fetch` first). History is never rewritten.
 
 `git commit --no-verify` / `git push --no-verify` bypass local hooks; the CI check is
