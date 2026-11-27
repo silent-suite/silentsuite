@@ -14,7 +14,6 @@ COPY apps/web/package.json apps/web/
 COPY apps/docs/package.json apps/docs/
 COPY packages/core/package.json packages/core/
 COPY packages/ui/package.json packages/ui/
-COPY packages/config/package.json packages/config/
 
 RUN pnpm install --frozen-lockfile
 

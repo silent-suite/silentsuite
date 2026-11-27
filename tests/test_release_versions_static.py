@@ -18,7 +18,6 @@ PACKAGE_JSON_PATHS = [
     "apps/docs/package.json",
     "packages/core/package.json",
     "packages/ui/package.json",
-    "packages/config/package.json",
 ]
 
 
