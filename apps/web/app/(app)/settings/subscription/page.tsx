@@ -783,6 +783,9 @@ export default function SubscriptionPage() {
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">{dateRow.label}</p>
               <p className="text-sm text-[rgb(var(--foreground))]">{formatDateStr(dateRow.at)}</p>
+              {dateRow.label === 'Access until' && !(data.cancelAtPeriodEnd && !isCancelled && data.renewalDate) && (
+                <p className="text-xs text-[rgb(var(--muted))]">It won&apos;t renew automatically, so you won&apos;t be charged.</p>
+              )}
             </div>
           )}
 

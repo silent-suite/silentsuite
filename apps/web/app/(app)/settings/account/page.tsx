@@ -125,7 +125,7 @@ export default function AccountPage() {
               </div>
 
               <div>
-                <p className="text-xs text-[rgb(var(--muted))]">Plan</p>
+                <p className="text-xs text-[rgb(var(--muted))]">Status</p>
                 <p className="text-sm text-[rgb(var(--foreground))] capitalize">{status.replace(/_/g, ' ')}</p>
               </div>
 

@@ -75,6 +75,9 @@ describe('Settings billing reads after the 15-minute access token expires', () =
     expect(refreshSession).toHaveBeenCalledTimes(1)
     expect(calls('https://billing.test/account')).toBe(2)
     expect(screen.getByText('trialing no card')).toBeInTheDocument()
+    // The row shows a status, not a plan name (WEB-13).
+    expect(screen.getByText('Status')).toBeInTheDocument()
+    expect(screen.queryByText('Plan')).not.toBeInTheDocument()
   })
 })
 

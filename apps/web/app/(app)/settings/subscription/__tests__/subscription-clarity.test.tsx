@@ -159,6 +159,32 @@ describe('subscription card clarity', () => {
     expect(within(card()).getByRole('button', { name: 'Reactivate' })).toBeInTheDocument()
   })
 
+  it('says an active plan with Access until will not charge, and Renews on stays without it', async () => {
+    const until = future(200)
+    route({ renewalDate: until, accountNotice: null, billingDate: { kind: 'access_until', at: until } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Access until')).toBeInTheDocument()
+    expect(within(card()).getByText("It won't renew automatically, so you won't be charged.")).toBeInTheDocument()
+    cleanup()
+
+    route({ renewalDate: until, accountNotice: null, billingDate: { kind: 'renews', at: until } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Renews on')).toBeInTheDocument()
+    expect(screen.queryByText(/won't be charged/)).not.toBeInTheDocument()
+  })
+
+  it('does not repeat the no-charge line under the cancel-at-period-end notice', async () => {
+    const until = future(20)
+    route({ renewalDate: until, cancelAtPeriodEnd: true, accountNotice: null, billingDate: { kind: 'access_until', at: until } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Access until')).toBeInTheDocument()
+    expect(within(card()).getByText(/will be cancelled at the end of the current period/)).toBeInTheDocument()
+    expect(screen.queryByText(/won't be charged/)).not.toBeInTheDocument()
+  })
+
   it('shows Access until and never First payment for a cancelled card trial', async () => {
     const trialEnd = future(12)
     route({
