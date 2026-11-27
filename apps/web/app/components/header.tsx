@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { LogOut, Menu, Settings, Lock } from 'lucide-react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { ThemeToggle } from '@/app/components/theme-toggle'
@@ -16,16 +17,18 @@ import {
   type SignOutAccount,
 } from '@/app/lib/local-only-changes'
 
-const titles: Record<string, string> = {
-  '/calendar': 'Calendar',
-  '/tasks': 'Tasks',
-  '/notes': 'Notes',
-  '/contacts': 'Contacts',
-  '/settings': 'Settings',
+// Route names come from the same Navigation keys as the sidebar, so both speak one language.
+const titleKeys: Record<string, 'calendar' | 'tasks' | 'notes' | 'contacts' | 'settings'> = {
+  '/calendar': 'calendar',
+  '/tasks': 'tasks',
+  '/notes': 'notes',
+  '/contacts': 'contacts',
+  '/settings': 'settings',
 }
 
 export function Header() {
   const pathname = usePathname()
+  const t = useTranslations('Navigation')
   const { user, logout } = useAuthStore()
   const [menuOpen, setMenuOpen] = useState(false)
   // Changes only on this device that a sign-out would delete, counted for this account.
@@ -33,9 +36,10 @@ export function Header() {
   const menuRef = useRef<HTMLDivElement>(null)
   const menuItemsRef = useRef<(HTMLAnchorElement | HTMLButtonElement | null)[]>([])
 
-  const title = Object.entries(titles).find(([path]) =>
+  const titleKey = Object.entries(titleKeys).find(([path]) =>
     pathname.startsWith(path)
-  )?.[1] ?? 'SilentSuite'
+  )?.[1]
+  const title = titleKey ? t(titleKey) : 'SilentSuite'
 
   // L-01: Page titles are set via useEffect rather than Next.js metadata API because
   // this app uses a client-side layout with 'use client' throughout the (app) route group.
@@ -43,8 +47,8 @@ export function Header() {
   // the natural place to manage document.title. Moving to the metadata API would require
   // refactoring the entire layout hierarchy to support server components.
   useEffect(() => {
-    document.title = title === 'SilentSuite' ? 'SilentSuite' : `${title} | SilentSuite`
-  }, [title])
+    document.title = titleKey ? `${title} | SilentSuite` : 'SilentSuite'
+  }, [title, titleKey])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
