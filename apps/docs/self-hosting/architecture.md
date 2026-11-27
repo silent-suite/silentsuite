@@ -27,7 +27,7 @@ SilentSuite self-hosting runs two containers on a single Docker network. You pro
 
 | Service | Image | Role |
 |---|---|---|
-| **SilentSuite Server** | `ghcr.io/silent-suite/silentsuite-server` | Sync server built on the Etebase protocol. Handles encrypted data sync, user authentication, and the admin panel. All data is encrypted client-side; the server never sees plaintext. |
+| **SilentSuite Server** | `ghcr.io/silent-suite/silentsuite-server` (pinned per release by digest) | Sync server built on the Etebase protocol. Handles encrypted data sync, user authentication, and the admin panel. All data is encrypted client-side; the server never sees plaintext. |
 | **PostgreSQL** | `postgres`, pinned to the immutable OCI index digest in the installed release bundle | Database. Stores encrypted sync data and user accounts. Existing installations keep their installed digest. Only accessible within the Docker network. |
 
 The Compose file references no mutable image tag. The repository Compose file pins PostgreSQL 16.16-alpine to
@@ -42,7 +42,7 @@ cannot change what your instance runs.
 - Both services run on an internal Docker bridge network (`silentsuite`).
 - PostgreSQL is not exposed to the host -- only the server container can reach it.
 - The SilentSuite server binds to `127.0.0.1:3735` -- not directly accessible from the network.
-- You bring your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) for TLS termination.
+- You bring your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) for TLS termination, security headers and certificates. Examples for each proxy, with the recommended security headers, are in [SELF-HOSTING.md](https://github.com/silent-suite/silentsuite/blob/main/self-host/SELF-HOSTING.md#reverse-proxy-examples).
 - All sync data is end-to-end encrypted. The server stores only ciphertext.
 
 ## Why No Web App Container?
@@ -50,7 +50,7 @@ cannot change what your instance runs.
 Self-hosters only need the sync server. Users access SilentSuite through:
 
 - **[app.silentsuite.io](https://app.silentsuite.io)** -- the hosted web app (works with any SilentSuite server)
-- **SilentSuite mobile apps** -- available for Android
+- **SilentSuite mobile apps** -- available for Android. iOS is not supported yet; a native app is planned.
 
 Both support entering a custom server URL in Advanced Settings during signup or login. This keeps the self-hosted stack minimal (2 containers) while giving users the full SilentSuite experience.
 

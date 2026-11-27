@@ -47,4 +47,6 @@ pnpm test
 pnpm build
 ```
 
+For server dependency or request-routing changes, also run the FastAPI route contract gate above from `server/`.
+
 CI will run these checks automatically on your pull request.

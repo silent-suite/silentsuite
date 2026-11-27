@@ -4,7 +4,9 @@ Your calendar events are end-to-end encrypted. Only your devices can read them.
 
 ## Overview
 
-The web app at [app.silentsuite.io](https://app.silentsuite.io) provides day, week, and month views. The sidebar includes a mini calendar for quick navigation and a calendar list where you can toggle visibility of individual calendars.
+In the web app your calendar is at [app.silentsuite.io/calendar](https://app.silentsuite.io/calendar). Title, location, description, attendees and alarms are all encrypted on your device before sync.
+
+The view switcher in the calendar header offers **Week** and **Month** views. On narrow screens the calendar shows a vertical agenda of upcoming events instead. The sidebar includes a mini calendar for quick navigation and a calendar list where you can toggle visibility of individual calendars.
 
 You can create multiple calendars. Each calendar is a separate encrypted collection with its own name, color, items, and DAV collection URL.
 
@@ -14,6 +16,8 @@ You can create multiple calendars. Each calendar is a separate encrypted collect
 2. Click or tap the date and time for your event.
 3. Enter the event details (title, location, notes, reminders).
 4. Save. The event is encrypted on your device and synced.
+
+Each event can be all-day or have a start and end time. The time zone defaults to your browser's and can be changed per event. Reminders (`VALARM`) can be relative, such as 15 minutes before the start, or at a fixed time.
 
 ## Edit an Event
 
@@ -29,11 +33,30 @@ You can create multiple calendars. Each calendar is a separate encrypted collect
 
 ## Import
 
-You can import events from `.ics` files. This is useful for migrating from another calendar service or importing shared event files.
+You can import events from `.ics` files in **Settings → Import**. This is useful for migrating from another calendar service or importing shared event files. The file is parsed in your browser, so its contents never reach the server unencrypted. Imported events keep their original time zones (`TZID`) and reminders (`VALARM`).
+
+When you select several `.ics` files at once, SilentSuite asks whether to create one calendar per file or import every file into a single calendar. Calendar names are suggested from the file metadata or filename before anything is imported.
+
+If you imported into the wrong place, use **Settings → Import → Manage imported data** to clear a calendar's events or delete an extra calendar and everything inside it.
+
+## Export
+
+**Settings → Export** offers:
+
+- **Calendar (`.ics`)**: all calendar events as a single iCalendar file
+- **Everything (`.zip`)**: calendars, contacts and tasks together, plus your notebooks as Markdown files when you have any ([Notes](./notes.md#export))
+
+Both are built from the data already decrypted on your device, so they work offline once your data is loaded. When your account has notebooks, **Everything** also lists your notes from the server again, so it then needs a connection.
+
+## Time Zones
+
+Each event stores its time zone as a `TZID` reference instead of converting it to UTC on save. An imported event keeps its original time zone through later edits, so it stays correct when you travel.
 
 ## Recurring Events
 
-Recurring events are supported using the standard iCalendar recurrence rules.
+Recurring events are supported using the standard iCalendar recurrence rules (`RRULE`): daily, weekly, monthly or yearly, with intervals and specific weekdays or days of the month.
+
+When you edit or delete one occurrence of a recurring event, SilentSuite asks which events the change applies to: **This event**, **This and all future events**, or **All events**.
 
 ## Sharing
 
@@ -50,3 +73,7 @@ Members see the same calendar, end-to-end encrypted to the public keys you confi
 The generated Birthdays calendar cannot be shared.
 
 Event invitations and RSVP are not supported yet. Sharing gives another account access to a whole calendar; you cannot invite someone to a single event.
+
+## Desktop CalDAV Clients
+
+With the [SilentSuite Bridge](./apps/dav-bridge.md) installed, your CalDAV client (Thunderbird, Calendar on macOS, and others) can read and write the same calendars through `localhost:37358`. Edits there sync the same way as edits in the web app.
