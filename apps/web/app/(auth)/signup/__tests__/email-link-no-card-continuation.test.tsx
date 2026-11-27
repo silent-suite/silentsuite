@@ -1637,4 +1637,72 @@ describe('email-link seven-day no-card continuation', () => {
     render(<p>HISTORY_ISOLATION_PROBE render committed</p>)
     expect(screen.getByText('HISTORY_ISOLATION_PROBE render committed')).toBeInTheDocument()
   })
+
+  describe('check your email screen (SIGNUP-12)', () => {
+    async function submitEmail(fetchMock: ReturnType<typeof vi.fn>) {
+      vi.stubGlobal('fetch', fetchMock)
+      render(<SignupPage />)
+      fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: 'first@example.test' } })
+      const next = screen.getByRole('button', { name: /^continue$/i })
+      await waitFor(() => expect(next).toBeEnabled())
+      fireEvent.click(next)
+      await screen.findByText(/Check your email and open/)
+    }
+    const sentRequests = (fetchMock: ReturnType<typeof vi.fn>) => fetchMock.mock.calls
+      .filter(([input]) => String(input).endsWith('/auth/signup-email-verifications/v2'))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as { email: string; requestId: string })
+
+    it('names the address, gives the spam and expiry hint, and resends after the cooldown', async () => {
+      const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }))
+      const start = Date.now()
+      const now = vi.spyOn(Date, 'now').mockReturnValue(start)
+      try {
+        await submitEmail(fetchMock)
+        const panel = screen.getByRole('region', { name: 'Email verification' })
+        expect(panel).toHaveTextContent('We sent a link to first@example.test.')
+        expect(panel).toHaveTextContent('Not there? Check your spam folder. The link expires in 15 minutes.')
+        const resend = screen.getByRole('button', { name: 'Resend email in 3:00' })
+        expect(resend).toBeDisabled()
+        fireEvent.click(resend)
+        expect(sentRequests(fetchMock)).toHaveLength(1)
+
+        now.mockReturnValue(start + 3 * 60_000)
+        const ready = await screen.findByRole('button', { name: 'Resend email' }, { timeout: 2000 })
+        expect(ready).toBeEnabled()
+        fireEvent.click(ready)
+        await waitFor(() => expect(sentRequests(fetchMock)).toHaveLength(2))
+        const [first, second] = sentRequests(fetchMock)
+        expect(second.email).toBe('first@example.test')
+        expect(second.requestId).not.toBe(first.requestId)
+        expect(await screen.findByRole('button', { name: 'Resend email in 3:00' })).toBeDisabled()
+        expect(screen.getByRole('region', { name: 'Email verification' })).toHaveTextContent('We sent a link to first@example.test.')
+        // The replacement link supersedes the first one in this browser.
+        expect(Object.keys(JSON.parse(localStorage.getItem('silentsuite-signup-email-proof')!))).toEqual([second.requestId])
+      } finally {
+        now.mockRestore()
+      }
+    })
+
+    it('waits as long as billing asks after a refused resend', async () => {
+      let sends = 0
+      const fetchMock = vi.fn(async () => {
+        sends += 1
+        return sends === 1
+          ? new Response('{}', { status: 202 })
+          : new Response(JSON.stringify(COARSE_429), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '600' } })
+      })
+      const start = Date.now()
+      const now = vi.spyOn(Date, 'now').mockReturnValue(start)
+      try {
+        await submitEmail(fetchMock)
+        now.mockReturnValue(start + 3 * 60_000)
+        fireEvent.click(await screen.findByRole('button', { name: 'Resend email' }, { timeout: 2000 }))
+        expect(await screen.findByText(/A new verification email could not be confirmed/)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Resend email in 10:00' })).toBeDisabled()
+        expect(sentRequests(fetchMock)).toHaveLength(2)
+      } finally {
+        now.mockRestore()
+      }
+    })
+  })
 })

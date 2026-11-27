@@ -55,6 +55,13 @@ const CRYPTO_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED 
 const BTCPAY_CHECKOUT_ORIGIN = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ORIGIN ?? 'https://btcpay.silentsuite.io'
 const EMAIL_PROOF_CONTEXT_KEY = 'silentsuite-signup-email-proof'
 const EMAIL_VERIFIED_MARKER_KEY = 'silentsuite-signup-email-verified'
+/** Billing keeps a signup email link valid for 15 minutes. */
+const EMAIL_LINK_LIFETIME_MINUTES = 15
+/**
+ * Billing accepts 5 signup verification emails per 15 minutes per client
+ * address. One send every 3 minutes stays inside that budget.
+ */
+const EMAIL_RESEND_COOLDOWN_MS = 3 * 60_000
 
 const methodOrder = (id: string) => ((({ 'BTC-CHAIN': 0, BTC: 0, 'BTC-LN': 1, 'XMR-CHAIN': 2 }) as Record<string, number>)[id] ?? 3)
 
@@ -1533,6 +1540,25 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const [emailProofBusy, setEmailProofBusy] = useState(false)
   const [requestingEmailProof, setRequestingEmailProof] = useState(false)
   const resendBusyRef = useRef(false)
+  // The request the waiting screen names and can resend. Non-secret.
+  const [sentEmailContext, setSentEmailContext] = useState<EmailProofContext | null>(null)
+  const sentEmailContextRef = useRef(sentEmailContext)
+  sentEmailContextRef.current = sentEmailContext
+  const [resendAvailableAt, setResendAvailableAt] = useState(0)
+  const [resendNow, setResendNow] = useState(() => Date.now())
+  const resendWaitMs = Math.max(0, resendAvailableAt - resendNow)
+  // Ticks once a second only while a cooldown runs; expiry sends nothing.
+  useEffect(() => {
+    if (resendWaitMs <= 0) return
+    const timer = window.setTimeout(() => setResendNow(Date.now()), Math.min(1000, resendWaitMs))
+    return () => window.clearTimeout(timer)
+  }, [resendWaitMs])
+  const resendWaitSeconds = Math.ceil(resendWaitMs / 1000)
+  const startResendCooldown = useCallback((ms: number) => {
+    const now = Date.now()
+    setResendNow(now)
+    setResendAvailableAt((current) => Math.max(current, now + ms))
+  }, [])
   const mountedRef = useRef(false)
   const ownerAbortRef = useRef<AbortController | null>(null)
   // Navigation away or an endpoint change cancels a pending installation-owner request.
@@ -1682,7 +1708,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   }, [prepareSignupDraft, emailProofAttempt])
 
   const requestNewVerificationEmail = useCallback(async () => {
-    const previous = emailContinuationRef.current?.context
+    const previous = emailContinuationRef.current?.context ?? sentEmailContextRef.current
     if (!previous || resendBusyRef.current) return
     resendBusyRef.current = true
     setRequestingEmailProof(true)
@@ -1690,6 +1716,8 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     setEmailProofBusy(true)
     const context = { ...previous, requestId: crypto.randomUUID(), expiresAt: Date.now() + 15 * 60_000 }
     sentRequestRef.current = context.requestId
+    setSentEmailContext(context)
+    startResendCooldown(EMAIL_RESEND_COOLDOWN_MS)
     setEmailConfirmedElsewhere(false)
     try {
       // Persist the non-secret lineage before sending: a lost acknowledgement
@@ -1706,8 +1734,11 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
       setEmailProofError(null)
       setEmailProofUnavailable(false)
       setAwaitingEmailProof(true)
-    } catch {
-      if (mountedRef.current && sentRequestRef.current === context.requestId) setEmailProofError('A new verification email could not be confirmed. Check your inbox, or try requesting another link shortly.')
+    } catch (error) {
+      if (mountedRef.current && sentRequestRef.current === context.requestId) {
+        setEmailProofError('A new verification email could not be confirmed. Check your inbox, or try requesting another link shortly.')
+        if (error instanceof BillingResponseError && error.billingStatus === 429 && error.retryAfterMs !== null) startResendCooldown(error.retryAfterMs)
+      }
     } finally {
       resendBusyRef.current = false
       if (mountedRef.current && sentRequestRef.current === context.requestId) {
@@ -1716,7 +1747,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
         setEmailProofBusy(false)
       }
     }
-  }, [])
+  }, [startResendCooldown])
 
   const handleAccountComplete = useCallback(async (data: SignupFormData, ownerPassword?: string) => {
     emailContinuationRef.current = null
@@ -1785,6 +1816,8 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     // This full-navigation continuation intentionally contains no password, and
     // is browser-profile scoped so the emailed link works from a new tab.
     sentRequestRef.current = requestId
+    setSentEmailContext(context)
+    startResendCooldown(EMAIL_RESEND_COOLDOWN_MS)
     setEmailConfirmedElsewhere(false)
     setSendingEmail(true)
     try {
@@ -1800,7 +1833,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     } finally {
       if (mountedRef.current && sentRequestRef.current === requestId) setSendingEmail(false)
     }
-  }, [createEtebaseAccount, prepareSignupDraft, rememberDevice, returnTo, serverUrl])
+  }, [createEtebaseAccount, prepareSignupDraft, rememberDevice, returnTo, serverUrl, startResendCooldown])
 
   const handleSelfHostChoice = useCallback(async () => {
     try {
@@ -2204,6 +2237,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const handleEmailBack = () => {
     clearEmailProofContext(sentRequestRef.current)
     sentRequestRef.current = null
+    setSentEmailContext(null)
     clearEmailProofContext(emailContinuationRef.current?.context.requestId ?? null)
     setRequestingEmailProof(false)
     setEmailProofBusy(false)
@@ -2384,11 +2418,18 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
               onRememberDeviceChange={setRememberDevice}
             />}
             {(sendingEmail || awaitingEmailProof) && <section aria-label="Email verification" className="flex flex-col items-center justify-center gap-5 py-8 text-center">
+              {!sendingEmail && !emailConfirmedElsewhere && sentEmailContext && <p className="text-sm">We sent a link to <strong className="break-all">{sentEmailContext.email}</strong>.</p>}
               <p role="status" className="text-sm text-[rgb(var(--muted))]">{sendingEmail
                 ? 'Sending verification email...'
                 : emailConfirmedElsewhere
                   ? 'Email confirmed. Continue in the other tab. This tab is safe to close.'
                   : 'Check your email and open the verification link in this browser. Then choose your password.'}</p>
+              {!sendingEmail && !emailConfirmedElsewhere && sentEmailContext && <>
+                <p className="text-sm text-[rgb(var(--muted))]">Not there? Check your spam folder. The link expires in {EMAIL_LINK_LIFETIME_MINUTES} minutes.</p>
+                <Button variant="outline" disabled={emailProofBusy || resendWaitSeconds > 0} onClick={requestNewVerificationEmail}>
+                  {resendWaitSeconds > 0 ? `Resend email in ${Math.floor(resendWaitSeconds / 60)}:${String(resendWaitSeconds % 60).padStart(2, '0')}` : 'Resend email'}
+                </Button>
+              </>}
               <Button variant="outline" onClick={handleEmailBack}>Back</Button>
             </section>}
           </>
