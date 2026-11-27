@@ -210,6 +210,9 @@ def validate_login_request(
         verify_key.verify(challenge_sent_to_user.response, challenge_sent_to_user.signature)
     except nacl.exceptions.BadSignatureError:
         raise HttpError("login_bad_signature", "Wrong password for user.", status.HTTP_401_UNAUTHORIZED)
+    except ValueError:
+        # nacl raises ValueError for a signature of the wrong length.
+        raise HttpError("invalid_signature", "Invalid signature.", status.HTTP_401_UNAUTHORIZED)
 
 
 @authentication_router.get("/is_etebase/")
