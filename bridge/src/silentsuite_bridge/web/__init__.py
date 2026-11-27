@@ -668,29 +668,6 @@ def _handle_account_login(environ):
     })
 
 
-def _handle_account_refresh(environ):
-    """Start sync for accounts a separate ``--login`` process just stored.
-
-    The request names no account. The bridge re-reads its configured accounts
-    and starts a worker for each one that has none; a running worker picks up
-    re-stored credentials on its next sync.
-    """
-    try:
-        from ..accounts import start_missing_sync_threads
-
-        start_missing_sync_threads()
-    except Exception as exc:
-        logger.warning(
-            "Account sync refresh after CLI sign-in failed (%s)",
-            bounded_exception_class(exc),
-        )
-        return _json_response(500, {"ok": False, "error": "Sync could not start"})
-
-    log_sync_event("info", "Account added or re-authenticated")
-    logger.info("Account added or re-authenticated")
-    return _json_response(200, {"ok": True})
-
-
 def log_sync_event(event_type, message):
     """Add an entry to the sync log."""
     _sync_log.appendleft({
@@ -2560,12 +2537,6 @@ class Web(BaseWeb):
             if not _has_valid_csrf(environ):
                 return _csrf_error()
             return _handle_account_login(environ)
-
-        # Start sync for accounts stored by a separate --login process
-        if path == "/.web/api/accounts/refresh":
-            if not _has_valid_csrf(environ):
-                return _csrf_error()
-            return _handle_account_refresh(environ)
 
         # Local account actions
         if path == "/.web/api/accounts/logout":

@@ -17,14 +17,10 @@ import html as html_mod
 import http.server
 import json
 import logging
-import re
 import secrets
 import socket
-import ssl
 import threading
-import urllib.error
 import urllib.parse
-import urllib.request
 import webbrowser
 from dataclasses import dataclass
 
@@ -882,70 +878,6 @@ def _find_free_port():
         return s.getsockname()[1]
 
 
-_DASHBOARD_CSRF_PATTERN = re.compile(r'window\.SILENTSUITE_DASHBOARD_CSRF = ("[^"<>]*");')
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Fail on redirects so the CSRF token never leaves the loopback listener."""
-
-    def redirect_request(self, *_args, **_kwargs):
-        return None
-
-
-def _loopback_opener():
-    """Open URLs on the bridge's own loopback listener: no proxy, no redirects, own cert."""
-    handlers = [urllib.request.ProxyHandler({}), _NoRedirect()]
-    if config.SSL_ENABLED:
-        # Trust only the certificate this bridge serves; it names no loopback host.
-        context = ssl.create_default_context(cafile=config.SSL_CERT_FILE)
-        context.check_hostname = False
-        context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
-        handlers.append(urllib.request.HTTPSHandler(context=context))
-    return urllib.request.build_opener(*handlers)
-
-
-def start_sync_in_running_bridge(opener=None):
-    """Ask a bridge already running on the dashboard listener to sync new accounts.
-
-    Uses the dashboard's own CSRF-protected account endpoint. The request names
-    no account: the bridge re-reads its configured accounts. Returns
-    ``"started"``, ``"not_running"`` (nothing listening), ``"failed"`` (a
-    listener answered but did not start the sync) or ``"unknown"`` (no
-    loopback dashboard listener is configured, so a bridge cannot be asked).
-    """
-    requested = config.requested_dashboard_listener()
-    if not requested:
-        return "unknown"
-    base = config.listener_base_url(requested["host"], requested["port"])
-    try:
-        opener = opener or _loopback_opener()
-        with opener.open(base + "/.web/", timeout=5) as response:
-            page = response.read(2_000_000).decode("utf-8", "replace")
-        match = _DASHBOARD_CSRF_PATTERN.search(page)
-        if not match:
-            return "failed"
-        request = urllib.request.Request(
-            base + "/.web/api/accounts/refresh",
-            data=b"{}",
-            headers={
-                "Content-Type": "application/json",
-                "X-SilentSuite-CSRF": json.loads(match.group(1)),
-            },
-            method="POST",
-        )
-        with opener.open(request, timeout=10) as response:
-            payload = json.loads(response.read(65536))
-        return "started" if payload.get("ok") is True else "failed"
-    except urllib.error.URLError as exc:
-        if isinstance(getattr(exc, "reason", None), ConnectionRefusedError):
-            return "not_running"
-        logger.warning("Could not ask the running bridge to sync (%s)", type(exc).__name__)
-        return "failed"
-    except Exception as exc:  # noqa: BLE001 - login already succeeded; report plainly
-        logger.warning("Could not ask the running bridge to sync (%s)", type(exc).__name__)
-        return "failed"
-
-
 def _start_command():
     if config.get_platform() == "windows":
         return "silentsuite-bridge --background"
@@ -959,8 +891,9 @@ def browser_login(running_bridge=False):
     and waits for the user to authenticate.
 
     ``running_bridge`` is true when called from inside a running bridge (the
-    tray), which starts the account's sync itself. From the command line, a
-    bridge that is already running is asked to start syncing the account.
+    tray), which starts the account's sync itself. From the command line the
+    next step is printed: a bridge that is already running starts the new
+    account's worker on its next DAV request for it.
 
     Returns the authenticated email, or None if cancelled.
     """
@@ -1004,20 +937,14 @@ def browser_login(running_bridge=False):
 
     email = server.authenticated_email
     if email:
-        outcome = "in_process" if running_bridge else start_sync_in_running_bridge()
-        if outcome == "in_process":
+        if running_bridge:
             print(f"\n  Login successful! The bridge is already running.")
-        elif outcome == "started":
-            print("\n  Login successful! The running bridge is now syncing this account.")
-        elif outcome == "failed":
-            print("\n  Login successful! The bridge is running but did not start syncing this account.")
-            print("  Restart the bridge, or sign in again from the dashboard.")
-        elif outcome == "not_running":
-            print("\n  Login successful! Now start the bridge:")
-            print(f"    {_start_command()}")
         else:
-            print("\n  Login successful! If the bridge is already running, restart it to sync this account.")
-            print("  Otherwise start it:")
+            print(
+                "\n  Login successful! If the bridge is already running, it starts "
+                "syncing this account the next time your calendar or contacts app connects."
+            )
+            print("  Otherwise start it with:")
             print(f"    {_start_command()}")
         print()
         print("  Etebase server configured.")
