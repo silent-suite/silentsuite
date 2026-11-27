@@ -36,10 +36,6 @@ class PlatformMapping:
     }
 
     @staticmethod
-    def normalize_arch(arch: str) -> str | None:
-        return PlatformMapping._ARCH_MAP.get(arch)
-
-    @staticmethod
     def asset_name(os_name: str, arch: str) -> str | None:
         normalized = PlatformMapping._ARCH_MAP.get(arch)
         if normalized is None:

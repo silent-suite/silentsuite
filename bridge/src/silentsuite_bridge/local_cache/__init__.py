@@ -18,7 +18,6 @@ import time
 from contextlib import contextmanager
 from functools import wraps
 
-import msgpack
 import peewee as pw
 import vobject
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
@@ -404,14 +403,6 @@ def _extract_uid(vobject_item):
         if child is not None and hasattr(child, "uid"):
             return child.uid.value if hasattr(child.uid, "value") else str(child.uid)
     raise ValueError(f"Cannot extract UID from vobject item: {vobject_item.name}")
-
-
-def msgpack_encode(content):
-    return msgpack.packb(content, use_bin_type=True)
-
-
-def msgpack_decode(content):
-    return msgpack.unpackb(content, raw=False)
 
 
 def batch(iterable, n=1):
@@ -961,9 +952,6 @@ class Etebase:
         else:
             self._init_db(db_path)
 
-    def reinit(self):
-        self._set_db(self._database)
-
     def _set_db(self, database):
         self._database = database
         db.database_proxy.initialize(database)
@@ -1327,10 +1315,6 @@ class Etebase:
         return self.user.collections.where(
             models.CollectionEntity.dirty | models.CollectionEntity.new
         )
-
-    def collection_list_is_dirty(self):
-        changed = list(self._collection_list_dirty_get())
-        return len(changed) > 0
 
     def push_collection_list(self):
         """Upload changed collections, one failure not blocking the others.
@@ -2019,12 +2003,6 @@ class Etebase:
             & ~(models.ItemEntity.id << quarantined_local_items)
         )
 
-    def collection_is_dirty(self, uid):
-        with db.atomic_connection():
-            cache_col = models.CollectionEntity.get(local_user=self.user, uid=uid)
-            changed = list(self._collection_dirty_get(cache_col))
-            return len(changed) > 0
-
     def push_collection(self, uid):
         """Upload pending item changes without overwriting newer server data.
 
@@ -2294,10 +2272,6 @@ class Etebase:
                 )
             except models.CollectionEntity.DoesNotExist as e:
                 raise DoesNotExist(e)
-
-    def clear_user(self):
-        clear_cached_user(self.username)
-        self.user = None
 
 
 class Collection:
