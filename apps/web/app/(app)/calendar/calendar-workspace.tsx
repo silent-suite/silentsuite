@@ -28,6 +28,7 @@ import { RightSidebarPortal } from '@/app/components/right-sidebar'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { planTask, plannableCalendars, TASK_DRAG_TYPE } from './lib/plan-task'
 import { floatingToDisplay } from './lib/calendar-grid-events'
+import { toSearchResults } from './lib/search-results'
 
 const PLANNING_SIDEBAR_KEY = 'silentsuite-planning-sidebar-open-v1'
 
@@ -308,7 +309,7 @@ function CalendarPageBody() {
     return colors
   }, [calendars])
   const visibleSearchResults = useMemo(
-    () => filteredEvents.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default')),
+    () => toSearchResults(filteredEvents.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default'))),
     [filteredEvents, visibleCalendarIds],
   )
 
@@ -363,7 +364,7 @@ function CalendarPageBody() {
 
   const searchResults = searchQuery.trim() !== '' ? (
     <div className="mt-2 max-w-md space-y-1">
-      {visibleSearchResults.map((e) => {
+      {visibleSearchResults.map(({ event: e, startDate, instanceDate }) => {
         const calendarId = e.calendarId ?? 'default'
         const calendarName = calendars.find((calendar) => calendar.id === calendarId)?.name
         return (
@@ -371,9 +372,9 @@ function CalendarPageBody() {
             key={e.id}
             type="button"
             onClick={() => {
-              useCalendarStore.getState().setCurrentDate(new Date(e.startDate))
+              useCalendarStore.getState().setCurrentDate(new Date(startDate))
               useCalendarStore.getState().setSelectedEvent(e.id)
-              setEventInstanceDate(undefined)
+              setEventInstanceDate(instanceDate)
             }}
             className="w-full text-left rounded-md px-3 py-2 hover:bg-[rgb(var(--surface))]"
           >
@@ -386,7 +387,7 @@ function CalendarPageBody() {
               <span className="text-sm font-medium text-[rgb(var(--foreground))] truncate">{e.title || 'Untitled'}</span>
             </div>
             <div className="ml-4 text-xs text-[rgb(var(--muted))] truncate">
-              {calendarName ? `${calendarName} · ` : ''}{formatSearchResultDate(e.floating && !e.allDay ? floatingToDisplay(e.startDate, userTz) : e.startDate, dateFormat, timeFormat, userTz, e.allDay)}
+              {calendarName ? `${calendarName} · ` : ''}{formatSearchResultDate(e.floating && !e.allDay ? floatingToDisplay(startDate, userTz) : startDate, dateFormat, timeFormat, userTz, e.allDay)}
             </div>
           </button>
         )
