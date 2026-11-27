@@ -259,10 +259,15 @@ def test_auth_post_shows_server_problem_instead_of_credentials_error():
         ("Got a redirect - should never happen", auth_browser.NOT_SILENTSUITE_MESSAGE),
         ("HTTP error 405! Code: 'null'. Detail: 'null'", auth_browser.NOT_SILENTSUITE_MESSAGE),
         ("invalid type: integer `60`, expected struct LoginChallange", auth_browser.NOT_SILENTSUITE_MESSAGE),
-        ("relative URL without a base", auth_browser.NOT_SILENTSUITE_MESSAGE),
+        ("missing field `challenge`", auth_browser.NOT_SILENTSUITE_MESSAGE),
+        # Details the SilentSuite server itself can send, and other unknown
+        # failures, get the neutral text.
+        ("Login challenge has expired", auth_browser.SIGN_IN_FAILED_MESSAGE),
+        ("User not properly init", auth_browser.SIGN_IN_FAILED_MESSAGE),
+        ("relative URL without a base", auth_browser.SIGN_IN_FAILED_MESSAGE),
     ],
 )
-def test_login_failure_maps_to_one_of_three_messages(sdk_text, expected):
+def test_login_failure_maps_to_a_user_message(sdk_text, expected):
     with patch(
         "silentsuite_bridge.auth_browser.Account.login",
         side_effect=etebase_python.Error(sdk_text),
@@ -285,7 +290,7 @@ def test_login_failure_outside_the_sdk_is_not_reported_as_wrong_password():
         with pytest.raises(auth_browser.AuthenticationError) as raised:
             auth_browser.authenticate_and_store_account("alice@example.com", "secret")
 
-    assert str(raised.value) == auth_browser.NOT_SILENTSUITE_MESSAGE
+    assert str(raised.value) == auth_browser.SIGN_IN_FAILED_MESSAGE
 
 
 def test_auth_page_contains_csrf_field():

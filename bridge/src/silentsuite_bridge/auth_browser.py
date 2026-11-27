@@ -53,6 +53,10 @@ class AuthenticationError(Exception):
 WRONG_CREDENTIALS_MESSAGE = "Wrong email or password."
 UNREACHABLE_MESSAGE = "Can't reach the server. Check your internet connection and try again."
 NOT_SILENTSUITE_MESSAGE = "This doesn't look like a SilentSuite server. Check the server URL."
+SIGN_IN_FAILED_MESSAGE = (
+    "Sign-in failed. Try again, or check the server URL in Advanced "
+    "if you use your own server."
+)
 
 # etebase 0.32 raises one exception type, ``etebase_python.Error``, and keeps
 # only a message: the server's ``detail``, or the SDK's fallback text. A 401 from
@@ -67,14 +71,26 @@ _WRONG_CREDENTIALS_DETAILS = frozenset(
 # 5xx (gateway or server down) without a readable detail.
 _UNREACHABLE_PREFIXES = ("error sending request", "request or response body error")
 _UNREACHABLE_DETAILS = frozenset({"Temporary server error", "Server error"})
+# Replies that cannot come from a SilentSuite server: a 404 without detail, a
+# redirect, an HTTP error without an Etebase error body, or a body that does
+# not decode as msgpack (serde's decode error texts).
+_NOT_SILENTSUITE_DETAILS = frozenset({"NotFound", "Got a redirect - should never happen"})
+_NOT_SILENTSUITE_PREFIXES = (
+    "invalid type: ",
+    "invalid value: ",
+    "invalid length ",
+    "missing field ",
+    "unknown field ",
+    "unknown variant ",
+)
 
 
 def _auth_error_message(exc):
-    """Map a login failure to one of three user-facing messages.
+    """Map a login failure to a user-facing message.
 
-    Anything that is neither refused credentials nor a network or server outage
-    (a 404, a redirect, a non-msgpack reply, an invalid URL) means the URL does
-    not point at a SilentSuite server.
+    Refused credentials, a network or server outage and a reply that is clearly
+    not from a SilentSuite server each get their own text. Anything else,
+    including server details the bridge does not know, gets a neutral one.
     """
     if isinstance(exc, _etebase_sdk.Error):
         error_text = str(exc)
@@ -82,7 +98,13 @@ def _auth_error_message(exc):
             return WRONG_CREDENTIALS_MESSAGE
         if error_text in _UNREACHABLE_DETAILS or error_text.startswith(_UNREACHABLE_PREFIXES):
             return UNREACHABLE_MESSAGE
-    return NOT_SILENTSUITE_MESSAGE
+        if (
+            error_text in _NOT_SILENTSUITE_DETAILS
+            or error_text.startswith(_NOT_SILENTSUITE_PREFIXES)
+            or (error_text.startswith("HTTP error ") and error_text.endswith("Detail: 'null'"))
+        ):
+            return NOT_SILENTSUITE_MESSAGE
+    return SIGN_IN_FAILED_MESSAGE
 
 
 def authenticate_and_store_account(email, password, server_url=None):
