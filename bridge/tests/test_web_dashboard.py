@@ -1431,6 +1431,29 @@ def test_dashboard_settings_post_accepts_valid_csrf(tmp_path, monkeypatch):
     assert events == ["Sync interval changed to 1 min"]
 
 
+@pytest.mark.parametrize(
+    ("seconds", "logged"),
+    [(60, "1 min"), (900, "15 min"), (3600, "1 hr"), (90, "90 s"), (5400, "90 min"), (45, "45 s")],
+)
+def test_dashboard_settings_logs_the_exact_interval(tmp_path, monkeypatch, seconds, logged):
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "SYNC_INTERVAL", config.SYNC_INTERVAL)
+    events = []
+    monkeypatch.setattr(web_module, "log_sync_event", lambda kind, message: events.append(message))
+    web = Web.__new__(Web)
+
+    status, _headers, _body = web.post(
+        _post_environ(body=json.dumps({"syncInterval": seconds}).encode(), csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/settings",
+        None,
+    )
+
+    assert status == 200
+    assert events == [f"Sync interval changed to {logged}"]
+
+
 # --- Settings failures must never look like success (#658) ------------------
 
 

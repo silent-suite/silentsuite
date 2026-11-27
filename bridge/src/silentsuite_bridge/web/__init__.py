@@ -1571,6 +1571,15 @@ def _format_interval(seconds: int) -> str:
     return f"{seconds} sec"
 
 
+def _format_interval_exact(seconds: int) -> str:
+    """Sync interval for the log without rounding: "15 min", but "90 s"."""
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600} hr"
+    if seconds % 60 == 0:
+        return f"{seconds // 60} min"
+    return f"{seconds} s"
+
+
 def _render_network_card() -> str:
     """Render the Network card as escaped HTML.
 
@@ -2633,7 +2642,7 @@ class Web(BaseWeb):
                     if thread.is_alive():
                         thread.set_interval(new_interval)
 
-                log_sync_event("info", f"Sync interval changed to {_format_interval(new_interval)}")
+                log_sync_event("info", f"Sync interval changed to {_format_interval_exact(new_interval)}")
 
             if "experimentalBirthdays" in data:
                 enabled = data["experimentalBirthdays"]
