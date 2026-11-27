@@ -191,6 +191,8 @@ end=$(ct date -u +%s)
 sleep 10
 touch "$work/stop-writer"
 wait "$writer" || fail "failed upgrade: write loop"
+echo "INFO failed upgrade attempt from $start to $end (epoch seconds)"
+grep -n -i -E "safety backup|BACKUP_CORE_ONLY|Backing up|Stopping|swapped|Restor|Backup created|removed" "$work/failed-upgrade.log" | cut -c1-160 || true
 grep -q "silentsuite: image trees swapped" "$work/failed-upgrade.log" || fail "failed upgrade: swap marker missing"
 pass "failed upgrade: swap completed"
 ct journalctl -u "$app-server" --since "@$start" --until "@$end" -o cat | grep -q "status=203/EXEC" \

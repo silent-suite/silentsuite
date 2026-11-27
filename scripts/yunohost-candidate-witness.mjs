@@ -150,7 +150,7 @@ async function writeLoop(file, acks, stop) {
     try {
       const item = await itemManager.create({ type: 'text/calendar', name: 'loop.ics', mtime: Date.now() }, new Uint8Array(content))
       await itemManager.batch([item])
-      appendFileSync(acks, `${item.uid} ${sha256(content)}\n`, { mode: 0o600 })
+      appendFileSync(acks, `${item.uid} ${sha256(content)} ${Date.now()}\n`, { mode: 0o600 })
       acknowledged += 1
     } catch {
       // The server is stopped during part of the upgrade: an unacknowledged write is fine.
@@ -170,12 +170,23 @@ async function verifyAcks(file, acks) {
   const collectionManager = account.getCollectionManager()
   const collection = await step('acks: fetch the witness collection', () => collectionManager.fetch(state.collectionUid))
   const itemManager = collectionManager.getItemManager(collection)
-  for (const line of lines) {
-    const [uid, digest] = line.split(' ')
-    const item = await itemManager.fetch(uid).catch(() => undefined)
-    if (!item) fail('every acknowledged write survived (one is missing)')
+  // Times and counts only: never print UIDs.
+  const missing = []
+  for (const [index, line] of lines.entries()) {
+    const [uid, digest, ackedAt] = line.split(' ')
+    let item
+    try {
+      item = await itemManager.fetch(uid)
+    } catch (error) {
+      missing.push(`#${index + 1} acked at ${Math.floor(Number(ackedAt) / 1000)} (${error?.constructor?.name ?? 'error'})`)
+      continue
+    }
     if (item.isMissingContent) await itemManager.downloadContent(item)
-    if (sha256(Buffer.from(await item.getContent())) !== digest) fail('every acknowledged write survived (content differs)')
+    if (sha256(Buffer.from(await item.getContent())) !== digest) missing.push(`#${index + 1} content differs`)
+  }
+  if (missing.length) {
+    console.log(`INFO ${missing.length} of ${lines.length} acknowledged writes missing: ${missing.join('; ')}`)
+    fail('every acknowledged write survived')
   }
   pass(`every acknowledged write survived (${lines.length})`)
 }
