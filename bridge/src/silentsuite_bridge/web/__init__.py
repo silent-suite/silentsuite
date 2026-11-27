@@ -2039,6 +2039,10 @@ def _report_diagnostics():
         account_count = len(users)
         if users:
             server_urls = [creds.get_server_url(user) for user in users]
+        else:
+            # Same rule as the dashboard: no accounts means Disconnected, not
+            # a sync that is still starting.
+            state = "disconnected"
     except Exception:
         pass
 
