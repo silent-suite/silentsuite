@@ -104,8 +104,7 @@
         "NEXT_PUBLIC_ETEBASE_SERVER_URL",
         "NEXT_PUBLIC_OWNER_REGISTRATION",
         "NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED",
-        "NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED",
-        "NEXT_PUBLIC_LOCAL_CACHE_ENABLED"
+        "NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED"
       ],
       "properties": {
         "NEXT_PUBLIC_SELF_HOSTED": {
@@ -124,6 +123,7 @@
           "const": "false"
         },
         "NEXT_PUBLIC_LOCAL_CACHE_ENABLED": {
+          "description": "No longer passed or read; accepted only so manifests of earlier releases still verify.",
           "const": "false"
         }
       }

@@ -1,20 +1,21 @@
 /**
- * Local data cache for instant reload — IndexedDB-backed values.
+ * Encrypted local storage for offline edits — IndexedDB-backed values.
  *
- * Stores decrypted item content at the public call boundary, but encrypts item
- * content before it reaches IndexedDB. Collection/type indexes and stokens stay
- * plaintext client-local metadata so cache reads can be efficient; item PIM
- * content must never be stored as raw iCal/vCard/vTodo text.
+ * Holds the browser-local AES-GCM envelope key, the account fingerprint meta
+ * record, the sealed offline-queue payload helpers, and the encrypted replay
+ * payloads of content-free queued updates (the `items` store). Item content is
+ * decrypted at the public call boundary but encrypted before it reaches
+ * IndexedDB; PIM content is never stored as raw iCal/vCard/vTodo text.
  *
  * SCOPE: This module follows the same raw-IDB pattern as `secure-storage.ts`
  * and `offline-queue.ts` — no `idb` / Dexie dependency.
  *
- * AT-REST ENCRYPTION: required before item content writes are allowed. Until
- * an encrypted cache envelope exists, decrypted item content writes fail
- * closed even if the public feature flag is accidentally enabled.
+ * AT-REST ENCRYPTION: item content writes are skipped until the encrypted
+ * envelope is ready.
  *
- * Gated by both the `NEXT_PUBLIC_LOCAL_CACHE_ENABLED` feature flag and the
- * encrypted-envelope availability check.
+ * The `collections` store held sync cursors for a removed instant-reload
+ * cache. It stays in the v5 schema, unread, so builds that still expect it can
+ * open this database; logout and account changes empty it with the rest.
  */
 import { logger } from '@/app/lib/logger'
 import { AccountBoundaryChangedError, assertCurrentAccountEpoch } from '@/app/lib/account-epoch'
@@ -40,13 +41,6 @@ interface StoredItem {
   /** AES-GCM ciphertext bytes */
   ct: number[]
   lastModified: number
-}
-
-export interface CachedCollection {
-  collectionType: CollectionTypeKey
-  collectionUid: string
-  stoken: string | null
-  lastFullSyncAt: number | null
 }
 
 export interface CacheMeta {
@@ -88,12 +82,6 @@ function hasEncryptedCacheEnvelope(): boolean {
     return encryptedCacheAvailableForTests && envelopeKey !== null
   }
   return hasWebCrypto() && envelopeReady && envelopeKey !== null
-}
-
-function canWriteItemContent(operation: string): boolean {
-  if (hasEncryptedCacheEnvelope()) return true
-  logger.warn(`[data-cache] ${operation} skipped; encrypted cache envelope is unavailable`)
-  return false
 }
 
 function openDB(): Promise<IDBDatabase> {
@@ -455,20 +443,13 @@ export async function getItemsByType(type: CollectionTypeKey): Promise<CachedIte
   }
 }
 
-async function commitItemMutations(
-  puts: StoredItem[],
-  deletes: string[],
-  accountEpoch: number | undefined,
-  operation: 'putItem' | 'putItems' | 'deleteItem',
-): Promise<void> {
+async function commitItemPut(item: StoredItem, accountEpoch: number | undefined): Promise<void> {
   try {
     if (accountEpoch === undefined) {
       const db = await openDB()
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORE_ITEMS, 'readwrite')
-        const store = tx.objectStore(STORE_ITEMS)
-        for (const itemUid of deletes) store.delete(itemUid)
-        for (const item of puts) store.put(item)
+        tx.objectStore(STORE_ITEMS).put(item)
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
       })
@@ -500,8 +481,7 @@ async function commitItemMutations(
           abortForBoundary()
           return
         }
-        for (const itemUid of deletes) itemStore.delete(itemUid)
-        for (const item of puts) itemStore.put(item)
+        itemStore.put(item)
         const commitGuard = itemStore.get('__account-epoch-commit-guard__')
         commitGuard.onsuccess = () => {
           try {
@@ -523,254 +503,24 @@ async function commitItemMutations(
     })
   } catch (err) {
     if (err instanceof AccountBoundaryChangedError) throw err
-    logger.warn(`[data-cache] ${operation} failed`, err)
-  }
-}
-
-/** Insert/update a single item. Failures are logged and swallowed. */
-export async function putItem(
-  item: CachedItem,
-  accountEpoch?: number,
-  options?: { allowWithoutFeatureFlag?: boolean },
-): Promise<void> {
-  if (options?.allowWithoutFeatureFlag) {
-    if (!hasEncryptedCacheEnvelope()) return
-  } else if (!canWriteItemContent('putItem')) return
-  try {
-    const stored = await toStoredItem(item)
-    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
-    await commitItemMutations([stored], [], accountEpoch, 'putItem')
-  } catch (err) {
-    if (err instanceof AccountBoundaryChangedError) throw err
     logger.warn('[data-cache] putItem failed', err)
   }
 }
 
-/** Bulk insert/update — single transaction for efficiency. */
-export async function putItems(items: CachedItem[], accountEpoch?: number): Promise<void> {
-  if (items.length === 0) return
-  if (!canWriteItemContent('putItems')) return
+/**
+ * Insert/update a single item. Skipped while the encrypted envelope is not
+ * ready; other failures are logged and swallowed.
+ */
+export async function putItem(item: CachedItem, accountEpoch?: number): Promise<void> {
+  if (!hasEncryptedCacheEnvelope()) return
   try {
-    const storedItems = await Promise.all(items.map(toStoredItem))
+    const stored = await toStoredItem(item)
     if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
-    await commitItemMutations(storedItems, [], accountEpoch, 'putItems')
+    await commitItemPut(stored, accountEpoch)
   } catch (err) {
     if (err instanceof AccountBoundaryChangedError) throw err
-    logger.warn('[data-cache] putItems failed', err)
+    logger.warn('[data-cache] putItem failed', err)
   }
-}
-
-export async function deleteItem(itemUid: string, accountEpoch?: number): Promise<void> {
-  await commitItemMutations([], [itemUid], accountEpoch, 'deleteItem')
-}
-
-async function replaceItemsForIndex(
-  indexName: 'byCollectionType' | 'byCollectionUid',
-  indexKey: IDBValidKey,
-  items: CachedItem[],
-  accountEpoch: number | undefined,
-  operation: 'replaceItemsForType' | 'replaceItemsForCollection',
-): Promise<void> {
-  if (!canWriteItemContent(operation)) return
-  try {
-    const expectedFingerprint = accountEpoch === undefined ? undefined : (await getMeta())?.accountFingerprint
-    if (accountEpoch !== undefined) {
-      assertCurrentAccountEpoch(accountEpoch)
-      if (!expectedFingerprint) throw new AccountBoundaryChangedError()
-    }
-    const storedItems = await Promise.all(items.map(toStoredItem))
-    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
-    const db = await openDB()
-    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction([STORE_ITEMS, STORE_META], 'readwrite')
-      const store = tx.objectStore(STORE_ITEMS)
-      const metaReq = tx.objectStore(STORE_META).get(META_KEY)
-
-      const abortForBoundary = () => {
-        const err = new AccountBoundaryChangedError()
-        reject(err)
-        tx.abort()
-      }
-
-      metaReq.onsuccess = () => {
-        const currentFingerprint = (metaReq.result as CacheMeta | undefined)?.accountFingerprint
-        if (accountEpoch !== undefined && currentFingerprint !== expectedFingerprint) {
-          abortForBoundary()
-          return
-        }
-
-        const cursorReq = store.index(indexName).openCursor(indexKey)
-        cursorReq.onsuccess = () => {
-          try {
-            if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
-          } catch {
-            abortForBoundary()
-            return
-          }
-          const cursor = cursorReq.result
-          if (cursor) {
-            cursor.delete()
-            cursor.continue()
-          } else {
-            for (const item of storedItems) store.put(item)
-            const commitGuard = store.get('__account-epoch-commit-guard__')
-            commitGuard.onsuccess = () => {
-              try {
-                if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
-              } catch {
-                abortForBoundary()
-              }
-            }
-            commitGuard.onerror = () => reject(commitGuard.error)
-          }
-        }
-        cursorReq.onerror = () => reject(cursorReq.error)
-      }
-      metaReq.onerror = () => reject(metaReq.error)
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
-  } catch (err) {
-    if (err instanceof AccountBoundaryChangedError) throw err
-    logger.warn(`[data-cache] ${operation} failed`, err)
-  }
-}
-
-/**
- * Replace all cached items for a collection type with the given list.
- * Used after a full refresh so removed-on-server items don't linger.
- */
-export async function replaceItemsForType(
-  type: CollectionTypeKey,
-  items: CachedItem[],
-  accountEpoch?: number,
-): Promise<void> {
-  return replaceItemsForIndex('byCollectionType', type, items, accountEpoch, 'replaceItemsForType')
-}
-
-/**
- * Replace all cached items for one concrete collection. Other collections of
- * the same type are intentionally left intact.
- */
-export async function replaceItemsForCollection(
-  collectionUid: string,
-  items: CachedItem[],
-  accountEpoch?: number,
-): Promise<void> {
-  return replaceItemsForIndex('byCollectionUid', collectionUid, items, accountEpoch, 'replaceItemsForCollection')
-}
-
-// ── Collections / stokens ──
-
-export async function getCollection(collectionUid: string): Promise<CachedCollection | null> {
-  try {
-    const value = await withStore(STORE_COLLECTIONS, 'readonly', (store) => store.get(collectionUid))
-    return (value as CachedCollection | undefined) ?? null
-  } catch (err) {
-    logger.warn('[data-cache] getCollection failed', err)
-    return null
-  }
-}
-
-export async function putCollection(record: CachedCollection): Promise<void> {
-  try {
-    await withStore(STORE_COLLECTIONS, 'readwrite', (store) => store.put(record))
-  } catch (err) {
-    logger.warn('[data-cache] putCollection failed', err)
-  }
-}
-
-export async function getStoken(collectionUid: string): Promise<string | null> {
-  const col = await getCollection(collectionUid)
-  return col?.stoken ?? null
-}
-
-export async function setStoken(
-  type: CollectionTypeKey,
-  collectionUid: string,
-  stoken: string | null,
-  accountEpoch?: number,
-): Promise<void> {
-  if (accountEpoch === undefined) {
-    const existing = await getCollection(collectionUid)
-    await putCollection({
-      collectionType: type,
-      collectionUid,
-      stoken,
-      lastFullSyncAt: existing?.lastFullSyncAt ?? Date.now(),
-    })
-    return
-  }
-
-  try {
-    const expectedFingerprint = (await getMeta())?.accountFingerprint
-    assertCurrentAccountEpoch(accountEpoch)
-    if (!expectedFingerprint) throw new AccountBoundaryChangedError()
-    const db = await openDB()
-    assertCurrentAccountEpoch(accountEpoch)
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction([STORE_COLLECTIONS, STORE_META], 'readwrite')
-      const collectionStore = tx.objectStore(STORE_COLLECTIONS)
-      const metaStore = tx.objectStore(STORE_META)
-      const metaReq = metaStore.get(META_KEY)
-
-      let settled = false
-      const fail = (error: unknown) => {
-        if (settled) return
-        settled = true
-        reject(error)
-      }
-      const abortForBoundary = () => {
-        fail(new AccountBoundaryChangedError())
-        try { tx.abort() } catch { /* transaction already finished */ }
-      }
-
-      metaReq.onsuccess = () => {
-        const currentFingerprint = (metaReq.result as CacheMeta | undefined)?.accountFingerprint
-        if (currentFingerprint !== expectedFingerprint) {
-          abortForBoundary()
-          return
-        }
-        const collectionReq = collectionStore.get(collectionUid)
-        collectionReq.onsuccess = () => {
-          const existing = collectionReq.result as CachedCollection | undefined
-          collectionStore.put({
-            collectionType: type,
-            collectionUid,
-            stoken,
-            lastFullSyncAt: existing?.lastFullSyncAt ?? Date.now(),
-          })
-          const commitGuard = metaStore.get(META_KEY)
-          commitGuard.onsuccess = () => {
-            try {
-              assertCurrentAccountEpoch(accountEpoch)
-            } catch {
-              abortForBoundary()
-            }
-          }
-          commitGuard.onerror = () => reject(commitGuard.error)
-        }
-        collectionReq.onerror = () => reject(collectionReq.error)
-      }
-      metaReq.onerror = () => reject(metaReq.error)
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
-  } catch (err) {
-    if (err instanceof AccountBoundaryChangedError) throw err
-    logger.warn('[data-cache] setStoken failed', err)
-  }
-}
-
-/**
- * Mark a collection's stoken as stale (server returned an unknown-stoken error).
- * Caller should fall back to a full refresh.
- */
-export async function clearStoken(collectionUid: string): Promise<void> {
-  const existing = await getCollection(collectionUid)
-  if (!existing) return
-  await putCollection({ ...existing, stoken: null })
 }
 
 // ── Meta ──
@@ -901,37 +651,6 @@ export async function ensureFingerprint(accountFingerprint: string, accountEpoch
     logger.warn('[data-cache] fingerprint or schema mismatch, clearing cache')
   }
   return result.survived
-}
-
-// ── Feature flag helper ──
-
-export interface CacheCapabilityStatus {
-  featureFlagEnabled: boolean
-  encryptedEnvelopeAvailable: boolean
-  enabled: boolean
-}
-
-/**
- * Privacy-safe cache capability status for timing diagnostics. Synchronous and
- * side-effect-free: no IndexedDB open, schema migration, cache reads, or writes.
- */
-export function getCacheCapabilityStatus(): CacheCapabilityStatus {
-  const featureFlagEnabled = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED === 'true'
-  const encryptedEnvelopeAvailable = hasEncryptedCacheEnvelope()
-  return {
-    featureFlagEnabled,
-    encryptedEnvelopeAvailable,
-    enabled: featureFlagEnabled && encryptedEnvelopeAvailable,
-  }
-}
-
-/**
- * Returns true only when the local cache feature is enabled and encrypted
- * cache storage is available. Off by default, and fail-closed if the flag is
- * enabled before encryption exists.
- */
-export function isCacheEnabled(): boolean {
-  return getCacheCapabilityStatus().enabled
 }
 
 // ── Test helpers ──

@@ -78,7 +78,7 @@ A label next to the editor shows **Unsaved changes**, **Saving…**, **Saved**, 
 
 Text that was not saved stays in this browser when you switch notes or leave Notes, and comes back when you open the note again. Text whose save was refused or failed is also kept, encrypted, in this browser's offline storage for your account, so it comes back after you reload or close the tab. Refused text comes back with **Save as a copy**; text whose save failed is saved again when you open the note. Reopened this way, the text counts as unsaved until it is saved or copied.
 
-This does not depend on the encrypted local cache described under [Offline](#offline). The key that encrypts this text is stored with it in this browser's profile, so while you are signed in, anyone who can use this browser profile, or who has a copy of its files, can read it. Logging out deletes it. Being signed out because your session ended deletes it too, once the app notices, which can be the next time you open SilentSuite in this browser.
+The key that encrypts this text is stored with it in this browser's profile, so while you are signed in, anyone who can use this browser profile, or who has a copy of its files, can read it. Logging out deletes it. Being signed out because your session ended deletes it too, once the app notices, which can be the next time you open SilentSuite in this browser.
 
 Text the browser has not stored yet, such as typing in the last moments before the tab closes, is lost when the tab closes or reloads. The page asks the browser to confirm first, but not every browser shows that question.
 
@@ -144,7 +144,7 @@ Edits made while offline to a note that is already open are encrypted locally an
 
 In the web app, creating a note, moving one to another notebook, saving one as a copy, and deleting a notebook need a connection. While you are offline, **New note** and the notebook menu in the editor are turned off, and the page says why. They turn on again when the connection returns. In the Android app, a move works offline and is sent at the next sync.
 
-Reloading the page while offline cannot show your notes. That would need the web app's encrypted local cache, which is turned off in SilentSuite's release builds, including app.silentsuite.io and the self-hosted images.
+Reloading the web app while offline cannot show your note list.
 
 ## Sharing
 
