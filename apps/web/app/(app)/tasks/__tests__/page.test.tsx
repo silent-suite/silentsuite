@@ -141,6 +141,38 @@ describe('TasksPage mobile reachability', () => {
     expect(screen.getByPlaceholderText('Add a task...')).toBeInTheDocument()
   })
 
+  // WEB-14: on reload only the local "My Tasks" placeholder (no access level) is known, which
+  // fails closed. Until the real lists load the quick add says "Loading…", not "Read-only mode".
+  it('shows a neutral loading placeholder, not "Read-only mode", until the task lists load', () => {
+    storeMock.taskListState.lists = [{ id: 'default', name: 'My Tasks', color: '#3b82f6', visible: true }]
+    const view = renderWithIntl(<TasksPage />)
+    const input = screen.getByRole('textbox', { name: 'Add a task' })
+    expect(input).toHaveAttribute('placeholder', 'Loading…')
+    expect(input).toBeDisabled()
+    expect(input).not.toHaveAttribute('title')
+    expect(screen.getByRole('button', { name: 'New task' })).not.toHaveAttribute('title')
+    expect(screen.queryByPlaceholderText('Read-only mode')).not.toBeInTheDocument()
+
+    // Real writable lists arrive: normal quick add.
+    writableList()
+    view.rerender(<TasksPage />)
+    expect(input).toHaveAttribute('placeholder', 'Add a task...')
+    expect(input).toBeEnabled()
+
+    // A real read-only list still says so.
+    storeMock.taskListState.lists = [{ id: 'shared', name: 'Shared', color: '#3b82f6', visible: true, accessLevel: 0 }]
+    view.rerender(<TasksPage />)
+    expect(input).toHaveAttribute('placeholder', 'Read-only mode')
+    expect(input).toHaveAttribute('title', 'This task list is read-only')
+
+    // Initialization ended without real lists: the placeholder still fails closed as read-only.
+    storeMock.taskListState.lists = [{ id: 'default', name: 'My Tasks', color: '#3b82f6', visible: true }]
+    act(() => useEtebaseStore.setState({ isInitialized: true }))
+    view.rerender(<TasksPage />)
+    expect(input).toHaveAttribute('placeholder', 'Read-only mode')
+    expect(input).toBeDisabled()
+  })
+
   it('exposes a mobile collection switcher with a 44px touch target', () => {
     renderWithIntl(<TasksPage />)
     const folderButton = screen.getByRole('button', { name: manageTaskLists })

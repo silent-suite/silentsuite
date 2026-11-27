@@ -6,7 +6,7 @@ import { X, ChevronDown, Calendar, Flag, WifiOff, TriangleAlert, Plus, AlignLeft
 import { useTranslations } from 'next-intl'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useTaskStore, type TaskSaveError } from '@/app/stores/use-task-store'
-import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
+import { useDomainInitializing, useTaskListsLoading } from '@/app/hooks/use-domain-initializing'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
@@ -145,11 +145,13 @@ function TaskQuickAdd() {
   const taskLists = useTaskListStore((s) => s.lists)
   const activeListId = useTaskListStore((s) => s.activeListId)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Until the real lists arrive, writability is unknown: say "Loading…", not "Read-only mode".
+  const listsLoading = useTaskListsLoading(taskLists)
 
   // A new task never goes to a list shared read-only.
   const defaultListId = useMemo(() => defaultWritableListId(taskLists, activeListId), [activeListId, taskLists])
   const canWrite = canWriteAccount && defaultListId !== undefined
-  const readOnlyTitle = !canWriteAccount ? 'Subscription required' : 'This task list is read-only'
+  const readOnlyTitle = listsLoading ? undefined : !canWriteAccount ? 'Subscription required' : 'This task list is read-only'
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -179,7 +181,7 @@ function TaskQuickAdd() {
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder={canWrite ? 'Add a task...' : 'Read-only mode'}
+          placeholder={canWrite ? 'Add a task...' : listsLoading ? 'Loading…' : 'Read-only mode'}
           aria-label="Add a task"
           disabled={!canWrite}
           readOnly={pending}
@@ -1007,6 +1009,7 @@ export default function TasksPage() {
   const tasksLoaded = useEtebaseStore((s) => s.domainLoadState.tasks === 'loaded')
   const isOnline = useSyncStore((s) => s.isOnline)
   const taskLists = useTaskListStore((s) => s.lists)
+  const listsLoading = useTaskListsLoading(taskLists)
   const [showDialog, setShowDialog] = useState(false)
   const [editTask, setEditTask] = useState<Task | null>(null)
   const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
@@ -1060,7 +1063,7 @@ export default function TasksPage() {
             onClick={() => setShowDialog(true)}
             disabled={!canWrite}
             className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
-            title={!canWriteAccount ? 'Subscription required' : !hasWritableList ? 'This task list is read-only' : undefined}
+            title={listsLoading ? undefined : !canWriteAccount ? 'Subscription required' : !hasWritableList ? 'This task list is read-only' : undefined}
           >
             <Plus className="h-4 w-4" />
             New task
