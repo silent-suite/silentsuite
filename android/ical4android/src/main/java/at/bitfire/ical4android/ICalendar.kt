@@ -76,7 +76,7 @@ open class ICalendar {
             Ical4Android.checkThreadContextClassLoader()
 
             // apply hacks and workarounds that operate on plain text level
-            val reader2 = ICalPreprocessor.fixInvalidUtcOffset(reader)
+            val reader2 = ICalPreprocessor.fixInvalidRecurrenceRules(ICalPreprocessor.fixInvalidUtcOffset(reader))
 
             // parse stream
             val calendar: Calendar

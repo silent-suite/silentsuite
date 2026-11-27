@@ -24,6 +24,11 @@ object ICalPreprocessor {
 
     private val TZOFFSET_REGEXP = Regex("^(TZOFFSET(FROM|TO):[+\\-]?)((18|19|[2-6]\\d)\\d\\d)$", RegexOption.MULTILINE)
 
+    /** RRULE/EXRULE line (group 1: name, parameters and colon; group 2: value, including folded continuation lines) */
+    private val RECUR_REGEXP = Regex("^((?:RRULE|EXRULE)(?:;[^:\\r\\n]*)?:)([^\\r\\n]*(?:\\r?\\n[ \\t][^\\r\\n]*)*)",
+            setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE))
+    private val FOLDING_REGEXP = Regex("\\r?\\n[ \\t]")
+
     private val propertyRules = arrayOf(
             CreatedPropertyRule(),      // make sure CREATED is UTC
             DatePropertyRule(),
@@ -71,6 +76,48 @@ object ICalPreprocessor {
         // not modified, return original iCalendar
         reader.reset()
         return reader
+    }
+
+
+    /**
+     * RFC 5545 recurrence rule names and values are case-insensitive, but ical4j's [net.fortuna.ical4j.model.Recur]
+     * only accepts upper case (`RRULE:freq=weekly` fails with "A recurrence rule MUST contain a FREQ rule part")
+     * and fails on rule parts without a value (like `BYDAY=`).
+     *
+     * Rewrites values of all RRULE and EXRULE properties to upper case and drops empty rule parts.
+     *
+     * @param reader Reader that reads the potentially broken iCalendar (which for instance contains `RRULE:freq=weekly;BYDAY=`)
+     * @return Reader that reads the fixed iCalendar (for instance `RRULE:FREQ=WEEKLY`)
+     */
+    fun fixInvalidRecurrenceRules(reader: Reader): Reader {
+        fun normalize(value: String) =
+                value.replace(FOLDING_REGEXP, "")
+                        .uppercase(Locale.ROOT)
+                        .split(';')
+                        .filter { part -> part.isNotBlank() && !part.endsWith("=") }
+                        .joinToString(";")
+
+        val resetSupported = try {
+            reader.reset()
+            true
+        } catch(e: IOException) {
+            false
+        }
+
+        if (resetSupported) {
+            // reset is supported, no need to copy the whole stream to another String (unless there is a recurrence rule)
+            val found = Scanner(reader).findWithinHorizon(RECUR_REGEXP.toPattern(), 0) != null
+            reader.reset()
+            if (!found)
+                return reader
+        }
+
+        return StringReader(reader.readText().replace(RECUR_REGEXP) {
+            val fixed = normalize(it.groupValues[2])
+            if (fixed != it.groupValues[2])
+                Ical4Android.log.log(Level.FINE, "Normalizing recurrence rule", it.value)
+            it.groupValues[1] + fixed
+        })
     }
 
 
