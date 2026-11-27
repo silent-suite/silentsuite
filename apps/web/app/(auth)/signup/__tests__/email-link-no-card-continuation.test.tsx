@@ -709,12 +709,14 @@ describe('email-link seven-day no-card continuation', () => {
     }))
     await choosePaymentMethod('btcpay')
     expect(await screen.findByText(/Payment confirmed for your Early Adopter Plan/)).toHaveTextContent('Account and vault setup still need to finish')
+    // Recorded when settlement is seen, before the delayed hand-off to account setup.
+    expect(trackInPageCheckoutReturned).toHaveBeenCalledWith('btcpay')
     expect(screen.queryByText(/access is active|early_annual|Plan ID/)).not.toBeInTheDocument()
     expect(authState.finalizePaidSignup).not.toHaveBeenCalled()
     expect(authState.completeSignup).not.toHaveBeenCalled()
-    // The settled invoice then hands off to account finalization, which records the outcome once.
-    await waitFor(() => expect(trackInPageCheckoutReturned).toHaveBeenCalledWith('btcpay'), { timeout: 3000 })
-    expect(trackInPageCheckoutReturned).toHaveBeenCalledTimes(1)
+    // The hand-off to account finalization reports the same method again; the tracker sends once per document.
+    await waitFor(() => expect(trackInPageCheckoutReturned).toHaveBeenCalledTimes(2), { timeout: 3000 })
+    expect(new Set(trackInPageCheckoutReturned.mock.calls.map(([method]) => method))).toEqual(new Set(['btcpay']))
   })
 
   async function traverseHistory(direction: 'back' | 'forward') {
@@ -800,8 +802,7 @@ describe('email-link seven-day no-card continuation', () => {
     expect(trackInPageCheckoutReturned).not.toHaveBeenCalled()
     fireEvent.click(submit)
     await waitFor(() => expect(trackInPageCheckoutReturned).toHaveBeenCalledWith('stripe'))
-    fireEvent.click(screen.queryByTestId('card-submit') ?? document.body)
-    expect(trackInPageCheckoutReturned).toHaveBeenCalledTimes(1)
+    expect(trackInPageCheckoutReturned.mock.calls).toEqual([['stripe']])
   })
 
   it.each(['charge_now', 'card_trial'] as const)('keeps the validated %s disclosure through card confirmation', async (kind) => {

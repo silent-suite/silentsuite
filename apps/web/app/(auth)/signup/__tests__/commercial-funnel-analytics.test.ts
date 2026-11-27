@@ -130,3 +130,28 @@ describe('signup step events', () => {
     expect(send.mock.calls.map(([step]) => step)).toEqual(['plan_shown', 'email_verified', 'completed'])
   })
 })
+
+describe('in-page checkout outcome', () => {
+  async function freshTracker() {
+    vi.resetModules()
+    return (await import('../commercial-funnel-analytics')).trackInPageCheckoutReturned
+  }
+
+  it('sends once per document, only on /signup', async () => {
+    const track = await freshTracker()
+    const send = vi.fn()
+    track('btcpay', '/signup/pending-payment', send)
+    expect(send).not.toHaveBeenCalled()
+    track('btcpay', '/signup', send)
+    track('stripe', '/signup', send)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(buildInPageCheckoutReturnedPayload('btcpay'))
+  })
+
+  it('never throws when the sender fails', async () => {
+    const track = await freshTracker()
+    const send = vi.fn(() => { throw new TypeError('sendBeacon refused') })
+    expect(() => track('stripe', '/signup', send)).not.toThrow()
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+})

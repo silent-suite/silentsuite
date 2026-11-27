@@ -641,6 +641,7 @@ function CryptoPaymentPanel({
           sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
           sessionStorage.removeItem('silentsuite-pending-crypto-token')
           sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
+          trackInPageCheckoutReturned('btcpay')
           timer = window.setTimeout(onPaymentComplete, 1200)
           return
         }
@@ -1492,8 +1493,6 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisioning, setProvisioning] = useState(false)
   const operationRef = useRef(false)
-  // One in-page checkout outcome per page load, even if account finalization is retried.
-  const inPageCheckoutReturnedRef = useRef(false)
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const [planView, setPlanView] = useState<PlanView>('cards')
   const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
@@ -2251,10 +2250,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const handlePaymentComplete = useCallback(async () => {
     if (operationRef.current) return
     operationRef.current = true
-    if (!inPageCheckoutReturnedRef.current) {
-      inPageCheckoutReturnedRef.current = true
-      trackInPageCheckoutReturned(cryptoPaymentSession ? 'btcpay' : 'stripe')
-    }
+    trackInPageCheckoutReturned(cryptoPaymentSession ? 'btcpay' : 'stripe')
     setProvisioning(true)
     setProvisionError(null)
     try {

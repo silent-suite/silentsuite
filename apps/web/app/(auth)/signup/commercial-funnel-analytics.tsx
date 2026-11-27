@@ -28,8 +28,21 @@ export function CheckoutReturnAnalytics({ outcome, paymentMethod }: { outcome: '
 }
 export function trackPlanSelected(offer: AnnualOffer) { sendCommercialEvent(buildPlanSelectedPayload(offer)) }
 export function trackCheckoutInitiated(offer: AnnualOffer, paymentMethod: 'stripe' | 'btcpay') { sendCommercialEvent(buildCheckoutInitiatedPayload(offer, paymentMethod)) }
-/** A checkout that finished on /signup itself (card dialog, or Bitcoin settlement seen by polling). */
-export function trackInPageCheckoutReturned(paymentMethod: 'stripe' | 'btcpay') { sendCommercialEvent(buildInPageCheckoutReturnedPayload(paymentMethod)) }
+let inPageCheckoutReturnedSent = false
+/**
+ * A checkout that finished on /signup itself: a card confirmed in Stripe's
+ * dialog, or a Bitcoin settlement seen by polling. Sent at most once per
+ * document, and a failing sender never interrupts the paid signup.
+ */
+export function trackInPageCheckoutReturned(paymentMethod: 'stripe' | 'btcpay', pathname = window.location.pathname, send: (payload: CommercialEventPayload) => void = sendCommercialEvent) {
+  if (inPageCheckoutReturnedSent || pathname !== '/signup') return
+  inPageCheckoutReturnedSent = true
+  try {
+    send(buildInPageCheckoutReturnedPayload(paymentMethod))
+  } catch {
+    // Measurement only.
+  }
+}
 
 /**
  * Builds the step event for the page it is recorded on: any step on /signup,
