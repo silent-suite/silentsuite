@@ -69,7 +69,8 @@ test('every docs page is a registered analytics path', async () => {
   const pages: string[] = []
   for (const entry of await readdir(docsRoot, { recursive: true, withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith('.md')) continue
-    const relative = `${entry.parentPath.slice(docsRoot.length)}/${entry.name}`.replace(/^\/+/, '')
+    // Forward slashes on every platform, so the page maps to its URL path.
+    const relative = `${entry.parentPath.slice(docsRoot.length)}/${entry.name}`.replaceAll('\\', '/').replace(/^\/+/, '')
     if (relative.split('/').some((part) => part === 'node_modules' || part.startsWith('.'))) continue
     pages.push(`/${relative}`.replace(/(?:\/index)?\.md$/, '') || '/')
   }
