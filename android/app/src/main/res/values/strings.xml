@@ -795,7 +795,7 @@
     <string name="dashboard_notes_destination">Syncs notebooks for the Notes screen in this app</string>
     <string name="settings_experimental_title">Experimental</string>
     <string name="settings_notes_enabled">Notes (experimental)</string>
-    <string name="settings_notes_enabled_summary">Read and edit your encrypted notebooks in this app. Notes sync when you open Notes, save a note, tap Sync now, or after a calendar, contact, or task sync. The two settings below choose the connections they may use. There is no separate background schedule yet.</string>
+    <string name="settings_notes_enabled_summary">Read and edit your encrypted notebooks here; they sync when you open Notes, save a note or tap Sync now.</string>
     <string name="settings_notes_automatic_network">Automatic Notes sync</string>
     <string name="settings_notes_automatic_network_wifi">Wi-Fi only. Notes sync by themselves when you open Notes, after you save a note, and after a calendar, contact, or task sync, only on Wi-Fi.</string>
     <string name="settings_notes_automatic_network_any">Wi-Fi or mobile data. Notes also sync by themselves on mobile data, including after you save a note, unless Sync over WiFi only is on for this account.</string>
@@ -812,7 +812,7 @@
         <item>ANY_NETWORK</item>
     </string-array>
     <string name="settings_birthdays_enabled">Birthdays calendar (experimental)</string>
-    <string name="settings_birthdays_enabled_summary">Adds a Birthdays calendar made from your contacts. Turn it on from the Calendars menu.</string>
+    <string name="settings_birthdays_enabled_summary">After switching this on, open the menu on the dashboard’s Calendar card and tap Turn on Birthdays calendar to make it from your contacts.</string>
     <string name="create_notebook">Create notebook</string>
     <string name="create_notebook_display_name_hint">Notebook name</string>
     <string name="notes_open">Open notes</string>
@@ -1091,7 +1091,7 @@
     <string name="report_problem_error_email">Enter a valid email address or leave this empty</string>
     <string name="report_problem_clip_label">SilentSuite problem report</string>
     <string name="settings_widgets_enabled">Home screen widgets (experimental)</string>
-    <string name="settings_widgets_enabled_summary">Show this account’s visible calendars in home screen widgets. Turning this off for all accounts removes the widgets from your home screen.</string>
+    <string name="settings_widgets_enabled_summary">Shows this account’s visible calendars in home screen widgets, which disappear when this is off for every account.</string>
     <string name="widget_agenda_title">Agenda</string>
     <string name="widget_agenda_window">Next 7 days</string>
     <string name="widget_agenda_description">Today and the next six days from your SilentSuite calendars.</string>
