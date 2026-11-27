@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from contextlib import contextmanager
@@ -313,6 +314,40 @@ def clear_cached_user(username, db_path=None):
     """Delete one user's cache while serializing proxy setup and migrations."""
     with _cache_database_init_lock:
         return _clear_cached_user_locked(username, db_path)
+
+
+def list_cached_users():
+    """Return usernames that still have rows in the local cache.
+
+    Read-only: never creates the cache file, its tables or the global proxy.
+    """
+    with _cache_database_init_lock:
+        database = getattr(db.database_proxy, "obj", None)
+        if database is not None:
+            with db.atomic_connection():
+                if not database.table_exists(models.User._meta.table_name):
+                    return []
+                return sorted(
+                    user.username
+                    for user in models.User.select(models.User.username)
+                )
+        path = config.DATABASE_FILE
+        if not os.path.exists(path):
+            return []
+        with _private_umask():
+            connection = sqlite3.connect(path, timeout=5.0)
+        try:
+            table = models.User._meta.table_name
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone() is None:
+                return []
+            return sorted(
+                row[0] for row in connection.execute(f'SELECT username FROM "{table}"')
+            )
+        finally:
+            connection.close()
 
 
 def clear_unconfigured_cached_users(configured_users, db_path=None):
