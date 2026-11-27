@@ -537,6 +537,9 @@ it.each(['lost response', 'inline Bitcoin', 'storage failure'] as const)('retain
     document = render(createElement(RefreshedPendingPaymentPage))
     await screen.findByLabelText(/^password$/i)
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/payment-session/v2'))).toHaveLength(1)
-    expect(mocks.signup).not.toHaveBeenCalled()
+    // The account was created once, before payment dispatch; the restored page signs in to it.
+    expect(mocks.signup).toHaveBeenCalledTimes(1)
+    expect(useAuthStore.getState().pendingSignup?.etebaseAccountReady).toBe(true)
+    expect(screen.getByRole('heading', { name: 'Enter your password' })).toBeVisible()
   } finally { write.mockRestore() }
 })

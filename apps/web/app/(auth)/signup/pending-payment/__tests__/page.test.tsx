@@ -44,7 +44,7 @@ vi.mock('@stripe/react-stripe-js', () => ({
   useStripe: () => ({}), useElements: () => ({}),
 }))
 vi.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'light' }) }))
-vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
+vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test', ETEBASE_SERVER_URL: 'https://server.silentsuite.io' }))
 vi.mock('@/app/lib/signup-return', () => ({ normalizeSignupReturnTo: (value: string | null) => value }))
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }: { href: string; children: ReactNode }) => <a href={href} {...props}>{children}</a> }))
 const recordSignupStep = vi.hoisted(() => vi.fn())
@@ -549,7 +549,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /complete restored account/i }))
     await waitFor(() => expect(authState.finalizePaidSignup).toHaveBeenCalledTimes(1))
-    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'RestoredPassword1')
+    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'RestoredPassword1', authState.pendingSignup?.serverUrl)
     expect(finalizedPending).toMatchObject({
       paymentSessionToken,
       paymentSessionRequestKey,
