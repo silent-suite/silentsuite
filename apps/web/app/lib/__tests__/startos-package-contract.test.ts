@@ -1,12 +1,8 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-  HEX_SECRET_LENGTH,
-  newSecrets,
-  OWNER_PASSWORD_LENGTH,
-  validateSecrets,
-} from '../../../../../self-host/startos/startos/secrets'
 
 // Static contract for the StartOS package (self-host/startos) and its non-publishing CI
 // candidate. Nothing here starts containers or StartOS; CI's smoke run does the former.
@@ -92,39 +88,64 @@ describe('StartOS package manifest', () => {
 })
 
 describe('StartOS package secrets', () => {
-  let counter = 0
-  const random = ({ charset, len }: { charset: string; len: number }) => {
-    counter += 1
-    const alphabet = charset === 'a-f,0-9' ? '0123456789abcdef' : 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    return Array.from({ length: len }, (_, i) => alphabet[(i * 7 + counter) % alphabet.length]).join('')
+  // secrets.ts belongs to the StartOS wrapper, whose tsconfig extends the (here uninstalled)
+  // SDK, so it is exercised in a plain Node child process with built-in type stripping.
+  type SecretsResult = {
+    ownerLength: number
+    hexLength: number
+    fresh: { ownerPassword: string; registrationSigning: string; dbPassword: string }
+    roundTrip: boolean
+    throws: Record<string, boolean>
+  }
+  const result = (): SecretsResult => {
+    const url = pathToFileURL(resolve(pkg, 'startos/secrets.ts')).href
+    const script = `
+      const s = await import(${JSON.stringify(url)})
+      let counter = 0
+      const random = ({ charset, len }) => {
+        counter += 1
+        const alphabet = charset === 'a-f,0-9' ? '0123456789abcdef'
+          : 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+        return Array.from({ length: len }, (_, i) => alphabet[(i * 7 + counter) % alphabet.length]).join('')
+      }
+      const throws = (value) => { try { s.validateSecrets(value); return false } catch { return true } }
+      const fresh = s.newSecrets(random)
+      const cases = { undefined: throws(undefined), empty: throws({}), upperHex: throws({ ...fresh, dbPassword: fresh.dbPassword.toUpperCase() }) }
+      for (const key of ['ownerPassword', 'registrationSigning', 'dbPassword']) {
+        const partial = { ...fresh }; delete partial[key]
+        cases['missing-' + key] = throws(partial)
+        cases['short-' + key] = throws({ ...fresh, [key]: 'short' })
+      }
+      const roundTrip = JSON.stringify(s.validateSecrets({ ...fresh })) === JSON.stringify(fresh)
+      process.stdout.write(JSON.stringify({ ownerLength: s.OWNER_PASSWORD_LENGTH, hexLength: s.HEX_SECRET_LENGTH, fresh, roundTrip, throws: cases }))
+    `
+    const out = execFileSync(
+      process.execPath,
+      ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', script],
+      { encoding: 'utf8' },
+    )
+    return JSON.parse(out) as SecretsResult
   }
 
   it('generates three independent secrets of the required shapes', () => {
-    const secrets = newSecrets(random)
-    expect(secrets.ownerPassword).toMatch(new RegExp(`^[A-Za-z0-9]{${OWNER_PASSWORD_LENGTH}}$`))
-    expect(secrets.registrationSigning).toMatch(new RegExp(`^[0-9a-f]{${HEX_SECRET_LENGTH}}$`))
-    expect(secrets.dbPassword).toMatch(new RegExp(`^[0-9a-f]{${HEX_SECRET_LENGTH}}$`))
+    const { ownerLength, hexLength, fresh } = result()
+    expect(fresh.ownerPassword).toMatch(new RegExp(`^[A-Za-z0-9]{${ownerLength}}$`))
+    expect(fresh.registrationSigning).toMatch(new RegExp(`^[0-9a-f]{${hexLength}}$`))
+    expect(fresh.dbPassword).toMatch(new RegExp(`^[0-9a-f]{${hexLength}}$`))
     // The server requires an owner password of 32-256 characters distinct from the signing material.
-    expect(OWNER_PASSWORD_LENGTH).toBeGreaterThanOrEqual(32)
-    expect(secrets.ownerPassword).not.toBe(secrets.registrationSigning)
+    expect(ownerLength).toBeGreaterThanOrEqual(32)
+    expect(hexLength).toBeGreaterThanOrEqual(32)
+    expect(fresh.ownerPassword).not.toBe(fresh.registrationSigning)
   })
 
   it('returns restored or existing secrets unchanged', () => {
-    const stored = newSecrets(random)
-    expect(validateSecrets({ ...stored })).toEqual(stored)
+    expect(result().roundTrip).toBe(true)
   })
 
   it('fails closed on missing, partial or malformed stored secrets', () => {
-    const stored = newSecrets(random)
-    expect(() => validateSecrets(undefined)).toThrow()
-    expect(() => validateSecrets({})).toThrow()
-    for (const key of ['ownerPassword', 'registrationSigning', 'dbPassword'] as const) {
-      const partial: Record<string, unknown> = { ...stored }
-      delete partial[key]
-      expect(() => validateSecrets(partial)).toThrow()
-      expect(() => validateSecrets({ ...stored, [key]: 'short' })).toThrow()
-    }
-    expect(() => validateSecrets({ ...stored, dbPassword: stored.dbPassword.toUpperCase() })).toThrow()
+    const { throws } = result()
+    expect(Object.keys(throws)).toHaveLength(9)
+    for (const [name, threw] of Object.entries(throws)) expect(threw, name).toBe(true)
   })
 
   it('generates secrets only on a fresh install and validates them on every other init', () => {
