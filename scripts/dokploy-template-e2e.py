@@ -126,8 +126,12 @@ def deploy(args):
     domain = domains[0]
     check("imported domain starts as HTTP-only (documented first step: switch to HTTPS)",
           domain["https"] is False and domain["certificateType"] == "none")
+    status, body = api._send(urllib.request.Request(DOKPLOY + "/api/auth/get-session"))
+    organization = json.loads(body)["session"]["activeOrganizationId"] if status == 200 else ""
+    check("Dokploy session has an active organization", bool(organization))
     api.mutation("certificates.create", {
         "name": "silentsuite-ci",
+        "organizationId": organization,
         "certificateData": open(args.cert, encoding="ascii").read(),
         "privateKey": open(args.key, encoding="ascii").read(),
         "autoRenew": False,

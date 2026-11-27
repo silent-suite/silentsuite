@@ -76,6 +76,11 @@ class UpstreamRules(unittest.TestCase):
             self.assertRegex(name, r"^silentsuite(-[a-z]+)?$")
             self.assertIn(service.get("restart"), ("unless-stopped", "no"), name)
 
+    def test_router_restarts_when_its_upstreams_are_recreated(self):
+        depends = compose()["services"]["silentsuite"]["depends_on"]
+        self.assertEqual(set(depends), {"silentsuite-web", "silentsuite-server"})
+        self.assertTrue(all(entry.get("restart") is True for entry in depends.values()))
+
     def test_only_the_one_shot_initializer_does_not_restart(self):
         restarts = {name: service["restart"] for name, service in compose()["services"].items()}
         self.assertEqual([name for name, value in restarts.items() if value == "no"], ["silentsuite-init"])

@@ -17,11 +17,16 @@ services:
       - "8080"
     volumes:
       - ../files/silentsuite/router.conf:/etc/nginx/conf.d/default.conf:ro
+    # nginx resolves its upstreams once at start. "restart: true" restarts the router whenever
+    # Compose recreates web or server (for example on an image update), so it never keeps
+    # proxying to a replaced container's old address.
     depends_on:
       silentsuite-web:
         condition: service_started
+        restart: true
       silentsuite-server:
         condition: service_healthy
+        restart: true
 
   silentsuite-web:
     image: ghcr.io/silent-suite/silentsuite-web-selfhost:v0.5.22-beta@sha256:0684fdde0c71e5b849c10f5f4992b307cabf19f311fa865d9cda5939e1bc4cb2
