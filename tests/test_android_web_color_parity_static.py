@@ -1239,6 +1239,20 @@ def test_about_toolbar_controls_are_white_through_the_scoped_top_bar_overlay():
             assert "colorControlNormal" not in styles(qualifier)[theme_name], (qualifier, theme_name)
 
 
+def test_about_tab_strip_is_navy_under_white_labels_and_up_arrow_aligns_with_title():
+    root = ET.parse(RES / "layout/activity_about.xml").getroot()
+    by_id = {element.attrib.get(f"{ANDROID_NS}id"): element for element in root.iter()}
+    tabs = by_id["@+id/tabs"]
+    # The Material3 TabLayout paints its own colorSurface background, which is near-white by
+    # day; white labels need the navy bar drawn on the strip itself in both themes.
+    assert tabs.attrib.get(f"{APP_NS}tabTextColor") == ON_TOP_BAR
+    assert tabs.attrib.get(f"{ANDROID_NS}background") == TOP_BAR
+    # AppCompat centres the Up button within minHeight but the title within the full height, so a
+    # minHeight below the bar height lifts the arrow above the title.
+    toolbar = by_id["@+id/toolbar"]
+    assert toolbar.attrib.get(f"{ANDROID_NS}minHeight") == toolbar.attrib.get(f"{ANDROID_NS}layout_height")
+
+
 SYSTEM_BAR_THEME_FAMILIES = ("AppTheme", "AppTheme.NoActionBar", "AppTheme.Material3", "AppTheme.Material3.NoActionBar")
 # Android resource precedence ranks night mode above platform version, so on the API 29+
 # product floor the night definition wins at night and values-v21 wins by day.
