@@ -94,7 +94,7 @@ export default function ImportListSelector({
               }}
               placeholder={`New ${label.toLowerCase()} name`}
               autoFocus
-              className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-1.5 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:border-[rgb(var(--primary))] focus:outline-none"
+              className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-1.5 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:border-[rgb(var(--focus-ring))] focus:outline-none"
             />
             <div className="flex items-center gap-1.5">
               {PRESET_COLORS.map((color) => (

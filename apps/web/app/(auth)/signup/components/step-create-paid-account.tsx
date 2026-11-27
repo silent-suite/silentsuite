@@ -154,7 +154,7 @@ export function StepCreatePaidAccount({
               aria-pressed={showPassword}
               aria-controls="paid-signup-password"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
+              className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--focus-ring))]"
             >
               {showPassword ? <Eye aria-hidden="true" className="h-4 w-4" /> : <EyeOff aria-hidden="true" className="h-4 w-4" />}
             </button>

@@ -32,7 +32,7 @@ import { PasswordKeyAcknowledgement, StepCreateVault } from './components/step-c
 import { StepCreatePaidAccount, type PaidAccountFormData } from './components/step-create-paid-account'
 import { QRCodeSVG } from 'qrcode.react'
 import { createEmailLinkContinuation } from '@/app/lib/signup-email-continuation'
-import { createSignupStepRecorder, signupStepFor, trackCheckoutInitiated, trackPlanSelected } from './commercial-funnel-analytics'
+import { createSignupStepRecorder, signupStepFor, trackCheckoutInitiated, trackInPageCheckoutReturned, trackPlanSelected } from './commercial-funnel-analytics'
 import {
   activateAnnualCheckout,
   consumeSignupEmailOwnership,
@@ -491,7 +491,7 @@ function StepCreateAccount({
               type="checkbox"
               checked={rememberDevice}
               onChange={(e) => onRememberDeviceChange(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary-text))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
+              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary-text))] focus:ring-[rgb(var(--focus-ring))] focus:ring-offset-0"
             />
             <span className="text-xs text-[rgb(var(--muted))] leading-relaxed">Keep me signed in on this device</span>
           </label>
@@ -650,6 +650,7 @@ function CryptoPaymentPanel({
           sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
           sessionStorage.removeItem('silentsuite-pending-crypto-token')
           sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
+          trackInPageCheckoutReturned('btcpay')
           timer = window.setTimeout(onPaymentComplete, 1200)
           return
         }
@@ -2290,6 +2291,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const handlePaymentComplete = useCallback(async () => {
     if (operationRef.current) return
     operationRef.current = true
+    trackInPageCheckoutReturned(cryptoPaymentSession ? 'btcpay' : 'stripe')
     setProvisioning(true)
     setProvisionError(null)
     try {
@@ -2303,7 +2305,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
       operationRef.current = false
       setProvisioning(false)
     }
-  }, [createAndFinalizePaidAccount])
+  }, [createAndFinalizePaidAccount, cryptoPaymentSession])
 
   const handlePaidAccountComplete = useCallback(async (data: PaidAccountFormData) => {
     await createAndFinalizePaidAccount(data.password)

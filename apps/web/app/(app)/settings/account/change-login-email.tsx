@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { useLoginEmailChangeEnabled } from '@/app/hooks/use-login-email-change-enabled'
 import { isHostedAccount, requestLoginEmailChange, type LoginEmailRequestResult } from '@/app/lib/login-email-change'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 
@@ -23,7 +22,6 @@ const MESSAGES: Record<LoginEmailRequestResult, string> = {
 }
 
 export function ChangeLoginEmail() {
-  const enabled = useLoginEmailChangeEnabled()
   const user = useAuthStore((state) => state.user)
   const [open, setOpen] = useState(false)
   const [email, setEmail] = useState('')
@@ -31,7 +29,7 @@ export function ChangeLoginEmail() {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<LoginEmailRequestResult | null>(null)
 
-  if (!enabled || !isHostedAccount(user)) return null
+  if (!isHostedAccount(user)) return null
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()

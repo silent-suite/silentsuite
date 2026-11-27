@@ -20,7 +20,7 @@ import type { AnonymousPaymentSessionRecovery, AnnualProvider } from '@/app/lib/
 import { SignupRecoveryWarning } from '../components/signup-recovery-warning'
 import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
-import { CheckoutReturnAnalytics, createSignupStepRecorder } from '../commercial-funnel-analytics'
+import { CheckoutReturnAnalytics, createSignupStepRecorder, trackInPageCheckoutReturned } from '../commercial-funnel-analytics'
 
 type PaymentState = 'pending' | 'settled' | 'account' | 'vault' | 'expired' | 'timeout' | 'unknown'
 type PaymentFlowCheckState = 'idle' | 'loading' | 'ready' | 'failed'
@@ -250,6 +250,8 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
         return 'stop'
       }
       if (result.state === 'confirmed') {
+        // Rendered inline on /signup after a refresh, the recovered checkout finishes there.
+        if (result.flow?.provider === 'stripe' || result.flow?.provider === 'btcpay') trackInPageCheckoutReturned(result.flow.provider)
         setRestoredEmail(recovery.email)
         setFlowCheckState('ready')
         setState('account')

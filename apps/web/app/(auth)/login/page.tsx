@@ -163,7 +163,7 @@ export default function LoginPage() {
               type="checkbox"
               checked={rememberDevice}
               onChange={(e) => setRememberDevice(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary-text))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
+              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary-text))] focus:ring-[rgb(var(--focus-ring))] focus:ring-offset-0"
             />
             <span className="text-sm font-medium text-[rgb(var(--foreground))]/80">Keep me signed in on this device</span>
           </label>
