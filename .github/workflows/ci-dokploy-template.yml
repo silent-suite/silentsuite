@@ -210,6 +210,13 @@ jobs:
         if: failure()
         run: |
           docker ps -a --format '{{.Names}} {{.Status}}'
+          echo | openssl s_client -connect 127.0.0.1:443 -servername silentsuite.ci.test 2>/dev/null \
+            | openssl x509 -noout -subject -issuer 2>/dev/null || echo "no TLS certificate served"
+          for container in $(docker ps -a --format '{{.Names}}' | grep -E -- '-silentsuite-1$'); do
+            docker inspect -f '{{range $k, $v := .Config.Labels}}{{if eq (slice $k 0 7) "traefik"}}{{$k}}={{$v}}{{"\n"}}{{end}}{{end}}' "$container"
+          done
+          sudo find /etc/dokploy/traefik/dynamic -maxdepth 3 -name '*.yml' -o -maxdepth 3 -name '*.crt' | head -20
+          docker logs --tail 40 dokploy-traefik 2>&1 | grep -v -i 'privkey\|BEGIN' || true
           # Router (nginx) and initializer output only; they log no requests and no secrets.
           for container in $(docker ps -a --format '{{.Names}}' | grep -E -- '-silentsuite-(1|init-1)$'); do
             echo "== $container restarts=$(docker inspect -f '{{.RestartCount}}' "$container")"

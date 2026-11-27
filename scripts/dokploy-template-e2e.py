@@ -208,15 +208,17 @@ def probe(args):
     context = ssl.create_default_context(cafile=args.ca)
     deadline = time.time() + 300
     status = None
+    last = "no attempt"
     while time.time() < deadline:
         try:
             status, _, _ = tls_request(context, "GET", "/api/v1/authentication/is_etebase/")
+            last = f"HTTP {status}"
             if status == 200:
                 break
-        except (OSError, ssl.SSLError, http.client.HTTPException):
-            pass
+        except (OSError, ssl.SSLError, http.client.HTTPException) as error:
+            last = f"{type(error).__name__}: {str(error)[:160]}"
         time.sleep(5)
-    check("Traefik serves SilentSuite over CA-verified TLS (is_etebase)", status == 200)
+    check(f"Traefik serves SilentSuite over CA-verified TLS (is_etebase; last: {last})", status == 200)
     if status != 200:
         return
     status, _, _ = tls_request(context, "GET", "/signup")
