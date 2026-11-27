@@ -921,7 +921,7 @@ def test_context_aware_vector_roles_and_tint_consumers_are_exact():
         vector = ET.parse(RES / f"drawable/{icon}.xml").getroot()
         assert {path.attrib.get("{http://schemas.android.com/apk/res/android}fillColor") for path in vector.findall("path")} == {"@color/semantic_on_system_bar"}, icon
         # The white fill is only right on a dark action bar. The theme tint makes the glyph follow
-        # the toolbar it sits on: dark on the light Material3 toolbars, white on the dark overlay.
+        # the toolbar it sits on: white through the navy bars' dark overlay.
         assert vector.attrib.get("{http://schemas.android.com/apk/res/android}tint") == "?attr/colorControlNormal", icon
         for consumer in consumers:
             assert f"@drawable/{icon}" in source(f"android/app/src/main/res/{consumer}"), (icon, consumer)
@@ -1159,6 +1159,36 @@ def test_legacy_window_action_bars_are_navy_with_white_foreground_in_both_themes
         # The About toolbar already uses the approved pair and must stay that way.
         about = resource_styles(qualifier)["toolbar_style"]
         assert about.get("android:background") == TOP_BAR and about.get("titleTextColor") == ON_TOP_BAR
+
+
+def test_material3_window_action_bars_match_the_navy_top_bar_in_both_themes():
+    manifest = ET.parse(ROOT / "android/app/src/main/AndroidManifest.xml").getroot()
+    material3 = [
+        activity.attrib[f"{ANDROID_NS}name"]
+        for activity in manifest.find("application").findall("activity")
+        if activity.attrib.get(f"{ANDROID_NS}theme") == "@style/AppTheme.Material3"
+    ]
+    assert ".ui.setup.LoginActivity" in material3 and ".ui.notes.NotesActivity" in material3, material3
+
+    for qualifier in ("values", "values-night"):
+        theme = styles(qualifier)["AppTheme.Material3"]
+        # Material3 otherwise paints this bar colorSurfaceContainer (lavender by day, grey at night).
+        bar = app_style(qualifier, theme.get("actionBarStyle", ""))
+        for item in ("background", "backgroundStacked", "backgroundSplit"):
+            assert bar.get(item) == TOP_BAR, (qualifier, item, bar)
+        # The Material3 title colour is colorOnSurface, which the bar overlay leaves dark.
+        title = app_style(qualifier, bar.get("titleTextStyle", ""))
+        assert title.get("android:textColor") == ON_TOP_BAR, (qualifier, title)
+        # Up arrow, overflow and colorControlNormal-tinted action icons turn white in the bar only,
+        # exactly as on the legacy AppTheme bars; the content theme keeps its control colours.
+        assert theme.get("actionBarTheme") == "@style/ThemeOverlay.AppCompat.Dark.ActionBar", qualifier
+        assert "colorControlNormal" not in theme and "android:textColorSecondary" not in theme, qualifier
+
+    # Action icons with a fixed tint sit on the navy bar too.
+    assert 'app:iconTint="@color/semantic_on_system_bar"' in source("android/app/src/main/res/menu/activity_login.xml")
+    editor_action = ET.parse(RES / "color/note_editor_action.xml").getroot()
+    assert [item.attrib.get(f"{ANDROID_NS}color") for item in editor_action] == [ON_TOP_BAR, ON_TOP_BAR]
+    assert editor_action[0].attrib.get(f"{ANDROID_NS}state_enabled") == "false"
 
 
 def test_dashboard_top_bar_is_navy_with_toolbar_scoped_white_foregrounds_in_both_themes():

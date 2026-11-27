@@ -234,6 +234,19 @@
         <item name="backgroundSplit">@color/semantic_system_bar</item>
     </style>
 
+    <!-- AppTheme.Material3 window action bar: the same navy bar as AppTheme. The Material3 title
+         uses colorOnSurface, which actionBarTheme does not change, so it is set white here. -->
+    <style name="Widget.AppTheme.Material3.WindowActionBar" parent="Widget.Material3.ActionBar.Solid">
+        <item name="background">@color/semantic_system_bar</item>
+        <item name="backgroundStacked">@color/semantic_system_bar</item>
+        <item name="backgroundSplit">@color/semantic_system_bar</item>
+        <item name="titleTextStyle">@style/TextAppearance.AppTheme.Material3.WindowActionBar.Title</item>
+    </style>
+
+    <style name="TextAppearance.AppTheme.Material3.WindowActionBar.Title" parent="TextAppearance.Material3.ActionBar.Title">
+        <item name="android:textColor">@color/semantic_on_system_bar</item>
+    </style>
+
     <!-- Dashboard top bar overlay, scoped to that toolbar: white action/overflow icons and drawer
          toggle. Text colours are deliberately not set, so the overflow popup keeps its light-surface text. -->
     <style name="ThemeOverlay.AppTheme.TopBar" parent="">
