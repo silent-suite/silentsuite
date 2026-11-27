@@ -1109,7 +1109,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <span class="info-label">{{COLLECTIONS_LABEL}}</span>
                 <span class="info-value">{{COLLECTIONS}}</span>
                 <span class="info-label">Sync interval</span>
-                <span class="info-value">{{SYNC_INTERVAL_DISPLAY}}</span>
+                <span class="info-value" id="syncIntervalValue">{{SYNC_INTERVAL_DISPLAY}}</span>
             </div>
 
             <div class="url-section">
@@ -1405,6 +1405,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         var acknowledged = String(data.syncInterval);
                         select.setAttribute('data-saved', acknowledged);
                         select.value = acknowledged;
+                        // Same wording as the server-rendered status card value.
+                        var card = document.getElementById('syncIntervalValue');
+                        var n = data.syncInterval;
+                        if (card) card.textContent = n >= 3600 ? Math.floor(n / 3600) + ' hr' : n >= 60 ? Math.floor(n / 60) + ' min' : n + ' sec';
                         st.textContent = 'Saved';
                         st.style.color = '#888';
                         intervalSave.clearTimer = setTimeout(function() {
@@ -1555,6 +1559,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </script>
 </body>
 </html>"""
+
+
+def _format_interval(seconds: int) -> str:
+    """Sync interval in the dashboard's wording: "1 hr", "15 min" or "45 sec"."""
+    if seconds >= 3600:
+        return f"{seconds // 3600} hr"
+    if seconds >= 60:
+        return f"{seconds // 60} min"
+    return f"{seconds} sec"
 
 
 def _render_network_card() -> str:
@@ -1915,16 +1928,9 @@ def _render_dashboard():
     page = page.replace("{{SYNC_NOW_DISABLED}}", "" if users else " disabled")
     page = page.replace("{{SYNC_NOW_HINT}}", "" if users else esc(SYNC_NO_ACCOUNT_TEXT))
 
-    # Sync interval display
     interval = config.SYNC_INTERVAL
-    if interval >= 3600:
-        interval_display = f"{interval // 3600} hr"
-    elif interval >= 60:
-        interval_display = f"{interval // 60} min"
-    else:
-        interval_display = f"{interval} sec"
     page = page.replace("{{SYNC_INTERVAL}}", str(interval))
-    page = page.replace("{{SYNC_INTERVAL_DISPLAY}}", esc(interval_display))
+    page = page.replace("{{SYNC_INTERVAL_DISPLAY}}", esc(_format_interval(interval)))
     page = page.replace("{{NETWORK_CARD}}", _render_network_card())
     page = page.replace("{{EXPERIMENTAL_BIRTHDAYS_CHECKED}}", " checked" if config.EXPERIMENTAL_BIRTHDAYS is True else "")
     page = page.replace("{{E2EE_LOCK_PREFIX_CHECKED}}", " checked" if config.E2EE_LOCK_PREFIX else "")
@@ -2610,7 +2616,7 @@ class Web(BaseWeb):
                     if thread.is_alive():
                         thread.set_interval(new_interval)
 
-                log_sync_event("info", f"Sync interval changed to {new_interval}s")
+                log_sync_event("info", f"Sync interval changed to {_format_interval(new_interval)}")
 
             if "experimentalBirthdays" in data:
                 enabled = data["experimentalBirthdays"]

@@ -1409,6 +1409,8 @@ def test_dashboard_settings_post_accepts_valid_csrf(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
     monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(config, "SYNC_INTERVAL", config.SYNC_INTERVAL)
+    events = []
+    monkeypatch.setattr(web_module, "log_sync_event", lambda kind, message: events.append(message))
     web = Web.__new__(Web)
     body = json.dumps({"syncInterval": 60}).encode()
 
@@ -1422,6 +1424,8 @@ def test_dashboard_settings_post_accepts_valid_csrf(tmp_path, monkeypatch):
     assert status == 200
     assert headers["Content-Type"] == "application/json"
     assert json.loads(response_body) == {"ok": True, "syncInterval": 60}
+    # Logged in the dashboard's wording, not raw seconds.
+    assert events == ["Sync interval changed to 1 min"]
 
 
 # --- Settings failures must never look like success (#658) ------------------
@@ -1701,6 +1705,9 @@ function page(scenario) {
     select.disabled = false;
     select.setAttribute('data-saved', '900');
     const status = element('');
+    // The status card's "Sync interval" value, rendered for the saved 900.
+    const card = element('');
+    card.textContent = '15 min';
     const requests = [];
     const deferreds = [];
     const timers = [];
@@ -1710,6 +1717,7 @@ function page(scenario) {
             getElementById: function(id) {
                 if (id === 'syncInterval') return select;
                 if (id === 'syncIntervalStatus') return status;
+                if (id === 'syncIntervalValue') return card;
                 return null;
             }
         },
@@ -1729,7 +1737,7 @@ function page(scenario) {
     };
     const context = vm.createContext(sandbox);
     vm.runInContext(source, context);
-    return { select: select, status: status, requests: requests, deferreds: deferreds, timers: timers, context: context };
+    return { select: select, status: status, card: card, requests: requests, deferreds: deferreds, timers: timers, context: context };
 }
 
 function snapshot(p) {
@@ -1739,6 +1747,7 @@ function snapshot(p) {
         selected: p.select.value,
         saved: p.select.getAttribute('data-saved'),
         disabled: p.select.disabled,
+        card: p.card.textContent,
         requests: p.requests.map(function(r) { return r.body; }),
         timers: p.timers.map(function(t) { return { delay: t.delay, cleared: t.cleared, fired: t.fired }; })
     };
@@ -1757,6 +1766,7 @@ async function run(scenario) {
         selected: state.selected,
         saved: state.saved,
         disabled: state.disabled,
+        card: state.card,
         requests: p.requests,
         timers: p.timers.map(function(t) { return t.delay; })
     };
@@ -1824,6 +1834,7 @@ def test_dashboard_update_interval_never_shows_saved_on_http_failure(tmp_path, m
     assert ok["selected"] == "300"
     assert ok["saved"] == "300"
     assert ok["disabled"] is False
+    assert ok["card"] == "5 min"
     assert ok["timers"] == [2000]
     assert ok["requests"] == [
         {"url": "/.web/api/settings", "method": "POST", "csrf": "csrf-token", "body": '{"syncInterval":300}'}
@@ -1840,6 +1851,7 @@ def test_dashboard_update_interval_never_shows_saved_on_http_failure(tmp_path, m
         assert failed["selected"] == "900", scenario["id"]
         assert failed["saved"] == "900", scenario["id"]
         assert failed["disabled"] is False, scenario["id"]
+        assert failed["card"] == "15 min", scenario["id"]
         assert failed["timers"] == [], scenario["id"]
         assert len(failed["requests"]) == 1, scenario["id"]
         if scenario["body"] and "error" in scenario["body"]:
@@ -1948,6 +1960,7 @@ def test_dashboard_update_interval_serializes_overlapping_saves_and_cancels_stal
     assert failed["selected"] == "300"
     assert failed["saved"] == "300"
     assert failed["disabled"] is False
+    assert failed["card"] == "5 min"
     assert failed["timers"] == [{"delay": 2000, "cleared": True, "fired": False}]
     # Firing whatever timers are still alive leaves the error visible.
     assert snaps["final"]["status"] == "Not saved: " + WRITE_ERROR
@@ -1969,6 +1982,7 @@ def test_dashboard_update_interval_serializes_overlapping_saves_and_cancels_stal
     assert reconciled["selected"] == "60"
     assert reconciled["saved"] == "60"
     assert reconciled["disabled"] is False
+    assert reconciled["card"] == "1 min"
 
     repeated = results["repeat-of-acknowledged-value-is-not-resent"]
     assert repeated["calls"][1]["sameAsFirst"] is True
