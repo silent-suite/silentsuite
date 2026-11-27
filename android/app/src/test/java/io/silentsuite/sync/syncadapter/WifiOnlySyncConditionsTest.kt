@@ -32,8 +32,9 @@ class WifiOnlySyncConditionsTest {
             .substringBefore("internal fun putSyncAttempt(")
         assertTrue(conditions.contains(
             "!settings.syncWifiOnly || wifiOnlySyncAllowed(settings.syncWifiOnlySSID) { onConnectedWifi(context) }"))
-        assertTrue("plain Wi-Fi-only still needs connected WiFi",
-            conditions.contains("network.type != ConnectivityManager.TYPE_WIFI || !network.isConnected"))
+        assertTrue("plain Wi-Fi-only still needs connected WiFi or Ethernet",
+            conditions.contains("network.type == ConnectivityManager.TYPE_WIFI || network.type == ConnectivityManager.TYPE_ETHERNET") &&
+                conditions.contains("if (!wifiLike || !network.isConnected)"))
         listOf("WifiManager", "WIFI_SERVICE", "connectionInfo", ".ssid", "!!").forEach {
             assertFalse("sync conditions must not use $it", conditions.contains(it))
         }

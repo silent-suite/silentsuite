@@ -208,11 +208,11 @@ An edit or move saved offline waits on this device until the next Notes sync tha
 
 With the default settings, an edit you save on mobile data waits for Wi-Fi unless you start a sync yourself, for example with **Refresh**.
 
-- A wired (Ethernet) connection does not count as Wi-Fi.
+- A wired (Ethernet) connection counts as Wi-Fi, here and for **Sync over WiFi only**.
 - A sync you start from Android's own account settings counts as a calendar, contact, or task sync here, so notes follow **Automatic Notes sync**.
 - Coming back onto Wi-Fi does not sync notes on its own, and there is no separate background schedule for notes yet. If the other services do not sync on this device, notes refresh when you open the Notes screen, save a note, pull to refresh, tap **Refresh**, or tap **Sync now** on the account screen, as the settings above allow.
 - If **Sync over WiFi only** (under **Settings**, **Sync**) is on for the account, notes sync by themselves only on Wi-Fi, whatever **Automatic Notes sync** says. If a network name is also saved there under **Saved WiFi network**, notes do not sync by themselves until you remove it, because Android does not give the app network names. Neither affects syncs you start.
-- When notes are not syncing by themselves on the connection Android reports, the notebook list says so, names the setting behind it, and says whether pulling down will try a sync.
+- When notes are not syncing by themselves on the connection Android reports, the notebook list says so in one line, including whether pulling down will sync now, and the Notes row on the account screen says **Waiting for Wi-Fi**.
 
 ## Source Code
 

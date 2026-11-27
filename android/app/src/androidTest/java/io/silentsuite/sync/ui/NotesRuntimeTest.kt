@@ -711,20 +711,14 @@ class NotesRuntimeTest {
         }
         val wifi = NotesNetworkPolicy.Connection.WIFI
         val other = NotesNetworkPolicy.Connection.OTHER
-        // The test's own list of which text belongs to which sentence.
+        // The test's own list of which text the list shows for which sentence.
         val texts = mapOf(
-            NoticePart.MAY_BE_OUT_OF_DATE to R.string.notes_network_may_be_out_of_date,
-            NoticePart.NOTES_SETTING to R.string.notes_network_notes_setting,
-            NoticePart.ACCOUNT_WIFI_ONLY to R.string.notes_network_account_wifi_only,
-            NoticePart.NO_WIFI_REPORTED to R.string.notes_network_no_wifi_reported,
-            NoticePart.ACCOUNT_NETWORK_NAME to R.string.notes_network_account_network_name,
-            NoticePart.TRY_NOW to R.string.notes_network_try_now,
-            NoticePart.SYNC_NOW_NEEDS_WIFI to R.string.notes_network_sync_now_needs_wifi,
+            NotesNetworkPolicy.NoticeLine.WAITING_FOR_WIFI_TRY_NOW to R.string.notes_network_waiting_wifi_try_now,
+            NotesNetworkPolicy.NoticeLine.WAITING_FOR_WIFI to R.string.notes_network_waiting_wifi,
+            NotesNetworkPolicy.NoticeLine.NETWORK_NAME to R.string.notes_network_name_saved,
         )
-        // The changes waiting on the notebook row, which the second sentence counts while there are any.
-        var waiting = 0
+        // The changes waiting on the notebook row; the row shows their count, the line does not.
         fun waitingOnTheRow(count: Int) {
-            waiting = count
             rows.set(listOf(row.copy(waiting = count)))
         }
         // Waits until the list has rendered exactly these sentences, then reads the line itself. Every
@@ -741,13 +735,8 @@ class NotesRuntimeTest {
                 val line = activity.findViewById<TextView>(R.id.notebooks_network_notice)
                 assertEquals(step, if (expected.isEmpty()) View.GONE else View.VISIBLE, line.visibility)
                 if (expected.isNotEmpty()) {
-                    assertEquals(step, expected.joinToString(" ") {
-                        if (it == NoticePart.CHANGES_WAITING) {
-                            activity.resources.getQuantityString(R.plurals.notes_network_changes_waiting, waiting, waiting)
-                        } else {
-                            activity.getString(texts.getValue(it))
-                        }
-                    }, line.text.toString())
+                    val sentence = requireNotNull(NotesNetworkPolicy.line(expected.toList()))
+                    assertEquals(step, activity.getString(texts.getValue(sentence)), line.text.toString())
                 }
             }
         }
@@ -765,8 +754,8 @@ class NotesRuntimeTest {
 
                 // 2. Off Wi-Fi with the defaults: the Notes setting, what Android reports, and the pull
                 // down as an attempt.
-                // Two changes wait on the notebook's row, so the second sentence counts them (answer 5 of
-                // 2026-10-12: say why the changes are waiting).
+                // Two changes wait on the notebook's row, so the notice has the waiting part; the row
+                // itself shows the count, and the line still says why (Wi-Fi).
                 pin(other)
                 waitingOnTheRow(2)
                 reload()
@@ -841,7 +830,6 @@ class NotesRuntimeTest {
                 check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
                 check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
                 pin(other)
-                waiting = 0
                 rows.set(emptyList())
                 reload()
                 awaitLine(scenario, "step 10: every rule on, above an empty list",

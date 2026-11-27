@@ -16,7 +16,7 @@ internal object NotesNetwork {
     /**
      * The network as the account's own Wi-Fi switch reads it (onConnectedWifi, through
      * syncConditionsAllow, in syncadapter/SyncAdapterService.kt): the active network, connected and
-     * of type Wi-Fi, with the same calls on every API level from 29. No active network reads as NONE. That is not the same as
+     * of type Wi-Fi or Ethernet, with the same calls on every API level from 29. No active network reads as NONE. That is not the same as
      * "no connection": the platform can report none under some VPNs while the device is online.
      *
      * The Wi-Fi name is never read. The manifest asks for no location permission, so from API 29
@@ -33,7 +33,8 @@ internal object NotesNetwork {
         readingOverride?.let { return it() }
         val info = (context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)?.activeNetworkInfo
         return NotesNetworkPolicy.Reading(NotesNetworkPolicy.connectionOf(present = info != null,
-            connected = info?.isConnected == true, wifi = info?.type == ConnectivityManager.TYPE_WIFI))
+            connected = info?.isConnected == true,
+            wifi = info?.type == ConnectivityManager.TYPE_WIFI || info?.type == ConnectivityManager.TYPE_ETHERNET))
     }
 
     /**

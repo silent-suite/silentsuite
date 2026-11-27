@@ -11,7 +11,8 @@ package io.silentsuite.sync.notes
 object NotesNetworkPolicy {
     /**
      * NONE: the platform reports no active network (it can do so under some VPNs while the device is
-     * online), or one that is not connected. OTHER: a connected network that is not Wi-Fi.
+     * online), or one that is not connected. WIFI: a connected Wi-Fi or Ethernet network, both
+     * unmetered as a rule. OTHER: any other connected network, such as mobile data.
      */
     enum class Connection { NONE, WIFI, OTHER }
 
@@ -45,7 +46,7 @@ object NotesNetworkPolicy {
         val run: Boolean get() = blockers.isEmpty()
     }
 
-    /** The account switch's own mapping (onConnectedWifi): connected and of type Wi-Fi is Wi-Fi. */
+    /** The account switch's own mapping (onConnectedWifi): connected and of type Wi-Fi or Ethernet is Wi-Fi. */
     fun connectionOf(present: Boolean, connected: Boolean, wifi: Boolean): Connection = when {
         !present || !connected -> Connection.NONE
         wifi -> Connection.WIFI
@@ -141,5 +142,25 @@ object NotesNetworkPolicy {
         }
         parts += if (decide(explicit = true, settings, account, reading).run) NoticePart.TRY_NOW else NoticePart.SYNC_NOW_NEEDS_WIFI
         return parts
+    }
+
+    /** The one sentence the notebook list shows for a [notice]. */
+    enum class NoticeLine {
+        /** Not on Wi-Fi, and a pull down would sync now. */
+        WAITING_FOR_WIFI_TRY_NOW,
+
+        /** Not on Wi-Fi, and Sync now is Wi-Fi only too. */
+        WAITING_FOR_WIFI,
+
+        /** A saved network name refuses every automatic run, on any network (#971). */
+        NETWORK_NAME,
+    }
+
+    /** The sentence for [parts] (from [notice]), or null when the list says nothing. */
+    fun line(parts: List<NoticePart>): NoticeLine? = when {
+        parts.isEmpty() -> null
+        NoticePart.ACCOUNT_NETWORK_NAME in parts -> NoticeLine.NETWORK_NAME
+        NoticePart.TRY_NOW in parts -> NoticeLine.WAITING_FOR_WIFI_TRY_NOW
+        else -> NoticeLine.WAITING_FOR_WIFI
     }
 }

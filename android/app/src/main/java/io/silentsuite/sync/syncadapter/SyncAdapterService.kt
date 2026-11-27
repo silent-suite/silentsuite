@@ -364,8 +364,10 @@ private fun onConnectedWifi(context: Context): Boolean {
         Logger.log.info("No network available, stopping")
         return false
     }
-    if (network.type != ConnectivityManager.TYPE_WIFI || !network.isConnected) {
-        Logger.log.info("Not on connected WiFi, stopping")
+    // Ethernet is unmetered like Wi-Fi, so it counts as Wi-Fi here.
+    val wifiLike = network.type == ConnectivityManager.TYPE_WIFI || network.type == ConnectivityManager.TYPE_ETHERNET
+    if (!wifiLike || !network.isConnected) {
+        Logger.log.info("Not on connected WiFi or Ethernet, stopping")
         return false
     }
     return true

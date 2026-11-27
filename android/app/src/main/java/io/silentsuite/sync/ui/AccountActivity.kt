@@ -58,6 +58,8 @@ import io.silentsuite.sync.dataexport.AndroidDataExporter
 import io.silentsuite.sync.dataexport.AndroidExportKind
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.notes.NotesNetwork
+import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.notes.edit.UnsyncedNotes
@@ -977,6 +979,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             internal var status: SyncStatusStore.Status? = null
 
             internal var infos: List<CollectionListItemInfo>? = null
+
+            /**
+             * Notes only: what refuses an automatic Notes run on the network read at load, the same
+             * rule as the Notes screen's line. Empty when nothing does or the network could not be read.
+             */
+            internal var networkBlockers: Set<NotesNetworkPolicy.Blocker> = emptySet()
         }
     }
 
@@ -1069,6 +1077,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val destination: Int,
         val model: AccountDashboardModel,
         val status: SyncStatusStore.Status?,
+        val networkBlockers: Set<NotesNetworkPolicy.Blocker> = emptySet(),
     )
 
     private fun renderDashboard(info: AccountInfo) {
@@ -1119,7 +1128,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             info.notes?.let { notes ->
                 DashboardServiceUi(R.string.settings_notes, R.id.notes_status, R.id.notes_status_detail,
                     R.id.notes_status_icon, R.id.notes_status_row, R.id.notes, R.string.dashboard_notes_destination,
-                    reduce(notes, permission = true, collectionsAvailable = true), notes.status)
+                    reduce(notes, permission = true, collectionsAvailable = true), notes.status, notes.networkBlockers)
             },
         )
         services.forEach(::renderServiceStatus)
@@ -1186,15 +1195,30 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private fun renderServiceStatus(service: DashboardServiceUi) {
         val result = latestMeaningfulResult(listOf(service.status))
         val presentation = presentAccountDashboard(service.model, result?.timestamp)
-        val statusText = dashboardStatusText(presentation)
+        // Notes held back by a Wi-Fi rule say so instead of "Up to date" or "First sync pending", as
+        // the Notes screen does. Running, queued and failed states keep their own words.
+        val networkHeld = service.networkBlockers.isNotEmpty() &&
+            (presentation.label == AccountDashboardLabel.SYNCED || presentation.label == AccountDashboardLabel.NEVER_SYNCED)
+        val statusText = when {
+            !networkHeld -> dashboardStatusText(presentation)
+            NotesNetworkPolicy.Blocker.ACCOUNT_NETWORK_NAME in service.networkBlockers ->
+                getString(R.string.dashboard_status_notes_network_name)
+            else -> getString(R.string.dashboard_status_waiting_wifi)
+        }
         val detailText = dashboardDetailText(presentation, result, service.destination)
         val statusView = findViewById<TextView>(service.statusView)
         statusView.text = statusText
         findViewById<TextView>(service.detailView).text = detailText
         findViewById<View>(service.rowView).contentDescription =
             "${getString(service.title)}. $statusText. $detailText"
-        applyDashboardVisual(findViewById(service.iconView), statusView, presentation)
+        applyDashboardVisual(findViewById(service.iconView), statusView, if (!networkHeld) presentation
+            else presentation.copy(icon = AccountDashboardIcon.PAUSED, tone = AccountDashboardTone.NEUTRAL))
 
+        if (service.destination == R.string.dashboard_notes_destination) {
+            val button = findViewById<com.google.android.material.button.MaterialButton>(R.id.notes_open)
+            button.visibility = View.VISIBLE
+            button.setOnClickListener { launchExactAccountRoute(NotesActivity.newIntent(this, account, accountCreationId)) }
+        }
         val openButtonId = when (service.destination) {
             R.string.dashboard_calendar_destination -> R.id.caldav_open
             R.string.dashboard_contacts_destination -> R.id.carddav_open
@@ -1682,6 +1706,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     info.notes!!.refreshing, info.notes!!.pending)
                 if (!exactGenerationStillCurrent()) return null
                 info.notes!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.NOTES)
+                // The same verdict an automatic Notes run gets now. A reading that fails says nothing.
+                info.notes!!.networkBlockers = try {
+                    NotesNetwork.verdict(context, accountManager, account, settings, explicit = false).blockers
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    emptySet()
+                }
             }
 
             // This runs on Dispatchers.IO immediately after the final private read and before
