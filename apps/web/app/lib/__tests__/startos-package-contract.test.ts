@@ -108,6 +108,7 @@ describe('StartOS package secrets', () => {
     fresh: { ownerPassword: string; registrationSigning: string; dbPassword: string }
     roundTrip: boolean
     throws: Record<string, boolean>
+    parse: { valid: boolean; malformedMessage: string; fixedMessage: string; leaked: boolean }
   }
   const result = (): SecretsResult => {
     const url = pathToFileURL(resolve(pkg, 'startos/secrets.ts')).href
@@ -129,7 +130,14 @@ describe('StartOS package secrets', () => {
         cases['short-' + key] = throws({ ...fresh, [key]: 'short' })
       }
       const roundTrip = JSON.stringify(s.validateSecrets({ ...fresh })) === JSON.stringify(fresh)
-      process.stdout.write(JSON.stringify({ ownerLength: s.OWNER_PASSWORD_LENGTH, hexLength: s.HEX_SECRET_LENGTH, fresh, roundTrip, throws: cases }))
+      // A valid store read, then the same file damaged so JSON.parse would quote the secret.
+      const valid = JSON.stringify(s.parseStoreText(JSON.stringify(fresh))) === JSON.stringify(fresh)
+      const damaged = '{"ownerPassword":' + fresh.ownerPassword + '}'
+      let malformedMessage = ''
+      try { s.parseStoreText(damaged) } catch (e) { malformedMessage = String(e && e.message) }
+      const leaked = malformedMessage.includes(fresh.ownerPassword.slice(0, 6))
+      const parse = { valid, malformedMessage, fixedMessage: s.STORE_PARSE_ERROR, leaked }
+      process.stdout.write(JSON.stringify({ ownerLength: s.OWNER_PASSWORD_LENGTH, hexLength: s.HEX_SECRET_LENGTH, fresh, roundTrip, throws: cases, parse }))
     `
     const out = execFileSync(
       process.execPath,
@@ -175,16 +183,15 @@ describe('StartOS package secrets', () => {
     expect(init.match(/await makeStorePrivate\(\)/g)).toHaveLength(2)
   })
 
-  it('never lets a store parse error quote the secret file', () => {
-    const init = read('self-host/startos/startos/init/initializeService.ts')
-    const reads = init.match(/storeJson\.read\(\)/g) ?? []
-    const wrapped = init.match(/readStore\(\(\) => storeJson\.read\(\)/g) ?? []
-    expect(reads.length).toBeGreaterThan(0)
-    expect(wrapped).toHaveLength(reads.length)
-    expect(init).toMatch(/\} catch \{\s*throw new Error\('SilentSuite store\.json is unreadable or not valid JSON'\)/)
-    for (const file of ['backups.ts', 'main.ts', 'actions/showInstallationPassword.ts']) {
-      expect(read(`self-host/startos/startos/${file}`), file).not.toContain('storeJson.read(')
-    }
+  it('parses the store with a parser whose errors never quote the file', () => {
+    const model = read('self-host/startos/startos/fileModels/store.json.ts')
+    expect(model).toContain('FileHelper.raw(')
+    expect(model).toContain('parseStoreText,')
+    expect(model).not.toContain('FileHelper.json(')
+    const { parse } = result()
+    expect(parse.valid).toBe(true)
+    expect(parse.malformedMessage).toBe(parse.fixedMessage)
+    expect(parse.leaked).toBe(false)
   })
 
   it('keeps the secret store out of every subcontainer', () => {

@@ -68,3 +68,19 @@ export function validateSecrets(
   }
   return { ownerPassword, registrationSigning, dbPassword }
 }
+
+export const STORE_PARSE_ERROR =
+  'SilentSuite store.json is unreadable or not valid JSON'
+
+/**
+ * JSON parser for store.json. JSON.parse error messages can quote part of the file, which
+ * would put secret text into the logs, so every parse failure (the first read and every
+ * later re-read by StartOS's file watcher) becomes one fixed message.
+ */
+export function parseStoreText(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(STORE_PARSE_ERROR)
+  }
+}
