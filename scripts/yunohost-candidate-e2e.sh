@@ -198,15 +198,19 @@ print(s["authToken"]); print(s["collectionUid"]); print(s["itemUid"])
 PY
 ct yunohost app setting "$app" owner_password >>"$work/markers"
 ct yunohost app setting "$app" registration_token >>"$work/markers"
+# Control: the database password YunoHost itself generates for every app.
+ct yunohost app setting "$app" db_pwd >>"$work/markers"
 sudo incus file push "$work/markers" ynh/root/markers >/dev/null
 # Report which file and which kind of value matched, never the value itself.
 hits=$(ct sh -c '
     journalctl -o cat > /root/journal.txt
     n=0; kind=1
-    for k in auth-token collection-uid item-uid owner-password registration-token; do
+    for k in auth-token collection-uid item-uid owner-password registration-token control-db-pwd; do
         m=$(sed -n "${kind}p" /root/markers)
         for f in $(grep -rlF -e "$m" /var/log/yunohost /var/log/nginx /root/journal.txt 2>/dev/null); do
-            echo "HIT $k in $f" >&2; n=$((n + 1))
+            echo "HIT $k in $f" >&2
+            grep -F -e "$m" "$f" | head -3 | python3 -c "import sys; m=sys.argv[1]; [print(\"  line:\", l.replace(m, \"<redacted>\")[:220].rstrip(), file=sys.stderr) for l in sys.stdin]" "$m"
+            [ "$k" = control-db-pwd ] || n=$((n + 1))
         done
         kind=$((kind + 1))
     done
