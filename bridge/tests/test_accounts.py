@@ -457,3 +457,69 @@ def test_remove_and_reauthentication_share_one_lock_order(tmp_path, monkeypatch)
 
     assert not store_thread.is_alive()
     assert not remove_thread.is_alive()
+
+
+def test_logged_out_account_stays_listed_until_local_data_is_removed(
+    tmp_path, monkeypatch, mem_db,
+):
+    _configure_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(accounts, "stop_sync_thread", lambda user: True)
+    monkeypatch.setattr(accounts, "forget_etesync_user", lambda user: None)
+    accounts.store_authenticated_account(
+        "alice@example.com", PASSWORD, "alice-session", "https://server.test",
+    )
+    accounts.store_authenticated_account(
+        "bob@example.com", PASSWORD, "bob-session", "https://server.test",
+    )
+    _seed_cache("alice@example.com")
+    _seed_cache("bob@example.com")
+
+    assert accounts.list_signed_out_accounts() == []
+
+    accounts.logout_account("alice@example.com")
+
+    assert accounts.list_signed_out_accounts() == ["alice@example.com"]
+
+    result = accounts.remove_account("alice@example.com")
+
+    assert result.existed is True
+    assert result.cache_cleared is True
+    assert accounts.list_signed_out_accounts() == []
+    assert User.get_or_none(User.username == "alice@example.com") is None
+    assert User.get_or_none(User.username == "bob@example.com") is not None
+
+
+def test_signed_out_list_skips_accounts_already_queued_for_deletion(
+    tmp_path, monkeypatch, mem_db,
+):
+    _configure_creds(tmp_path, monkeypatch)
+    creds = Credentials()
+    creds.mark_cache_cleanup("carol@example.com")
+    creds.save()
+    _seed_cache("carol@example.com")
+    _seed_cache("dave@example.com")
+
+    assert accounts.list_signed_out_accounts() == ["dave@example.com"]
+
+
+def test_list_cached_users_reads_cache_file_without_creating_it(tmp_path, monkeypatch):
+    import sqlite3
+
+    from silentsuite_bridge.local_cache import db, list_cached_users
+
+    monkeypatch.setattr(db.database_proxy, "obj", None)
+    missing = tmp_path / "missing.db"
+    monkeypatch.setattr(config, "DATABASE_FILE", str(missing))
+    assert list_cached_users() == []
+    assert not missing.exists()
+
+    path = tmp_path / "bridge_data.db"
+    connection = sqlite3.connect(path)
+    connection.execute('CREATE TABLE "user" (id INTEGER PRIMARY KEY, username VARCHAR(255))')
+    connection.execute('INSERT INTO "user" (username) VALUES (?)', ("bob@example.com",))
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(config, "DATABASE_FILE", str(path))
+
+    assert list_cached_users() == ["bob@example.com"]
+    assert db.database_proxy.obj is None

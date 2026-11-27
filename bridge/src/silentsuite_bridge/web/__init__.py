@@ -1848,6 +1848,30 @@ def _render_dashboard():
         login_copy = "Sign in here to store this account locally, start its sync thread, and reveal your CalDAV/CardDAV URL."
         account_html = '<div class="log-empty">No accounts configured yet. Sign in above to get started.</div>'
 
+    # Logout keeps the decrypted local copy; keep a row so it can still be removed.
+    try:
+        from ..accounts import list_signed_out_accounts
+
+        signed_out_users = list_signed_out_accounts(credentials=creds)
+    except Exception as exc:  # noqa: BLE001 - the dashboard must still render
+        logger.warning(
+            "Could not list signed-out accounts (%s)",
+            bounded_exception_class(exc),
+        )
+        signed_out_users = []
+    for user in signed_out_users:
+        account_attr = esc(user)
+        account_html += (
+            '<div class="account-card">'
+            f'<h4>{esc(user)}</h4>'
+            '<div class="account-meta">Signed out, local copy kept</div>'
+            '<div class="account-actions">'
+            f'<button class="account-action-btn danger" data-account="{account_attr}" '
+            'onclick="removeAccount(this)">Remove local data</button>'
+            '</div>'
+            '</div>'
+        )
+
     page = DASHBOARD_HTML
     page = page.replace("{{VERSION}}", esc(__version__))
     page = page.replace("{{ERROR_BANNER}}", error_banner)

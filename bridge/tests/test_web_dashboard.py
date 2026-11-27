@@ -2429,3 +2429,65 @@ class TestNetworkCard:
         assert "DAV URL unavailable" in page
         assert "/alice@example.com/" not in page
         assert 'id="davUrl0"' not in page
+
+
+def test_render_dashboard_keeps_signed_out_account_with_remove_local_data(
+    tmp_path, monkeypatch, mem_db,
+):
+    from silentsuite_bridge.local_cache.models import User
+
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(
+        web_module,
+        "_account_fingerprint",
+        lambda _creds, username: f"fingerprint for {username}",
+    )
+    creds = Credentials()
+    creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
+    creds.save()
+    User.create(username="alice@example.com")
+    User.create(username="bob@example.com")
+
+    html = _render_dashboard()
+
+    assert html.count("Signed out, local copy kept") == 1
+    assert (
+        '<h4>bob@example.com</h4>'
+        '<div class="account-meta">Signed out, local copy kept</div>'
+        '<div class="account-actions">'
+        '<button class="account-action-btn danger" data-account="bob@example.com" '
+        'onclick="removeAccount(this)">Remove local data</button>'
+    ) in html
+    assert html.count('onclick="removeAccount(this)"') == 2
+
+
+def test_render_dashboard_shows_signed_out_account_when_none_configured(
+    tmp_path, monkeypatch, mem_db,
+):
+    from silentsuite_bridge.local_cache.models import User
+
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    User.create(username="bob@example.com")
+
+    html = _render_dashboard()
+
+    assert "Signed out, local copy kept" in html
+    assert 'data-account="bob@example.com"' in html
+    assert "Remove local data" in html
+
+
+def test_render_dashboard_survives_signed_out_listing_failure(tmp_path, monkeypatch):
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+
+    def boom(**_kwargs):
+        raise RuntimeError("cache unavailable")
+
+    monkeypatch.setattr(accounts, "list_signed_out_accounts", boom)
+
+    html = _render_dashboard()
+
+    assert "No accounts configured yet" in html
+    assert "Signed out, local copy kept" not in html

@@ -1346,7 +1346,7 @@ def main():
 
     # Handle --list-accounts before any bridge startup side effects.
     if "--list-accounts" in sys.argv:
-        from .accounts import list_accounts
+        from .accounts import list_accounts, list_signed_out_accounts
         from .radicale.creds import Credentials
 
         creds = Credentials()
@@ -1357,6 +1357,11 @@ def main():
             print("Configured accounts:")
             for user in users:
                 print(f"- {user} ({creds.get_server_url(user)})")
+        signed_out = list_signed_out_accounts(credentials=creds)
+        if signed_out:
+            print("Signed out, local copy kept:")
+            for user in signed_out:
+                print(f"- {user} (remove with: silentsuite-bridge --remove-account {user})")
         sys.exit(0)
 
     if "--logout" in sys.argv:
