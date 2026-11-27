@@ -247,6 +247,7 @@
     <string name="fingerprint_copied">Fingerprint copied</string>
     <string name="fingerprint_clipboard_label">Account fingerprint</string>
     <string name="fingerprint_unavailable">Fingerprint unavailable</string>
+    <string name="fingerprint_compare_hint">Compare these numbers with the account fingerprint in the web app (Settings → Security) and on the Bridge dashboard. If they differ, that app is not connected to the same encrypted account.</string>
 
     <!-- ViewCollection -->
     <string name="change_journal_title">Recent sync activity</string>

@@ -143,6 +143,7 @@ class SiblingMaterialAccessibilityContractTest {
         assertTrue(fingerprint.contains("class FingerprintDialogFragment : DialogFragment()"))
         assertTrue(fingerprint.contains("ExactAccountRouting.validate"))
         assertTrue(fingerprint.contains("ARG_CREATION_ID"))
+        assertTrue(fingerprint.contains("setText(R.string.fingerprint_compare_hint)"))
         val copyCallback = fingerprint.substringAfter("setNeutralButton(R.string.copy_fingerprint)")
         assertTrue(copyCallback.indexOf("ExactAccountRouting.validate") < copyCallback.indexOf("clipboard.setPrimaryClip"))
         assertTrue(copyCallback.contains("dismissAllowingStateLoss()"))
