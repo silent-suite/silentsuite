@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ArrowLeft, ExternalLink } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { BILLING_API_URL } from '@/app/lib/config'
@@ -64,6 +64,16 @@ export default function BitcoinPaymentPanel({
   const [status, setStatus] = useState<'loading' | 'pending' | 'settled' | 'expired' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  // A confirmed settlement completes exactly once. The callbacks live in refs, so a parent that
+  // re-renders with new ones (it does when completion is reported) neither restarts polling nor
+  // cancels the completion timer; later reads can't repeat or undo it.
+  const onPaymentCompleteRef = useRef(onPaymentComplete)
+  onPaymentCompleteRef.current = onPaymentComplete
+  const onCompletingChangeRef = useRef(onCompletingChange)
+  onCompletingChangeRef.current = onCompletingChange
+  const completedInvoiceRef = useRef<string | null>(null)
+  const completionTimerRef = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(completionTimerRef.current), [])
 
   useEffect(() => {
     let cancelled = false
@@ -112,10 +122,13 @@ export default function BitcoinPaymentPanel({
         if (cancelled) return
         if (data.status === 'settled') {
           setStatus('settled')
-          onCompletingChange?.(true)
-          timer = window.setTimeout(() => {
-            void Promise.resolve(onPaymentComplete()).finally(() => onCompletingChange?.(false))
-          }, 1200)
+          if (completedInvoiceRef.current !== session.invoiceId) {
+            completedInvoiceRef.current = session.invoiceId
+            onCompletingChangeRef.current?.(true)
+            completionTimerRef.current = window.setTimeout(() => {
+              void Promise.resolve(onPaymentCompleteRef.current()).finally(() => onCompletingChangeRef.current?.(false))
+            }, 1200)
+          }
           return
         }
         if (data.status === 'expired' || data.status === 'invalid' || data.status === 'failed') {
@@ -133,7 +146,7 @@ export default function BitcoinPaymentPanel({
       cancelled = true
       if (timer) window.clearTimeout(timer)
     }
-  }, [onCompletingChange, onPaymentComplete, session.invoiceId, session.lookupToken])
+  }, [session.invoiceId, session.lookupToken])
 
   const selectedMethod = paymentMethods.find((method) => method.id === selectedMethodId) ?? paymentMethods[0]
   const qrValue = selectedMethod?.qrValue ?? selectedMethod?.paymentLink ?? selectedMethod?.address ?? ''
