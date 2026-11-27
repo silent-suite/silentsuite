@@ -146,5 +146,5 @@ def start_background(
     print(f"Process ID: {process.pid}")
     print(_dashboard_text(address, port))
     print(f"Log: {log_file}")
-    print("To stop it, run: Get-Process silentsuite-bridge* | Stop-Process")
+    print(f"To stop it, run: Stop-Process -Id {process.pid}")
     return 0

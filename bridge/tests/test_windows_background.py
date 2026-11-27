@@ -149,7 +149,8 @@ def test_background_starts_windowless_detached_copy_and_returns(bg, capsys):
     out = capsys.readouterr().out
     assert "Closing this window does not stop it" in out
     assert "Process ID: 4242" in out
-    assert "Get-Process silentsuite-bridge* | Stop-Process" in out
+    assert "To stop it, run: Stop-Process -Id 4242" in out
+    assert "Get-Process" not in out
     assert "tray icon" not in out
 
 

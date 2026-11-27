@@ -74,6 +74,23 @@ def test_cli_login_start_hint_on_windows_keeps_bridge_running(monkeypatch, capsy
     assert "    silentsuite-bridge --background\n" in capsys.readouterr().out
 
 
+def test_cli_login_start_hint_on_windows_names_the_running_executable(monkeypatch, capsys):
+    monkeypatch.setattr(config, "SERVER_HOSTS", f"127.0.0.1:{PORT}")
+    monkeypatch.setattr(config, "get_platform", lambda: "windows")
+    monkeypatch.setattr(auth_browser.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        auth_browser.sys, "executable", "C:\\Users\\o'neil\\Downloads\\silentsuite-bridge-windows-x86_64.exe"
+    )
+
+    with _completed_login():
+        auth_browser.browser_login()
+
+    assert (
+        "    & 'C:\\Users\\o''neil\\Downloads\\silentsuite-bridge-windows-x86_64.exe' --background\n"
+        in capsys.readouterr().out
+    )
+
+
 @pytest.mark.parametrize("platform", ["linux", "windows"])
 def test_tray_login_prints_no_start_hint(monkeypatch, capsys, platform):
     monkeypatch.setattr(config, "SERVER_HOSTS", f"127.0.0.1:{PORT}")

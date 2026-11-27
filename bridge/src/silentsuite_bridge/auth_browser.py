@@ -19,6 +19,7 @@ import json
 import logging
 import secrets
 import socket
+import sys
 import threading
 import urllib.parse
 import webbrowser
@@ -880,6 +881,11 @@ def _find_free_port():
 
 def _start_command():
     if config.get_platform() == "windows":
+        if getattr(sys, "frozen", False):
+            # The download keeps its platform-specific name and is often not
+            # on PATH, so name the running executable (PowerShell syntax).
+            quoted = "'" + sys.executable.replace("'", "''") + "'"
+            return f"& {quoted} --background"
         return "silentsuite-bridge --background"
     return "silentsuite-bridge"
 
