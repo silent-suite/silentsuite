@@ -5,10 +5,10 @@ import PendingPaymentPage from '../pending-payment/page'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 
 // The pending-payment account step with the real store and the real paid-account form.
-const mocks = vi.hoisted(() => ({ session: null as string | null, signup: vi.fn(), login: vi.fn(), proof: vi.fn() }))
+const mocks = vi.hoisted(() => ({ session: null as string | null, signup: vi.fn(), login: vi.fn(), proof: vi.fn(), checkoutReturned: vi.fn() }))
 vi.mock('@/app/lib/config', async (importOriginal) => ({ ...await importOriginal<typeof import('@/app/lib/config')>(), BILLING_API_URL: 'https://billing.test' }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }), useSearchParams: () => new URLSearchParams(window.location.search) }))
-vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
+vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, trackInPageCheckoutReturned: mocks.checkoutReturned, createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
 vi.mock('../components/step-create-vault', () => ({ StepCreateVault: () => <p>Complete vault</p> }))
 vi.mock('@/app/lib/secure-storage', () => ({
   secureGet: vi.fn(async () => mocks.session), secureSet: vi.fn(async (_key: string, value: string) => { mocks.session = value }),
@@ -75,6 +75,9 @@ it('logs in from a ready checkpoint with an explicit official server URL, finali
   expect(paths()).not.toContain('/auth/signup-pass/v2')
   expect(paths().filter((p) => p === '/auth/signup/finalize-payment/v2')).toHaveLength(1)
   expect(paymentStarts()).toHaveLength(0)
+  // The confirmed payment is counted once; signing in to the account adds no second count.
+  expect(mocks.checkoutReturned).toHaveBeenCalledTimes(1)
+  expect(mocks.checkoutReturned).toHaveBeenCalledWith('btcpay')
 })
 
 it('refuses a ready checkpoint naming another server before any SDK call', async () => {
