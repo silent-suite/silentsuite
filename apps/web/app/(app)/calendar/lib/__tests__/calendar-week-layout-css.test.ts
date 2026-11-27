@@ -32,4 +32,21 @@ describe('Schedule-X month layout CSS', () => {
       /\.sx-silentsuite-calendar \.sx__month-grid-event\.ss-month-multiday\s*\{[^}]*max-width:\s*none/,
     )
   })
+
+  it('keeps the chip start time whole and lets only the title truncate', () => {
+    const time = globalsCss.match(
+      /\.sx-silentsuite-calendar \.sx__month-grid-event \.sx__month-grid-event-time\s*\{([^}]*)\}/,
+    )
+    expect(time).not.toBeNull()
+    expect(time![1]).toMatch(/flex:\s*none;/)
+    expect(time![1]).toMatch(/min-width:\s*auto;/)
+    expect(time![1]).toMatch(/overflow:\s*visible;/)
+    expect(time![1]).toMatch(/text-overflow:\s*clip;/)
+
+    const title = globalsCss.match(
+      /\.sx-silentsuite-calendar \.sx__month-grid-event \.sx__month-grid-event-title\s*\{([^}]*)\}/,
+    )
+    expect(title).not.toBeNull()
+    expect(title![1]).toMatch(/flex:\s*1 1 auto;/)
+  })
 })

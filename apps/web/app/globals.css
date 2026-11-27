@@ -458,6 +458,19 @@
   text-overflow: ellipsis;
 }
 
+/* The start time keeps its full width; only the title is cut short. */
+.sx-silentsuite-calendar .sx__month-grid-event .sx__month-grid-event-time {
+  flex: none;
+  min-width: auto;
+  overflow: visible;
+  text-overflow: clip;
+  font-variant-numeric: tabular-nums;
+}
+
+.sx-silentsuite-calendar .sx__month-grid-event .sx__month-grid-event-title {
+  flex: 1 1 auto;
+}
+
 .sx-silentsuite-calendar .sx__month-grid-day.sx__month-grid-day--outside,
 .sx-silentsuite-calendar .sx__month-grid-day.is-not-current-month,
 .sx-silentsuite-calendar .sx__month-grid-day[class*="outside"] {
