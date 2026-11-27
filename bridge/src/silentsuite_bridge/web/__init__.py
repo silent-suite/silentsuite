@@ -41,6 +41,13 @@ REAUTH_REQUIRED_TEXT = (
 SYNC_NO_ACCOUNT_TEXT = "Sign in to an account first."
 SYNC_NOT_RUNNING_TEXT = "Sync isn't running yet. Try again in a moment, or restart the bridge."
 
+# Shown under the Birthdays buttons on each account card (#738).
+BIRTHDAYS_BUTTONS_HELP_TEXT = (
+    "The dashboard does not show whether the Birthdays calendar is on for this account. "
+    "Turn on adds it, or updates it from your contacts. "
+    "Turn off removes the generated birthdays; your own events are kept."
+)
+
 # Global sync log (thread-safe deque)
 _sync_log = deque(maxlen=50)
 _bridge_status = {
@@ -1171,7 +1178,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <h3 style="font-size:14px;color:#888;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px;">Experimental</h3>
             <label style="font-size:13px;color:#ccc;"><input type="checkbox" id="experimentalBirthdays" onchange="updateExperimentalBirthdays(this)"{{EXPERIMENTAL_BIRTHDAYS_CHECKED}}> Birthdays calendar</label>
             <span id="experimentalBirthdaysStatus" style="font-size:12px;color:#888;margin-left:8px;"></span>
-            <div class="fingerprint-help">Adds a Birthdays calendar made from your contacts. Turn it on per account on the dashboard.</div>
+            <div class="fingerprint-help">Adds a Birthdays calendar made from your contacts. Once this is ticked, turn it on with the Birthdays buttons on each card under Configured Accounts.</div>
         </div>
         <script>
             (function() {
@@ -1852,6 +1859,13 @@ def _render_dashboard():
                 if config.EXPERIMENTAL_BIRTHDAYS is True
                 else ""
             )
+            # Whether Birthdays is on needs a full server read under the account lock, so the
+            # card keeps both buttons and says what each does instead of showing a state.
+            birthdays_help = (
+                f'<div class="fingerprint-help">{esc(BIRTHDAYS_BUTTONS_HELP_TEXT)}</div>'
+                if config.EXPERIMENTAL_BIRTHDAYS is True
+                else ""
+            )
             reauth_html = (
                 '<div style="font-size:13px;color:#f59e0b;margin:6px 0;">'
                 f'{esc(REAUTH_REQUIRED_TEXT)}'
@@ -1874,6 +1888,7 @@ def _render_dashboard():
                 'onclick="removeAccount(this)">Remove account</button>'
                 f'{birthdays_buttons}'
                 '</div>'
+                f'{birthdays_help}'
                 '</div>'
             )
     else:
