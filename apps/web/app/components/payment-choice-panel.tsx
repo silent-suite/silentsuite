@@ -95,6 +95,12 @@ interface PaymentChoicePanelProps {
   onSuccess: () => void | Promise<void>
   onCancel?: () => void
   onDismissibilityChange?: (dismissible: boolean) => void
+  /**
+   * True while closing would drop work in flight: a payment start, a card
+   * being confirmed or a settled crypto payment being completed. A parent's
+   * own close control stays unavailable until it reports false again.
+   */
+  onBusyChange?: (busy: boolean) => void
   /** Pass null when the surrounding dialog already shows the heading. */
   title?: string | null
   successPoll?: () => void | Promise<void>
@@ -232,6 +238,7 @@ export default function PaymentChoicePanel({
   onSuccess,
   onCancel,
   onDismissibilityChange,
+  onBusyChange,
   title = 'Continue with silentsuite.io',
   successPoll,
 }: PaymentChoicePanelProps) {
@@ -264,6 +271,8 @@ export default function PaymentChoicePanel({
   const [bitcoinSession, setBitcoinSession] = useState<BitcoinPaymentSession | null>(null)
   const [currentFlow, setCurrentFlow] = useState<CurrentPaymentFlow | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
+  const [cardProcessing, setCardProcessing] = useState(false)
+  const [bitcoinCompleting, setBitcoinCompleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cancelBlockedUntil, setCancelBlockedUntil] = useState<{ authorityId: string | null; until: number; message: string } | null>(null)
   useEffect(() => {
@@ -548,6 +557,13 @@ export default function PaymentChoicePanel({
     onDismissibilityChange?.(implicitDismissible)
   }, [implicitDismissible, onDismissibilityChange])
 
+  // Unmounting now would drop the start reply or the success handling, so the
+  // confirmation poll would never run for a payment that went through.
+  const busy = loading === 'stripe' || loading === 'btcpay' || cardProcessing || bitcoinCompleting
+  useLayoutEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
+
   const cancelCurrentFlow = async (provider: PaymentFlowCancellationProvider = cancellationProvider): Promise<boolean> => {
     // A Bitcoin authority is never released without a local acknowledgement,
     // even if a control were somehow actioned while blocked.
@@ -768,6 +784,7 @@ export default function PaymentChoicePanel({
           </div>
         )}
         onBack={() => { void cancelCurrentFlow('btcpay') }}
+        onCompletingChange={setBitcoinCompleting}
         onPaymentComplete={async () => {
           if (!accountCurrent()) return
           await onSuccess()
@@ -818,6 +835,7 @@ export default function PaymentChoicePanel({
           submitLabel={`Pay ${formatDisclosureAmount(paymentDisclosure)}`}
           mode="payment"
           returnPath="/settings/subscription"
+          onProcessingChange={setCardProcessing}
         />
         {error && (
           <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">

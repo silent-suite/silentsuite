@@ -245,15 +245,19 @@ function getStripePaymentReturn(search: string): StripePaymentReturn {
 
 function PaymentChoiceDialog({
   dismissible,
+  busy,
   onClose,
   onSuccess,
   onDismissibilityChange,
+  onBusyChange,
   restoreFocusTo,
 }: {
   dismissible: boolean
+  busy: boolean
   onClose: () => void
   onSuccess: () => void | Promise<void>
   onDismissibilityChange: (dismissible: boolean) => void
+  onBusyChange: (busy: boolean) => void
   restoreFocusTo: HTMLElement | null
 }) {
   return (
@@ -269,14 +273,17 @@ function PaymentChoiceDialog({
         onSuccess={onSuccess}
         onCancel={onClose}
         onDismissibilityChange={onDismissibilityChange}
+        onBusyChange={onBusyChange}
         title={null}
       />
       {/* While a payment may exist, Escape and the backdrop stay disabled, but
-          the user can always leave on purpose. Close only unmounts the panel:
-          it cancels and starts nothing, and reopening mounts a fresh panel that
-          re-checks the current payment before any new payment can start. */}
+          the user can leave on purpose. Close only unmounts the panel: it
+          cancels and starts nothing, and reopening mounts a fresh panel that
+          re-checks the current payment before any new payment can start. It
+          waits while a start, a card confirmation or a crypto completion is
+          in flight, because unmounting then would drop the success handling. */}
       {!dismissible && (
-        <Button type="button" variant="ghost" size="sm" onClick={onClose} className="mt-3 w-full max-md:min-h-[44px]">
+        <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={busy} className="mt-3 w-full max-md:min-h-[44px]">
           Close
         </Button>
       )}
@@ -298,6 +305,7 @@ export default function SubscriptionPage() {
   const [cancelError, setCancelError] = useState<{ owner: OperationOwner; message: string } | null>(null)
   const [showPlanSelection, setShowPlanSelection] = useState(false)
   const [paymentChoiceDismissible, setPaymentChoiceDismissible] = useState(false)
+  const [paymentChoiceBusy, setPaymentChoiceBusy] = useState(false)
   const [paymentConfirmationPending, setPaymentConfirmationPending] = useState(false)
   const [paymentReturnFailure, setPaymentReturnFailure] = useState<string | null>(null)
   const [paymentConfirmationAttempt, setPaymentConfirmationAttempt] = useState(0)
@@ -585,11 +593,13 @@ export default function SubscriptionPage() {
     setPaymentConfirmationPending(false)
     setPaymentReturnFailure(null)
     setPaymentChoiceDismissible(false)
+    setPaymentChoiceBusy(false)
     setShowPlanSelection(true)
   }
 
   function closePaymentRecovery() {
     setPaymentChoiceDismissible(false)
+    setPaymentChoiceBusy(false)
     setShowPlanSelection(false)
   }
 
@@ -662,9 +672,11 @@ export default function SubscriptionPage() {
         {showPlanSelection && (
           <PaymentChoiceDialog
             dismissible={paymentChoiceDismissible}
+            busy={paymentChoiceBusy}
             onClose={closePaymentRecovery}
             onSuccess={startPaymentConfirmation}
             onDismissibilityChange={setPaymentChoiceDismissible}
+            onBusyChange={setPaymentChoiceBusy}
             restoreFocusTo={modalOpener}
           />
         )}
@@ -918,9 +930,11 @@ export default function SubscriptionPage() {
       {showPlanSelection && (
         <PaymentChoiceDialog
           dismissible={paymentChoiceDismissible}
+          busy={paymentChoiceBusy}
           onClose={closePaymentRecovery}
           onSuccess={startPaymentConfirmation}
           onDismissibilityChange={setPaymentChoiceDismissible}
+          onBusyChange={setPaymentChoiceBusy}
           restoreFocusTo={modalOpener}
         />
       )}

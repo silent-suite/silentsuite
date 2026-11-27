@@ -9,10 +9,11 @@ import SubscriptionPage from '../page'
 import { renderWithIntl as render } from '@/src/__tests__/render-with-intl'
 
 vi.mock('next/dynamic', () => ({
-  default: () => function MockStripePaymentForm({ mode, submitLabel, onSuccess }: { mode: string; submitLabel: string; onSuccess?: () => Promise<void> | void }) {
+  default: () => function MockStripePaymentForm({ mode, submitLabel, onSuccess, onProcessingChange }: { mode: string; submitLabel: string; onSuccess?: () => Promise<void> | void; onProcessingChange?: (processing: boolean) => void }) {
     return (
       <div data-testid="stripe-payment-form">
         {mode}:{submitLabel}
+        <button onClick={() => onProcessingChange?.(true)}>mock card submit</button>
         <button onClick={() => { void onSuccess?.() }}>mock payment success</button>
       </div>
     )
@@ -436,6 +437,40 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(await within(reopened).findByText(/card payment in progress/i)).toBeInTheDocument()
     expect(within(reopened).queryByRole('button', { name: /continue to card payment/i })).not.toBeInTheDocument()
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/payment-flows/cancel'))).toBe(false)
+  })
+
+  it('holds Close while a payment start or card confirmation is in flight, and success afterwards still confirms (review fix: SIGNUP-02)', async () => {
+    mockSubscription({
+      status: 'cancelled',
+      capabilities: { ...baseSubscription.capabilities, canReactivate: true },
+    })
+    let releaseStart: () => void = () => {}
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url) === 'https://billing.test/subscription/payment-flows/v2') {
+        await new Promise<void>((resolve) => { releaseStart = resolve })
+      }
+      return baseFetch(url, init)
+    })
+
+    render(<SubscriptionPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /reactivate/i }))
+    const dialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
+    fireEvent.click(await within(dialog).findByRole('button', { name: /continue to card payment/i }))
+    // The start request is in flight: closing now would drop its reply.
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Close' })).toBeDisabled())
+
+    releaseStart()
+    expect(await within(dialog).findByText('Amount due')).toBeInTheDocument()
+    // Idle on the card form: the payment exists, so Close is offered again.
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Close' })).not.toBeDisabled())
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'mock card submit' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Close' })).toBeDisabled())
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'mock payment success' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument())
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
   })
 
   it('shows no extra Close once Billing has verified there is no payment in progress', async () => {

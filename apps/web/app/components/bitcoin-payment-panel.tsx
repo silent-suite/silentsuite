@@ -31,6 +31,8 @@ type BitcoinPaymentPanelProps = {
   onBack: () => void | Promise<void>
   onInvoiceInactive?: () => void
   onPaymentComplete: () => void | Promise<void>
+  /** True from settlement until onPaymentComplete has been called. */
+  onCompletingChange?: (completing: boolean) => void
   externalCheckoutLabel?: string
   /**
    * Callers that own a provider authority replace the generic back label with
@@ -51,6 +53,7 @@ export default function BitcoinPaymentPanel({
   onBack,
   onInvoiceInactive,
   onPaymentComplete,
+  onCompletingChange,
   externalCheckoutLabel = 'Open in BTCPay instead',
   backLabel = 'Back to payment options',
   backDisabled = false,
@@ -109,7 +112,10 @@ export default function BitcoinPaymentPanel({
         if (cancelled) return
         if (data.status === 'settled') {
           setStatus('settled')
-          timer = window.setTimeout(() => { void onPaymentComplete() }, 1200)
+          onCompletingChange?.(true)
+          timer = window.setTimeout(() => {
+            void Promise.resolve(onPaymentComplete()).finally(() => onCompletingChange?.(false))
+          }, 1200)
           return
         }
         if (data.status === 'expired' || data.status === 'invalid' || data.status === 'failed') {
@@ -127,7 +133,7 @@ export default function BitcoinPaymentPanel({
       cancelled = true
       if (timer) window.clearTimeout(timer)
     }
-  }, [onPaymentComplete, session.invoiceId, session.lookupToken])
+  }, [onCompletingChange, onPaymentComplete, session.invoiceId, session.lookupToken])
 
   const selectedMethod = paymentMethods.find((method) => method.id === selectedMethodId) ?? paymentMethods[0]
   const qrValue = selectedMethod?.qrValue ?? selectedMethod?.paymentLink ?? selectedMethod?.address ?? ''
