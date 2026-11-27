@@ -372,12 +372,14 @@ export const useContactStore = create<ContactState & ContactActions>()(
           }
           let skipped = 0
           for (const target of targets) {
+            // A destination that vanished during the read has nothing to match; its cards stay not sent.
+            if (!target.collectionUid || useEtebaseStore.getState().resolveCollectionUid('contacts', target.collectionUid) !== target.collectionUid) continue
             for (const position of target.positions) {
               const uid = newContacts[position]!.uid
               if (!uid || !target.onServer.has(uid)) continue
               outcomes[position] = 'skipped'
               skipped++
-              if (target.collectionUid) uncertainFileImports.delete(uncertainKey(accountEpoch, target.collectionUid, uid))
+              uncertainFileImports.delete(uncertainKey(accountEpoch, target.collectionUid, uid))
             }
           }
           if (skipped > 0) options.onSkipped?.(skipped)

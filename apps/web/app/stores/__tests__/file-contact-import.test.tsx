@@ -361,6 +361,27 @@ describe('file contact import: preflight and UIDs', () => {
     expect(server.attempts).toHaveLength(0)
   })
 
+  it('reports not sent, not already imported, when the list is deleted after the read', async () => {
+    server.seed('col-1', 'BEGIN:VCARD\r\nUID:a\r\nFN:A\r\nEND:VCARD')
+    const read = useEtebaseStore.getState().readCollectionVCardUids
+    useEtebaseStore.setState({
+      readCollectionVCardUids: async (...args: Parameters<typeof read>) => {
+        const result = await read(...args)
+        useEtebaseStore.setState((state) => ({ collections: { ...state.collections, contacts: [] } }))
+        return result
+      },
+    } as any)
+    try {
+      const skipped = vi.fn()
+      const err = await outcomeOf(importFile([card('A', 'a')], { onSkipped: skipped }))
+      expect(err.outcomes).toEqual(['notSent'])
+      expect(skipped).not.toHaveBeenCalled()
+      expect(server.attempts).toHaveLength(0)
+    } finally {
+      useEtebaseStore.setState({ readCollectionVCardUids: read } as any)
+    }
+  })
+
   it('stops when the account changes between the read and the write', async () => {
     const read = useEtebaseStore.getState().readCollectionVCardUids
     useEtebaseStore.setState({ readCollectionVCardUids: async (...args: Parameters<typeof read>) => { const result = await read(...args); bumpAccountEpoch(); return result } } as any)
