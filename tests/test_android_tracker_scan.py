@@ -5,7 +5,7 @@ import hashlib
 import importlib.util
 import io
 import json
-import re
+import os
 import subprocess
 import sys
 import tempfile
@@ -264,8 +264,9 @@ class AndroidTrackerScannerTest(unittest.TestCase):
 #
 # The expected streams, findings and CLI output below were recorded from the scanner
 # as it was before the payload-reuse rewrite (50deead9) and match the current one.
-# Locations use {root} for the corpus directory and {repo} for the repository root;
-# payloads are named after the bytes the corpus builder wrote.
+# Locations use {root} for the corpus directory and {repo} for the repository root, with
+# "/" separators; {secret.dex} is zipfile's repr of the encrypted archive's only member.
+# Payloads are named after the bytes the corpus builder wrote.
 
 FIXED_TIME = (2026, 1, 1, 0, 0, 0)
 DEX = b"dex\n035\x00 prefix com/mixpanel/android/mpmetrics suffix"
@@ -509,11 +510,11 @@ raises ManifestError: cannot inspect archive {root}/malformed/broken.apk: File i
 {root}/encrypted/outer.zip = encrypted-outer
 {root}/encrypted/outer.zip!inner.zip = encrypted
 {root}/encrypted/outer.zip!inner.zip = encrypted
-raises ManifestError: cannot inspect archive {root}/encrypted/outer.zip!inner.zip: File <ZipInfo ...> is encrypted, password required for extraction
+raises ManifestError: cannot inspect archive {root}/encrypted/outer.zip!inner.zip: File {secret.dex} is encrypted, password required for extraction
 """,
     "encrypted-top-level-zip": """\
 {root}/encrypted-top/top.zip = encrypted
-raises ManifestError: cannot inspect archive {root}/encrypted-top/top.zip: File <ZipInfo ...> is encrypted, password required for extraction
+raises ManifestError: cannot inspect archive {root}/encrypted-top/top.zip: File {secret.dex} is encrypted, password required for extraction
 """,
     "corrupt-nested-zip": """\
 {root}/corrupt/outer.zip = corrupt-outer
@@ -577,8 +578,8 @@ tracker scan passed: 0 finding(s), 0 reviewed exception(s)
 """, '', (1, 0, 0, 'pass')),
     "depth-boundary-over": (3, "", 'archive nesting limit exceeded: {root}/depth-over/over.zip!L1.jar!L2.jar!L3.jar!L4.jar!leaf.jar\n', None),
     "malformed-top-level-apk": (3, "", 'cannot inspect archive {root}/malformed/broken.apk: File is not a zip file\n', None),
-    "encrypted-nested-zip": (3, "", 'cannot inspect archive {root}/encrypted/outer.zip!inner.zip: File <ZipInfo ...> is encrypted, password required for extraction\n', None),
-    "encrypted-top-level-zip": (3, "", 'cannot inspect archive {root}/encrypted-top/top.zip: File <ZipInfo ...> is encrypted, password required for extraction\n', None),
+    "encrypted-nested-zip": (3, "", 'cannot inspect archive {root}/encrypted/outer.zip!inner.zip: File {secret.dex} is encrypted, password required for extraction\n', None),
+    "encrypted-top-level-zip": (3, "", 'cannot inspect archive {root}/encrypted-top/top.zip: File {secret.dex} is encrypted, password required for extraction\n', None),
     "corrupt-nested-zip": (3, "", 'cannot inspect archive {root}/corrupt/outer.zip!inner.zip: Bad magic number for file header\n', None),
     "empty-file": (0, """\
 tracker scan passed: 0 finding(s), 0 reviewed exception(s)
@@ -689,9 +690,18 @@ raises ManifestError: archive member size limit exceeded: {root}/repeated/c-oute
 }
 
 
-def _matches(expected: str, actual: str) -> bool:
-    """Exact match, except that "..." in expected stands for any text (zipfile's ZipInfo repr)."""
-    return re.fullmatch(".*?".join(map(re.escape, expected.split("..."))), actual, re.DOTALL) is not None
+def _summary_bytes(targets_scanned: int, prohibited: int, excepted: int, result: str) -> bytes:
+    reviewed_on = json.loads(MANIFEST.read_text(encoding="utf-8"))["reviewed_on"]
+    return (
+        "{\n"
+        '  "schema_version": 1,\n'
+        f'  "manifest_reviewed_on": "{reviewed_on}",\n'
+        f'  "targets_scanned": {targets_scanned},\n'
+        f'  "prohibited_findings": {prohibited},\n'
+        f'  "reviewed_exceptions": {excepted},\n'
+        f'  "result": "{result}"\n'
+        "}\n"
+    ).encode("utf-8")
 
 
 class _CountingPattern:
@@ -715,6 +725,8 @@ class TrackerScannerResultTest(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls._tmp.name).resolve()
         cls.cases, cls.payloads = build_corpus(cls.root / "corpus")
+        with zipfile.ZipFile(io.BytesIO(cls.payloads["encrypted"])) as archive:
+            cls.secret_member = repr(archive.getinfo("secret.dex"))
 
     @classmethod
     def tearDownClass(cls):
@@ -722,7 +734,11 @@ class TrackerScannerResultTest(unittest.TestCase):
 
     @staticmethod
     def normalise(text: str, root: Path) -> str:
-        return text.replace(str(root), "{root}").replace(str(ROOT), "{repo}")
+        text = text.replace(str(root), "{root}").replace(str(ROOT), "{repo}")
+        return text.replace(os.sep, "/") if os.sep != "/" else text
+
+    def expand(self, expected: str) -> str:
+        return expected.replace("{secret.dex}", self.secret_member)
 
     def assert_stream(self, target: Path, root: Path, payloads: dict, expected: str):
         """Compares the ordered payload stream, including repeats and the error it ends with."""
@@ -743,8 +759,7 @@ class TrackerScannerResultTest(unittest.TestCase):
         if error is None:
             self.assertIsNone(raised)
         else:
-            self.assertIsNotNone(raised)
-            self.assertTrue(_matches(error, raised), raised)
+            self.assertEqual(raised, self.expand(error))
 
     def test_finding_fields(self):
         self.assertEqual([field.name for field in dataclasses.fields(self.scanner.Finding)],
@@ -760,7 +775,6 @@ class TrackerScannerResultTest(unittest.TestCase):
 
     def test_cli_output(self):
         self.assertEqual(set(EXPECTED_CLI), set(self.cases))
-        reviewed_on = json.loads(MANIFEST.read_text(encoding="utf-8"))["reviewed_on"]
         for name, (code, stdout, stderr, summary) in EXPECTED_CLI.items():
             with self.subTest(case=name):
                 targets, manifest = self.cases[name]
@@ -773,19 +787,11 @@ class TrackerScannerResultTest(unittest.TestCase):
                 corpus = self.root / "corpus"
                 self.assertEqual(result.returncode, code, result.stdout + result.stderr)
                 self.assertEqual(self.normalise(result.stdout, corpus), stdout)
-                self.assertTrue(_matches(stderr, self.normalise(result.stderr, corpus)), result.stderr)
+                self.assertEqual(self.normalise(result.stderr, corpus), self.expand(stderr))
                 if summary is None:
                     self.assertFalse(summary_path.exists())
-                    continue
-                targets_scanned, prohibited, excepted, outcome = summary
-                self.assertEqual(summary_path.read_text(encoding="utf-8"), json.dumps({
-                    "schema_version": 1,
-                    "manifest_reviewed_on": reviewed_on,
-                    "targets_scanned": targets_scanned,
-                    "prohibited_findings": prohibited,
-                    "reviewed_exceptions": excepted,
-                    "result": outcome,
-                }, indent=2) + "\n")
+                else:
+                    self.assertEqual(summary_path.read_bytes(), _summary_bytes(*summary))
 
     def test_archive_limits(self):
         """Limits patched small; the same corpus must pass at the limit and fail closed one over it."""
@@ -819,7 +825,7 @@ class TrackerScannerResultTest(unittest.TestCase):
                 else:
                     self.assertEqual((code, stdout.getvalue(), stderr.getvalue()),
                                      (0, "tracker scan passed: 0 finding(s), 0 reviewed exception(s)\n", ""))
-                    self.assertTrue(summary.exists())
+                    self.assertEqual(summary.read_bytes(), _summary_bytes(1, 0, 0, "pass"))
 
     # ── bounded work: each remembered distinct payload is searched once ───
 
@@ -852,6 +858,10 @@ class TrackerScannerResultTest(unittest.TestCase):
                  f"{self.normalise(finding.location, self.root / 'corpus')}: {finding.excerpt}"
                  for finding in findings]
         self.assertFalse(any(finding.excepted for finding in findings))
+        descriptions = {entry["id"]: entry["description"]
+                        for entry in json.loads(MANIFEST.read_text(encoding="utf-8"))["signatures"]}
+        self.assertEqual([finding.description for finding in findings],
+                         [descriptions[finding.signature_id] for finding in findings])
         self.assertEqual(lines, EXPECTED_CLI["release"][1].splitlines()[:-1])
         return calls
 
