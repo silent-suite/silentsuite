@@ -253,7 +253,7 @@ AUTH_PAGE_HTML = """<!DOCTYPE html>
 
             <details style="margin-bottom:16px;">
                 <summary style="cursor:pointer;font-size:13px;color:#888;list-style:none;display:flex;align-items:center;gap:6px;">
-                    <span style="font-size:10px;color:#666;">&#9654;</span> Advanced
+                    <span style="font-size:10px;color:#888;">&#9654;</span> Advanced
                 </summary>
                 <div style="margin-top:10px;">
                     <label for="server_url">Server URL</label>
@@ -344,7 +344,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
         }
         .url-box label {
             font-size: 12px;
-            color: #666;
+            color: #888;
             display: block;
             margin-bottom: 2px;
         }
@@ -361,7 +361,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
         }
         .copy-btn:hover { background: #444; }
         .url-note {
-            color: #666;
+            color: #888;
             font-size: 12px;
             margin-top: 8px;
             font-style: italic;
@@ -435,7 +435,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
         summary::before {
             content: "\\25B6";
             font-size: 10px;
-            color: #666;
+            color: #888;
             transition: transform 0.2s;
         }
         details[open] summary::before { transform: rotate(90deg); }

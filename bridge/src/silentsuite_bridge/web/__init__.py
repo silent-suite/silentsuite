@@ -2140,7 +2140,7 @@ REPORT_HTML = r"""<!DOCTYPE html>
         }
         .container { max-width: 680px; margin: 0 auto; }
         h1 { font-size: 28px; color: #fff; margin-bottom: 4px; }
-        .version { color: #666; font-size: 13px; margin-bottom: 24px; }
+        .version { color: #888; font-size: 13px; margin-bottom: 24px; }
         .card {
             background: #1a1a1a;
             border: 1px solid #333;
@@ -2163,7 +2163,7 @@ REPORT_HTML = r"""<!DOCTYPE html>
             font-family: inherit;
         }
         textarea { min-height: 160px; resize: vertical; }
-        .note { color: #777; font-size: 12px; margin-top: 4px; }
+        .note { color: #888; font-size: 12px; margin-top: 4px; }
         pre {
             background: #111;
             border: 1px solid #2a2a2a;
