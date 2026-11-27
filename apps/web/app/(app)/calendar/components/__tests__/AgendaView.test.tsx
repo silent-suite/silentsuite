@@ -4,6 +4,12 @@ import { AgendaView } from '../AgendaView'
 import type { CalendarEvent } from '@silentsuite/core'
 import type { CalendarList } from '@/app/stores/use-calendar-list-store'
 
+const auth = vi.hoisted(() => ({ canWrite: true }))
+
+vi.mock('@/app/stores/use-auth-store', () => ({
+  useAuthStore: (selector: (state: { canWrite: () => boolean }) => unknown) => selector({ canWrite: () => auth.canWrite }),
+}))
+
 vi.mock('@/app/stores/use-preferences-store', () => ({
   usePreferencesStore: (selector: (state: { defaultTimezone: string }) => unknown) => selector({ defaultTimezone: 'UTC' }),
 }))
@@ -135,5 +141,25 @@ describe('AgendaView upcoming mode', () => {
 
     expect(screen.getByText('8:00 AM – 8:30 AM')).toBeInTheDocument()
     expect(screen.getByText('9:00 AM – 9:30 AM GMT+1')).toBeInTheDocument()
+  })
+})
+
+describe('AgendaView empty state', () => {
+  it('points writers at the + button', () => {
+    auth.canWrite = true
+    render(<AgendaView currentDate={new Date('2026-06-01T12:00:00Z')} events={[]} />)
+
+    expect(screen.getByText('No events today')).toBeInTheDocument()
+    expect(screen.getByText(/Tap the \+ button/)).toBeInTheDocument()
+  })
+
+  it('drops the + button hint while the account is read-only', () => {
+    auth.canWrite = false
+    render(<AgendaView currentDate={new Date('2026-06-01T12:00:00Z')} events={[]} />)
+
+    expect(screen.getByText('No events today')).toBeInTheDocument()
+    expect(screen.getByText('Your schedule is clear.')).toBeInTheDocument()
+    expect(screen.queryByText(/Tap the \+ button/)).not.toBeInTheDocument()
+    auth.canWrite = true
   })
 })

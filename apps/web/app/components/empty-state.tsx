@@ -37,12 +37,12 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
 
 // Pre-configured empty states for each section
 
-export function CalendarEmptyState() {
+export function CalendarEmptyState({ canWrite = true }: { canWrite?: boolean }) {
   return (
     <EmptyState
       icon={CalendarDays}
       title="No events today"
-      description="Your schedule is clear. Tap the + button to add your first event."
+      description={canWrite ? 'Your schedule is clear. Tap the + button to add your first event.' : 'Your schedule is clear.'}
     />
   )
 }

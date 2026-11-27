@@ -436,22 +436,23 @@ function CalendarPageBody() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <CalendarViewSwitcher />
-          <button
-            onClick={() => {
-              const now = new Date()
-              const start = snapTo30Min(now)
-              const end = new Date(start)
-              end.setHours(end.getHours() + 1)
-              setCreateDialog({ startDate: start, endDate: end, allDay: false })
-            }}
-            disabled={!canWrite}
-            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
-            aria-label="New event"
-            title={!canWrite ? 'Subscription required' : undefined}
-          >
-            <Plus className="h-4 w-4" />
-            <span className="hidden lg:inline">New event</span>
-          </button>
+          {/* Read-only accounts can't create events; the read-only banner explains why. */}
+          {canWrite && (
+            <button
+              onClick={() => {
+                const now = new Date()
+                const start = snapTo30Min(now)
+                const end = new Date(start)
+                end.setHours(end.getHours() + 1)
+                setCreateDialog({ startDate: start, endDate: end, allDay: false })
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+              aria-label="New event"
+            >
+              <Plus className="h-4 w-4" />
+              <span className="hidden lg:inline">New event</span>
+            </button>
+          )}
         </div>
       </div>
 

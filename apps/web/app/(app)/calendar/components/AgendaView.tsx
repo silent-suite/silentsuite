@@ -7,6 +7,7 @@ import { LabelChips } from '@/app/components/LabelEditor'
 import { resolveTimeZone, type CalendarEvent, type DateRange } from '@silentsuite/core'
 import type { CalendarList } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 import { resolveUserTimezone, shortTimezoneLabel } from '@/app/lib/tz'
 import { expandEventsForRange, floatingToDisplay, type DisplayEvent } from '../lib/calendar-grid-events'
 
@@ -75,6 +76,7 @@ function collectionFallback(calendarId: string): string {
 export function AgendaView({ events, currentDate, calendars = [], mode = 'day', onEventClick }: AgendaViewProps) {
   const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
   const timeFormat = usePreferencesStore((s) => s.timeFormat)
+  const canWrite = useAuthStore((s) => s.canWrite())
   const userTz = resolveUserTimezone(defaultTimezonePref)
   const use12h = timeFormat !== '24h'
   const calendarMeta = useMemo(() => {
@@ -102,7 +104,7 @@ export function AgendaView({ events, currentDate, calendars = [], mode = 'day', 
   }, [events, currentDate, mode, userTz])
 
   if (agendaEvents.length === 0) {
-    return <CalendarEmptyState />
+    return <CalendarEmptyState canWrite={canWrite} />
   }
 
   return (
