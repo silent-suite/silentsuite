@@ -14,7 +14,6 @@ COPY apps/web/package.json apps/web/
 COPY apps/docs/package.json apps/docs/
 COPY packages/core/package.json packages/core/
 COPY packages/ui/package.json packages/ui/
-COPY packages/config/package.json packages/config/
 
 RUN pnpm install --frozen-lockfile
 
@@ -61,8 +60,6 @@ COPY apps/web/ apps/web/
 
 # The SDK is consumed by the build plugin and need not survive standalone tracing.
 RUN node -e "const app = require('node:module').createRequire(process.cwd() + '/apps/web/package.json'); const version = app('@sentry/nextjs/package.json').version; require('node:assert/strict').equal(version, '10.75.2'); console.log('VERIFIED_WEB_BUILD_SENTRY_VERSION=' + version)" && \
-    pnpm --filter @silentsuite/core build && \
-    pnpm --filter @silentsuite/ui build && \
     pnpm --filter @silentsuite/web build
 
 # Omit debug maps before copying public assets into any runtime-image layer.
