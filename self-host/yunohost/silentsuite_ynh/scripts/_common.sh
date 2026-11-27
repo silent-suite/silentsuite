@@ -106,9 +106,23 @@ _silentsuite_remove_old_images() {
 # CONFIGURATION AND PERMISSIONS
 #=================================================
 
+# YunoHost writes app scripts' bash trace, unredacted, to the root-only
+# /var/log/yunohost/yunohost-cli.log. Keep it off while secrets are handled.
+_silentsuite_xtrace_off() {
+    _silentsuite_xtrace=$(set +o | grep xtrace)
+    set +o xtrace
+}
+
+_silentsuite_xtrace_restore() {
+    eval "$_silentsuite_xtrace"
+}
+
+# Both files contain secrets (database password, installation password, signing material).
 _silentsuite_add_config() {
+    _silentsuite_xtrace_off
     ynh_config_add --template="etebase-server.ini" --destination="$install_dir/etebase-server.ini"
     ynh_config_add --template="server.env" --destination="$install_dir/server.env"
+    _silentsuite_xtrace_restore
 }
 
 # The image trees and server.env stay root-owned and read-only for the app; only

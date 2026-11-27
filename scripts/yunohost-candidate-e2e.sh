@@ -191,15 +191,18 @@ group "log markers"
 ct systemctl stop "$app-web"
 curl -s -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/calendar" || true   # nginx upstream error
 ct systemctl start "$app-web"
-python3 - "$STATE" >"$work/markers" <<'PY'
+{
+    python3 - "$STATE" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
 print(s["authToken"]); print(s["collectionUid"]); print(s["itemUid"])
 PY
-ct yunohost app setting "$app" owner_password >>"$work/markers"
-ct yunohost app setting "$app" registration_token >>"$work/markers"
-# Control: the database password YunoHost itself generates for every app.
-ct yunohost app setting "$app" db_pwd >>"$work/markers"
+    ct yunohost app setting "$app" owner_password
+    ct yunohost app setting "$app" registration_token
+    # Control, reported but not counted: the database password YunoHost core generates
+    # for every app, which its own helpers trace into yunohost-cli.log.
+    ct yunohost app setting "$app" db_pwd
+} >"$work/markers"
 sudo incus file push "$work/markers" ynh/root/markers >/dev/null
 # Report which file and which kind of value matched, never the value itself.
 hits=$(ct sh -c '

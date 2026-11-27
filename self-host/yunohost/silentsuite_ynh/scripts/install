@@ -12,11 +12,14 @@ source /usr/share/yunohost/helpers
 #=================================================
 
 # Installation password (needed to create accounts) and the separate signing material
-# for its signup grants. Both names match YunoHost's log redaction.
+# for its signup grants. Both names match YunoHost's operation-log redaction; the
+# script trace in yunohost-cli.log is not redacted, so it stays off while they exist here.
+_silentsuite_xtrace_off
 owner_password=$(ynh_string_random --length=40)
 registration_token=$(ynh_string_random --length=64)
 ynh_app_setting_set --key=owner_password --value="$owner_password"
 ynh_app_setting_set --key=registration_token --value="$registration_token"
+_silentsuite_xtrace_restore
 
 #=================================================
 # DOWNLOAD, CHECK AND UNPACK SOURCE
