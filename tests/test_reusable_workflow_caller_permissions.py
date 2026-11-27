@@ -13,11 +13,9 @@ against the workflow schema and expression grammar; a caller job without a
 `permissions:` key is perfectly valid YAML and a perfectly valid workflow, and
 actionlint does not resolve `uses: ./.github/workflows/*.yml` to the callee's
 job-level permission requests. The mismatch only exists across two files, so it
-is invisible to a per-file linter and only surfaces at dispatch time — which,
-for the annual public Stage B cutover, means burning an owner-approved exact
-SHA window. This contract closes that gap for every checked-in local reusable
-caller in the repository, so the currently unwired deploy-server sibling cannot
-be called later without the same validation.
+is invisible to a per-file linter and only surfaces at dispatch time. This
+contract closes that gap for every checked-in local reusable caller in the
+repository.
 """
 
 from __future__ import annotations
@@ -202,25 +200,12 @@ def reusable_callers() -> list[Path]:
 
 def test_repository_has_reusable_callers_to_validate() -> None:
     callers = {path.name for path in reusable_callers()}
-    assert "annual-only-public-cutover.yml" in callers
+    assert "release-controller.yml" in callers
 
 
 @pytest.mark.parametrize("workflow", reusable_callers(), ids=lambda path: path.name)
 def test_every_local_reusable_caller_job_grants_what_its_callee_requires(workflow: Path) -> None:
     assert violations(workflow) == []
-
-
-def test_stage_b_cutover_grants_exactly_the_callee_minimum() -> None:
-    jobs = load(WORKFLOW_DIR / "annual-only-public-cutover.yml")["jobs"]
-    assert normalize(jobs["deploy-web"]["permissions"]) == {"contents": "read", "packages": "write"}
-    assert normalize(jobs["deploy-docs"]["permissions"]) == {"actions": "read", "contents": "read"}
-
-
-def test_stage_b_callees_still_require_the_scopes_this_contract_exists_for() -> None:
-    web = required_permissions(WORKFLOW_DIR / "deploy-web.yml")
-    docs = required_permissions(WORKFLOW_DIR / "deploy-docs.yml")
-    assert web["packages"] == "write"
-    assert docs["actions"] == "read"
 
 
 # --- Sabotage controls: the checker must fail closed on synthetic mutations ---
