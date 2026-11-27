@@ -156,7 +156,7 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     assert "http://127.0.0.1:37358/alice@example.com/" in html
     assert "http://127.0.0.1:37358/bob@example.com/" in html
     assert "Collections (all configured accounts)" in html
-    assert "2 calendars, 1 contacts, 0 tasks" in html
+    assert "2 calendars \u00b7 1 address book \u00b7 0 task lists" in html
     assert "window.SILENTSUITE_DASHBOARD_CSRF" in html
     assert "X-SilentSuite-CSRF" in html
 
@@ -202,7 +202,7 @@ def test_update_status_aggregates_background_sync_counts(tmp_path, monkeypatch):
     assert _bridge_status["collections_scope"] == "all configured accounts"
 
     html = _render_dashboard()
-    assert "3 calendars, 3 contacts, 1 tasks" in html
+    assert "3 calendars \u00b7 3 address books \u00b7 1 task list" in html
 
 
 def test_successful_account_does_not_clear_another_account_failure():

@@ -1483,7 +1483,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         el.textContent = 'Syncing\u2026' + (elapsed != null ? ' (' + elapsed + 's)' : '');
                         el.style.color = '#4ade80';
                     } else if (p.last_sync_duration != null) {
-                        el.textContent = 'Last sync: ' + p.last_sync_duration.toFixed(1) + 's';
+                        el.textContent = 'Last sync took ' + p.last_sync_duration.toFixed(1) + ' s';
                         el.style.color = '#888';
                     } else {
                         el.textContent = '';
@@ -1729,7 +1729,14 @@ def _render_dashboard():
     filtered_account_cols = [account_cols[user] for user in users if user in account_cols]
     if filtered_account_cols:
         cols = _aggregate_collections(filtered_account_cols)
-    col_text = f"{cols.get('calendars', 0)} calendars, {cols.get('contacts', 0)} contacts, {cols.get('tasks', 0)} tasks"
+    def count(n, one, many):
+        return f"{n} {one if n == 1 else many}"
+
+    col_text = " \u00b7 ".join([
+        count(cols.get("calendars", 0), "calendar", "calendars"),
+        count(cols.get("contacts", 0), "address book", "address books"),
+        count(cols.get("tasks", 0), "task list", "task lists"),
+    ])
     collections_label = f"Collections ({collections_scope})"
 
     error_banner = ""
