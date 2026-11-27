@@ -724,6 +724,22 @@ class PostLoginSetupRuntimeTest {
             })
             launchSetup(context, account, creationId) { activity ->
                 assertEquals("Android access wasn't allowed", setupTitle(activity))
+                assertEquals(
+                    "Contacts access wasn't allowed. Try again, or continue without it.",
+                    viewText(activity, "setup_body"),
+                )
+                assertEquals(
+                    "Events appear in Android Calendar.\nAllowed",
+                    viewText(activity, "setup_calendar_outcome"),
+                )
+                assertEquals(
+                    "Contacts appear in Android Contacts.\nNot allowed",
+                    viewText(activity, "setup_contacts_outcome"),
+                )
+                assertEquals(
+                    "Tasks appear in Tasks.org or OpenTasks when a compatible app is installed.",
+                    viewText(activity, "setup_tasks_outcome"),
+                )
                 assertEquals(PostLoginSetupState.PERMISSIONS, AccountSettings.setupState(manager, account, true))
             }
 
@@ -1273,6 +1289,10 @@ class PostLoginSetupRuntimeTest {
 
     private fun setupTitle(activity: PostLoginSetupActivity): String =
         activity.findViewById<android.widget.TextView>(requiredViewId(activity, "setup_title"))
+            .text.toString()
+
+    private fun viewText(activity: PostLoginSetupActivity, name: String): String =
+        activity.findViewById<android.widget.TextView>(requiredViewId(activity, name))
             .text.toString()
 
     private fun requiredViewId(activity: android.app.Activity, name: String): Int {

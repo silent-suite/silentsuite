@@ -168,6 +168,7 @@
             android:visibility="gone">
 
             <TextView
+                android:id="@+id/setup_calendar_outcome"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:drawableStart="@drawable/ic_calendar_outline"
@@ -177,6 +178,7 @@
                 android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
 
             <TextView
+                android:id="@+id/setup_contacts_outcome"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/spacing_8"
@@ -187,6 +189,7 @@
                 android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
 
             <TextView
+                android:id="@+id/setup_tasks_outcome"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/spacing_8"

@@ -707,6 +707,21 @@
     <string name="post_login_permission_denied_body">Try again, or continue without the affected Android integrations.</string>
     <string name="post_login_permission_blocked_title">Allow access in Android settings</string>
     <string name="post_login_permission_blocked_body">Access is blocked for one or more Android integrations. Open app settings to allow it, or continue without those integrations.</string>
+    <plurals name="post_login_permission_denied_named_body">
+        <item quantity="one">%1$s access wasn\'t allowed. Try again, or continue without it.</item>
+        <item quantity="other">%1$s access wasn\'t allowed. Try again, or continue without them.</item>
+    </plurals>
+    <plurals name="post_login_permission_blocked_named_body">
+        <item quantity="one">%1$s access is blocked. Open app settings to allow it, or continue without it.</item>
+        <item quantity="other">%1$s access is blocked. Open app settings to allow it, or continue without them.</item>
+    </plurals>
+    <string name="post_login_integration_calendar">Calendar</string>
+    <string name="post_login_integration_contacts">Contacts</string>
+    <string name="post_login_integration_tasks">Tasks</string>
+    <string name="post_login_integration_list_two">%1$s and %2$s</string>
+    <string name="post_login_integration_list_three">%1$s, %2$s and %3$s</string>
+    <string name="post_login_integration_allowed">Allowed</string>
+    <string name="post_login_integration_not_allowed">Not allowed</string>
     <string name="post_login_initial_sync_title">Starting your first sync…</string>
     <string name="post_login_initial_sync_body">Android will continue this work in the background.</string>
     <string name="post_login_ready_title">SilentSuite is ready</string>
