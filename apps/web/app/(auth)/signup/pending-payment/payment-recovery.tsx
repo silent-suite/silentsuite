@@ -89,6 +89,7 @@ function readPaymentSessionRecoveryContext(pending: {
 export default function PendingPaymentRecovery({ onReleased }: { onReleased?: () => void } = {}) {
   const completeSignup = useAuthStore((s) => s.completeSignup)
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
+  const etebaseAccountReady = useAuthStore((s) => s.pendingSignup?.etebaseAccountReady === true)
   const finalizePaidSignup = useAuthStore((s) => s.finalizePaidSignup)
   const saveSignupStateForRedirect = useAuthStore((s) => s.saveSignupStateForRedirect)
   const restoreSignupStateFromRedirect = useAuthStore((s) => s.restoreSignupStateFromRedirect)
@@ -471,7 +472,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
             <p className="text-xs text-[rgb(var(--muted))]">One last account step before your vault setup.</p>
           </div>
         </div>
-        <StepCreatePaidAccount email={restoredEmail} onNext={handlePaidAccountComplete} />
+        <StepCreatePaidAccount email={restoredEmail} onNext={handlePaidAccountComplete} accountReady={etebaseAccountReady} />
       </div>
     )
   }

@@ -230,6 +230,11 @@ function isUuid(value: unknown): value is string {
 }
 
 /** Customer-facing message for a payment start that did not complete; never a fresh-start hint. */
+/** The store's HostedSignupRefusedError, matched by name like the SDK errors. */
+function isHostedSignupRefusal(err: unknown): boolean {
+  return err instanceof Error && err.name === 'HostedSignupRefusedError'
+}
+
 function describePaymentStartError(err: unknown): string {
   return err instanceof BillingResponseError
     && err.billingProblemType === 'https://api.silentsuite.io/errors/provider-unavailable'
@@ -1511,6 +1516,9 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   // Selects the existing in-document payment recovery; it grants no authority.
   const [paymentRecoveryRequested, setPaymentRecoveryRequested] = useState(false)
   const [paymentNeedsVerification, setPaymentNeedsVerification] = useState(false)
+  // The hosted server refused account creation; no account or payment exists for this attempt.
+  const [signupNeedsVerification, setSignupNeedsVerification] = useState(false)
+  const etebaseAccountReady = useAuthStore((s) => s.pendingSignup?.etebaseAccountReady === true)
   const [emailOwnershipExpiresAt, setEmailOwnershipExpiresAt] = useState<string | null>(null)
   const [paymentSwitch, setPaymentSwitch] = useState<'stripe' | 'btcpay' | null>(null)
   // A refused (429) Back cancellation's deadline, held here so it survives the
@@ -1931,6 +1939,14 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
       setProvisionError('Your selected terms expired. Review the options and choose again before continuing.')
       return
     }
+    // One account step before every payment: a failed step starts no payment
+    // and leaves the claim unattempted. A retry after dispatch keeps `payment`.
+    const data = formDataRef.current
+    if (!data) throw new Error('Please enter your account details again.')
+    const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
+    encryptedAccountAttemptedRef.current = true
+    if (navigation.currentPhase() !== 'payment') navigation.markMutation('setup')
+    await createEtebaseAccount(data.email, data.password, normalizedUrl, undefined, { kind: 'intent', checkoutIntentToken: pending.activation.checkoutIntentToken })
     navigation.markMutation('payment')
     claimAttemptedRef.current = true
     const returnPath = pending.provider === 'stripe' ? '/signup' : '/signup/pending-payment'
@@ -1975,7 +1991,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     setPendingAnnualClaim(null)
     trackCheckoutInitiated(annualOffer.offer, 'btcpay')
     setPlanView('crypto')
-  }, [annualOffer, navigation, recoveredSignupEmail, returnTo, startAnnualSignupPayment])
+  }, [annualOffer, createEtebaseAccount, navigation, recoveredSignupEmail, returnTo, serverUrl, startAnnualSignupPayment])
 
   const handleSelectPaid = useCallback(async () => {
     if (operationRef.current) return
@@ -2019,6 +2035,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
         await renewAnnualOfferAndRequireConsent(annualOffer)
         return
       }
+      if (isHostedSignupRefusal(err)) { setSignupNeedsVerification(true); return }
       setProvisionError(claim ? describePaymentStartError(err) : err instanceof Error ? err.message : 'Failed to set up your account')
       // A reserved claim keeps its retry surface; a failed reservation returns to the methods.
       setPlanView(claim ? 'confirm' : 'method')
@@ -2075,6 +2092,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
         await renewAnnualOfferAndRequireConsent(annualOffer)
         return
       }
+      if (isHostedSignupRefusal(err)) { setSignupNeedsVerification(true); return }
       setProvisionError(claim ? describePaymentStartError(err) : err instanceof Error ? err.message : 'Failed to start crypto checkout')
       if (claim) setPlanView('confirm')
     } finally {
@@ -2106,7 +2124,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
         if (!data) throw new Error('Please enter your account details again.')
         const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
         encryptedAccountAttemptedRef.current = true
-        await createEtebaseAccount(data.email, data.password, normalizedUrl)
+        await createEtebaseAccount(data.email, data.password, normalizedUrl, undefined, { kind: 'intent', checkoutIntentToken: pending.activation.checkoutIntentToken })
         await provisionAnnualNoCard(pending.activation.checkoutIntentToken)
         setPendingAnnualClaim(null)
         setNoCardAcknowledged(true)
@@ -2119,6 +2137,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
         await renewAnnualOfferAndRequireConsent(annualOffer)
         return
       }
+      if (isHostedSignupRefusal(err)) { setSignupNeedsVerification(true); return }
       setProvisionError(describePaymentStartError(err))
     } finally {
       operationRef.current = false
@@ -2318,6 +2337,20 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     <p>Payment cancelled. This browser no longer has valid email verification and signed signup terms. Verify your email again to load payment choices.</p>
     <Button onClick={() => { setPaymentNeedsVerification(false); setStep('account') }}>Verify email again</Button>
   </div>
+  if (signupNeedsVerification) return <div className="space-y-4">
+    <h1 className="text-xl font-semibold">Verify your email again</h1>
+    <p role="status">We could not confirm this signup, so no account was created and no payment was started. Verify your email again to continue.</p>
+    <Button onClick={() => {
+      // The server refused creation, so nothing from this attempt needs recovery.
+      setSignupNeedsVerification(false)
+      pendingAnnualClaimRef.current = null
+      setPendingAnnualClaim(null)
+      claimAttemptedRef.current = false
+      encryptedAccountAttemptedRef.current = false
+      navigation.clear()
+      setStep('account')
+    }}>Verify email again</Button>
+  </div>
   if (navigation.recovery) {
     return <div className="mx-auto w-full max-w-md space-y-4">
       <SignupRecoveryWarning />
@@ -2476,6 +2509,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
             email={formDataRef.current?.email ?? ''}
             onNext={handlePaidAccountComplete}
             initialError={provisionError}
+            accountReady={etebaseAccountReady}
           />
         )}
         {step === 'vault' && (

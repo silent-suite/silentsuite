@@ -6,7 +6,7 @@ import SignupPage from '../page'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { paymentReturnUrl } from '@/app/lib/signup-return'
 
-const mocks = vi.hoisted(() => ({ session: null as string | null, signup: vi.fn(), proof: vi.fn(), push: vi.fn() }))
+const mocks = vi.hoisted(() => ({ session: null as string | null, signup: vi.fn(), login: vi.fn(), proof: vi.fn(), push: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: mocks.push }), useSearchParams: () => new URLSearchParams(window.location.search) }))
 vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, trackInPageCheckoutReturned: vi.fn(), createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
 vi.mock('../components/step-create-vault', () => ({ StepCreateVault: ({ onComplete }: { onComplete: () => void }) => <button onClick={onComplete}>Complete vault</button> }))
@@ -14,7 +14,7 @@ vi.mock('@/app/lib/secure-storage', () => ({
   secureGet: vi.fn(async () => mocks.session), secureSet: vi.fn(async (_key: string, value: string) => { mocks.session = value }),
   secureRemove: vi.fn(), secureClear: vi.fn(), migrateFromLocalStorage: vi.fn(),
 }))
-vi.mock('@/app/lib/etebase-auth', () => ({ etebaseSignUp: mocks.signup, etebaseLogIn: vi.fn(), issueBillingLinkProof: mocks.proof }))
+vi.mock('@/app/lib/etebase-auth', () => ({ etebaseSignUp: mocks.signup, etebaseLogIn: mocks.login, issueBillingLinkProof: mocks.proof }))
 vi.mock('@/app/lib/self-hosted', () => ({ isSelfHosted: false, isCustomServer: (url?: string) => !!url && url !== 'https://server.silentsuite.io' }))
 const key = 'silentsuite-signup-redirect-state'
 const email = 'callback@example.test'
@@ -24,8 +24,10 @@ const profile = { id, email, isAdmin: false, emailVerified: true, rememberDevice
 const completed = { ...profile, contractVersion: 2, planId: 'early_annual', provisioningStatus: 'active', earlyAdopter: false,
   createdAt: '2026-09-09T00:00:00.000Z', clientSecret: null, cryptoCheckoutUrl: null, cryptoInvoiceId: null, cryptoInvoiceLookupToken: null }
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status })
-function checkpoint(receipt = false, paymentMethod: 'stripe' | 'btcpay' = 'stripe') {
+// New web creates the account before payment, so its checkpoint says so; `accountReady: false` is an old-web checkpoint.
+function checkpoint(receipt = false, paymentMethod: 'stripe' | 'btcpay' = 'stripe', accountReady = true) {
   useAuthStore.setState({ pendingSignup: { email, serverUrl: 'https://server.silentsuite.io', paymentSessionToken: token, paymentSessionRequestKey: id, paymentMethod, billingContractVersion: 2,
+    ...(accountReady ? { etebaseAccountReady: true } : {}),
     password: 'NeverPersist1', ...(receipt ? { provisionedUser: { id, planId: 'early_annual', isAdmin: false }, provisionedSubscriptionStatus: 'active', billingSessionUserId: id } : {}),
   } })
   useAuthStore.getState().saveSignupStateForRedirect('annual')
@@ -45,8 +47,9 @@ function returnDocument(intent: string, status?: string) {
 }
 async function submitAccount() {
   fireEvent.change(await screen.findByLabelText(/^Password$/), { target: { value: 'CallbackPass1' } })
-  fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'CallbackPass1' } })
-  const submit = screen.getByRole('button', { name: 'Create account and continue' })
+  const confirm = screen.queryByLabelText('Confirm password')
+  if (confirm) fireEvent.change(confirm, { target: { value: 'CallbackPass1' } })
+  const submit = screen.getByRole('button', { name: /^(Create account|Sign in) and continue$/ })
   await waitFor(() => expect(submit).toBeEnabled())
   fireEvent.click(submit)
 }
@@ -56,6 +59,7 @@ beforeEach(() => {
   sessionStorage.clear(); localStorage.clear()
   mocks.session = null
   mocks.signup.mockResolvedValue({ savedSession: 'encrypted-session', authToken: 'unused' })
+  mocks.login.mockResolvedValue({ savedSession: 'encrypted-session', authToken: 'unused' })
   mocks.proof.mockResolvedValue('fresh-proof')
   vi.stubGlobal('fetch', vi.fn(async (url) => json(String(url).endsWith('/finalize-payment/v2') ? completed : profile)))
 })
@@ -65,7 +69,7 @@ describe.each(['setup_intent', 'payment_intent'])('%s full-document callback', (
   it.each(['succeeded', 'processing'])('retains the original checkpoint for %s and uses real finalization/session checks before vault', async (status) => {
     const original = checkpoint()
     const document = returnDocument(intent, status)
-    await screen.findByRole('heading', { name: 'Create your account' })
+    await screen.findByRole('heading', { name: 'Enter your password' })
     expect(screen.queryByText(/Card verified successfully|Payment is confirmed/)).not.toBeInTheDocument()
     expect(useAuthStore.getState().pendingSignup).toEqual(original.pendingSignup)
     expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(original)
@@ -79,14 +83,17 @@ describe.each(['setup_intent', 'payment_intent'])('%s full-document callback', (
     const receipt = JSON.parse(sessionStorage.getItem(key)!)
     expect(receipt).toMatchObject({ savedAt: original.savedAt, pendingSignup: { ...original.pendingSignup, provisionedUser: { id } } })
     expect(sessionStorage.getItem(key)).not.toMatch(/billingSessionUserId|encrypted-session|CallbackPass1|untrusted/)
-    expect(mocks.signup).toHaveBeenCalledWith(email, 'CallbackPass1', original.pendingSignup.serverUrl)
+    // The account was created before payment: the return page signs in, it never signs up.
+    expect(mocks.login).toHaveBeenCalledWith(email, 'CallbackPass1', original.pendingSignup.serverUrl)
+    expect(mocks.signup).not.toHaveBeenCalled()
     document.unmount()
     useAuthStore.setState({ pendingSignup: null })
     vi.mocked(fetch).mockClear()
     returnDocument(intent, status)
     await screen.findByText('Complete vault')
     expect(vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/auth/token-exchange', '/auth/session'])
-    expect(mocks.signup).toHaveBeenCalledTimes(1)
+    expect(mocks.login).toHaveBeenCalledTimes(1)
+    expect(mocks.signup).not.toHaveBeenCalled()
     expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(receipt)
   })
   it.each(['failed', 'processing', 'succeeded', undefined])('recovers a completed receipt even with %s URL status, without payment or account creation', async (status) => {
@@ -155,6 +162,32 @@ describe.each(['setup_intent', 'payment_intent'])('%s full-document callback', (
     expect(JSON.parse(sessionStorage.getItem(key)!)).toMatchObject({ savedAt: original.savedAt, pendingSignup: { email, paymentSessionToken: token, paymentSessionRequestKey: id } })
     if (failure === 'session-identity') expect(useAuthStore.getState().pendingSignup?.provisionedUser?.id).toBe(id)
     else expect(useAuthStore.getState().pendingSignup?.provisionedUser).toBeUndefined()
+  })
+})
+
+describe('old-web checkpoint without etebaseAccountReady on the new web', () => {
+  it('flag off: signs up without a pass and finalizes, as today', async () => {
+    checkpoint(false, 'stripe', false)
+    vi.mocked(fetch).mockImplementation(async (url) => json(String(url).endsWith('/finalize-payment/v2') ? completed : profile))
+    returnDocument('setup_intent', 'succeeded')
+    await screen.findByRole('heading', { name: 'Create your account' })
+    await submitAccount()
+    await screen.findByText('Complete vault')
+    expect(mocks.signup).toHaveBeenCalledWith(email, 'CallbackPass1', 'https://server.silentsuite.io')
+    expect(mocks.login).not.toHaveBeenCalled()
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)).not.toContain('/auth/signup-pass/v2')
+  })
+
+  it.each(['succeeded', 'processing'])('flag on (%s, e.g. a late settlement): the server refusal shows the support path, keeps the checkpoint and starts no payment', async (status) => {
+    const original = checkpoint(false, 'stripe', false)
+    mocks.signup.mockRejectedValue(Object.assign(new Error('server text'), { name: 'PermissionDeniedError' }))
+    returnDocument('payment_intent', status)
+    await submitAccount()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Contact support@silentsuite.io')
+    expect(mocks.signup).toHaveBeenCalledTimes(1)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(screen.queryByText('Complete vault')).not.toBeInTheDocument()
+    expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(original)
   })
 })
 

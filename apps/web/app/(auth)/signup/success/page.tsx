@@ -22,6 +22,7 @@ function SignupSuccessInner() {
   const searchParams = useSearchParams()
   const completeSignup = useAuthStore((s) => s.completeSignup)
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
+  const etebaseAccountReady = useAuthStore((s) => s.pendingSignup?.etebaseAccountReady === true)
   const finalizePaidSignup = useAuthStore((s) => s.finalizePaidSignup)
   const recoverCompletedSignupSession = useAuthStore((s) => s.recoverCompletedSignupSession)
   const restoreSignupStateFromRedirect = useAuthStore((s) => s.restoreSignupStateFromRedirect)
@@ -146,7 +147,7 @@ function SignupSuccessInner() {
             <p className="text-xs text-[rgb(var(--muted))]">One last account step before your vault setup.</p>
           </div>
         </div>
-        <StepCreatePaidAccount email={restoredEmail} continuation="payment-return" onNext={handlePaidAccountComplete} />
+        <StepCreatePaidAccount email={restoredEmail} continuation="payment-return" onNext={handlePaidAccountComplete} accountReady={etebaseAccountReady} />
         <Button onClick={() => router.push('/signup?recovery=payment')} className="w-full">Open payment recovery</Button>
       </div>
     )
