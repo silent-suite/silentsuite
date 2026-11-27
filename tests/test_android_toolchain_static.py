@@ -1,7 +1,7 @@
 """Static contracts for the root Android build toolchain.
 
-The Android subprojects share this root build. Their standalone wrappers are
-intentionally independent and must not be upgraded as part of the root build.
+The vendored Android libraries build only as subprojects of this root build,
+through android/gradlew.
 """
 
 from pathlib import Path
@@ -55,17 +55,6 @@ def test_root_android_platform_and_jvm_contracts_remain_unchanged():
         assert "sourceCompatibility JavaVersion.VERSION_17" in library
 
 
-def test_nested_standalone_wrapper_versions_are_not_root_toolchain_inputs():
-    expected_urls = {
-        "android/vcard4android/gradle/wrapper/gradle-wrapper.properties": "gradle-6.6.1-all.zip",
-        "android/ical4android/gradle/wrapper/gradle-wrapper.properties": "gradle-6.6.1-all.zip",
-        "android/cert4android/gradle/wrapper/gradle-wrapper.properties": "gradle-6.3-all.zip",
-    }
-
-    for path, distribution in expected_urls.items():
-        assert distribution in read(path), path
-
-
 def test_root_gradle_distribution_is_checksum_pinned():
     wrapper = read("android/gradle/wrapper/gradle-wrapper.properties")
 
@@ -74,31 +63,6 @@ def test_root_gradle_distribution_is_checksum_pinned():
         "distributionSha256Sum=fba8464465835e74f7270bbf43d6d8a8d7709ab0a43ce1aa3323f73e9aa0c612"
         in wrapper.splitlines()
     )
-
-
-def test_nested_standalone_wrapper_distributions_are_checksum_pinned():
-    # CI never runs these standalone wrappers (every Gradle call goes through
-    # android/gradlew), but a local run of one must still get the exact
-    # distribution. Official sha256 values from services.gradle.org.
-    expected = {
-        "android/cert4android/gradle/wrapper/gradle-wrapper.properties": (
-            "gradle-6.3-all.zip",
-            "0f316a67b971b7b571dac7215dcf2591a30994b3450e0629925ffcfe2c68cc5c",
-        ),
-        "android/ical4android/gradle/wrapper/gradle-wrapper.properties": (
-            "gradle-6.6.1-all.zip",
-            "11657af6356b7587bfb37287b5992e94a9686d5c8a0a1b60b87b9928a2decde5",
-        ),
-        "android/vcard4android/gradle/wrapper/gradle-wrapper.properties": (
-            "gradle-6.6.1-all.zip",
-            "11657af6356b7587bfb37287b5992e94a9686d5c8a0a1b60b87b9928a2decde5",
-        ),
-    }
-
-    for path, (distribution, sha256) in expected.items():
-        lines = read(path).splitlines()
-        assert f"distributionUrl=https\\://services.gradle.org/distributions/{distribution}" in lines, path
-        assert f"distributionSha256Sum={sha256}" in lines, path
 
 
 def test_jitpack_serves_only_the_module_missing_from_maven_central():
