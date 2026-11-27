@@ -1,0 +1,38 @@
+resources:
+  limits:
+    cpus: 2.0
+    memory: 4096
+
+TZ: Etc/UTC
+
+silentsuite:
+  # Public CI fixtures only, never real credentials.
+  installation_password: ci-fixture-installation-password-0123456789
+  db_password: "ci fixture %db password; with 'quotes' and \"double\""
+  additional_envs: []
+
+network:
+  web_port:
+    bind_mode: published
+    port_number: 8080
+  certificate_id: null
+  behind_https_proxy: true
+  networks: []
+
+storage:
+  data:
+    type: host_path
+    host_path_config:
+      acl_enable: false
+      path: /opt/tests/mnt/host/data
+      auto_permissions: true
+      create_host_path: true
+  postgres_data:
+    type: host_path
+    host_path_config:
+      acl_enable: false
+      path: /opt/tests/mnt/host/postgres_data
+      auto_permissions: true
+      create_host_path: true
+
+labels: []
