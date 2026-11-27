@@ -215,6 +215,29 @@ describe('photo', () => {
     const photo = 'data:image/svg+xml;base64,PHN2Zy8+';
     expect(generateVCard(makeFullVCard({ photo }))).toContain(`PHOTO;VALUE=URI:${photo}`);
   });
+
+  it('round-trips a file: photo as VALUE=URI, never as base64', () => {
+    const card = 'BEGIN:VCARD\r\nVERSION:2.1\r\nFN:Ada\r\nPHOTO;VALUE=URL:file:///home/ada/pictures/ada.jpg\r\nEND:VCARD';
+    const parsed = parseVCard(card);
+    expect(parsed.photo).toBe('file:///home/ada/pictures/ada.jpg');
+    const written = generateVCard(parsed);
+    expect(written).toContain('PHOTO;VALUE=URI:file:///home/ada/pictures/ada.jpg');
+    expect(written).not.toContain('ENCODING=b');
+    expect(parseVCard(written).photo).toBe('file:///home/ada/pictures/ada.jpg');
+  });
+
+  it('writes cid: and relative photo references as VALUE=URI', () => {
+    for (const photo of ['cid:photo-1@example.com', 'photos/ada.jpg', 'photos/ada']) {
+      const written = generateVCard(makeFullVCard({ photo }));
+      expect(written).toContain(`PHOTO;VALUE=URI:${photo}`);
+      expect(written).not.toContain('ENCODING=b');
+    }
+  });
+
+  it('keeps a long URI value as written instead of guessing base64', () => {
+    const photo = `photos/${'a'.repeat(120)}`;
+    expect(parseVCard(`BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada\r\nPHOTO;VALUE=URI:${photo}\r\nEND:VCARD`).photo).toBe(photo);
+  });
 });
 
 // ── Line folding ──

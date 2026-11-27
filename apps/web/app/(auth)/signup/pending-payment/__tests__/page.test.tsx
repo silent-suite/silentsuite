@@ -48,9 +48,11 @@ vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
 vi.mock('@/app/lib/signup-return', () => ({ normalizeSignupReturnTo: (value: string | null) => value }))
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }: { href: string; children: ReactNode }) => <a href={href} {...props}>{children}</a> }))
 const recordSignupStep = vi.hoisted(() => vi.fn())
+const trackInPageCheckoutReturned = vi.hoisted(() => vi.fn())
 vi.mock('../../commercial-funnel-analytics', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../commercial-funnel-analytics')>(),
   createSignupStepRecorder: () => recordSignupStep,
+  trackInPageCheckoutReturned,
 }))
 vi.mock('../../components/step-create-vault', () => ({
   StepCreateVault: ({ onComplete }: { onComplete: () => void }) => <button type="button" data-testid="step-create-vault" onClick={onComplete}>Complete vault</button>,
@@ -137,6 +139,8 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     render(<PendingPaymentPage />)
     await screen.findByTestId('step-create-paid-account')
     expect(screen.queryByText('cryptocurrency payment settled')).not.toBeInTheDocument()
+    // Inline on /signup after a refresh, this confirmation is where the checkout finishes.
+    expect(trackInPageCheckoutReturned).toHaveBeenCalledWith('stripe')
   })
   it('stale local invoice must not establish available invoice', async () => {
     sessionStorage.setItem('silentsuite-pending-crypto-invoice', 'stale-unbound-invoice')
