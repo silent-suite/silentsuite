@@ -15,7 +15,7 @@ import { formatDaysLeft, isHostedBillingAccount, useEligibleAccountNotice, useTr
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import AddCardBanner from '@/app/components/add-card-banner'
 import { ModalDialog } from '@/app/components/modal-dialog'
-import PaymentChoicePanel from '@/app/components/payment-choice-panel'
+import PaymentChoicePanel, { readCurrentPaymentFlow } from '@/app/components/payment-choice-panel'
 import { useReportCardEndedNotice } from '@/app/components/read-only-overlay'
 import { getPaidBonusAccessDate } from './bonus-access'
 import { SubscriptionEntry } from './subscription-entry'
@@ -459,10 +459,9 @@ export default function SubscriptionPage() {
     fetch(`${BILLING_API_URL}/subscription/payment-flows/current?preview=1`, { credentials: 'include' })
       .then(async (res) => {
         if (!res.ok || !live()) return
-        const body: unknown = await res.json()
-        const flow = body && typeof body === 'object' ? (body as { flow?: unknown }).flow : null
-        const isCrypto = !!flow && typeof flow === 'object' && (flow as { flowKind?: unknown }).flowKind === 'btcpay_annual'
-        if (isCrypto && live()) setCryptoFlowNotice({ owner, sequence })
+        // The dialog's own validator: a reply it would reject shows no line here either.
+        const flow = readCurrentPaymentFlow(await res.json())
+        if (flow?.flowKind === 'btcpay_annual' && live()) setCryptoFlowNotice({ owner, sequence })
       })
       .catch(() => { /* No line; the dialog still checks the payment before anything starts. */ })
   }, [readCryptoFlow, data, liveUser, captureOwner, ownerCurrent])

@@ -159,7 +159,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * that no payment exists. The thrown reason is never rendered: server detail,
  * identifiers and checkout URLs stay out of the error surface.
  */
-function readCurrentPaymentFlow(data: unknown): CurrentPaymentFlow | null {
+export function readCurrentPaymentFlow(data: unknown): CurrentPaymentFlow | null {
   const malformed = () => new Error('The current payment flow reply could not be read.')
   if (!isPlainObject(data) || !Object.prototype.hasOwnProperty.call(data, 'flow')) throw malformed()
   const flow = data.flow

@@ -80,6 +80,9 @@ describe('subscription card: open cryptocurrency payment', () => {
     ['a card payment', () => ({ ok: true, json: async () => ({ flow: { ...cryptoFlow, flowKind: 'stripe_pay_now' } }) })],
     ['a failed status read', () => ({ ok: false, status: 503, json: async () => ({}) })],
     ['a malformed reply', () => ({ ok: true, json: async () => { throw new Error('bad json') } })],
+    // Review fix SIGNUP-06: the dialog's validator rejects a flow without createdAt and cancellable.
+    ['a crypto flow kind with nothing else', () => ({ ok: true, json: async () => ({ flow: { flowKind: 'btcpay_annual' } }) })],
+    ['a crypto flow without createdAt', () => ({ ok: true, json: async () => ({ flow: { ...cryptoFlow, createdAt: '' } }) })],
   ])('shows no line for %s', async (_label, reply) => {
     const calls = route(reply)
     render(<SubscriptionPage />)
