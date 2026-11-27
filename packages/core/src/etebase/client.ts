@@ -1,16 +1,5 @@
 import * as Etebase from 'etebase';
 
-/**
- * Initialize the Etebase SDK. Must be called before any other operations.
- */
-export async function initializeEtebase(serverUrl: string): Promise<void> {
-  // The Etebase JS SDK initializes automatically on first use,
-  // but we validate the server URL here to fail fast.
-  if (!serverUrl) {
-    throw new Error('Etebase server URL is required');
-  }
-}
-
 export interface SignUpOptions {
   /**
    * Owner-issued registration token for servers that require one. Sent only as a
