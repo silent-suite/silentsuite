@@ -30,6 +30,14 @@ describe('focus outline contrast (WCAG 1.4.11)', () => {
     expect(globalsCss).toMatch(/\*:focus-visible\s*\{[^}]*outline: 2px solid rgb\(var\(--focus-ring\)\)/)
   })
 
+  it('uses no brand primary outline in any focus-visible rule', () => {
+    const rules = [...globalsCss.matchAll(/([^{}]*:focus-visible[^{}]*)\{([^}]*)\}/g)]
+    expect(rules.length).toBeGreaterThan(1)
+    for (const [, selector, body] of rules) {
+      expect(`${selector.trim()} { ${body.match(/outline[^;]*;/g)?.join(' ') ?? ''} }`).not.toMatch(/outline[^;]*--primary/)
+    }
+  })
+
   it.each([':root', '.dark'])('keeps the focus-ring colour at 3:1 or more on the background and surface in %s', (selector) => {
     const theme = tokens(selector)
     expect(theme['focus-ring']).toBeDefined()

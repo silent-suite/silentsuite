@@ -577,7 +577,7 @@
 .sx-silentsuite-calendar .sx__day-grid-event:focus-visible,
 .sx-silentsuite-calendar .sx__month-grid-event:focus-visible,
 .sx-silentsuite-calendar .sx__month-grid-day:focus-visible {
-  outline: 2px solid rgb(var(--primary));
+  outline: 2px solid rgb(var(--focus-ring));
   outline-offset: 1px;
 }
 
