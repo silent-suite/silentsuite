@@ -710,7 +710,8 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
           vcard.photo = undefined;
           break;
         }
-        if (val.startsWith('data:') || val.startsWith('http://') || val.startsWith('https://')) {
+        const valueType = (prop.params['VALUE'] ?? '').toUpperCase();
+        if (valueType === 'URI' || valueType === 'URL' || val.startsWith('data:') || val.startsWith('http://') || val.startsWith('https://')) {
           vcard.photo = val;
         } else {
           const encoding = (prop.params['ENCODING'] ?? '').toUpperCase();
@@ -867,8 +868,11 @@ export function generateVCard(vcard: VCard): string {
       lines.push(foldLine(`PHOTO;ENCODING=b;TYPE=${type}:${inline[2]}`));
     } else if (vcard.photo.startsWith('data:') || vcard.photo.startsWith('http://') || vcard.photo.startsWith('https://')) {
       lines.push(foldLine(`PHOTO;VALUE=URI:${vcard.photo}`));
-    } else {
+    } else if (/^[A-Za-z0-9+/]+={0,2}$/.test(vcard.photo) && vcard.photo.length % 4 === 0) {
       lines.push(foldLine(`PHOTO;ENCODING=b;TYPE=JPEG:${vcard.photo}`));
+    } else {
+      // Not base64 (file:, cid:, a relative path): claiming ENCODING=b would make the card unreadable.
+      lines.push(foldLine(`PHOTO;VALUE=URI:${vcard.photo}`));
     }
   }
   if (vcard.rev) lines.push(foldLine(`REV:${vcard.rev}`));
