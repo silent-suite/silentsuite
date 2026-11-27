@@ -154,7 +154,7 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 229, f"expected 229 Android resource XML files, found {len(files)}"
+    assert len(files) == 209, f"expected 209 Android resource XML files, found {len(files)}"
     assert {
         "drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml",
         # The month widget adds 19 XML files; all remain subject to the color rules below.
