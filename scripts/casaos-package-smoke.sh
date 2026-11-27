@@ -88,10 +88,12 @@ run_probe() { # run_probe MODE USERNAME
   PROBE_USERNAME="$2" python3.12 "$root/scripts/casaos-package-probe.py" "$1"
 }
 
-wait_init() { # wait_init -> prints exit code of the one-shot init
+wait_init() { # wait_init: sets INIT_EXIT to the one-shot init's exit code; fails on a timeout
+  INIT_EXIT=""
   for _ in $(seq 1 60); do
     if [ "$(docker inspect -f '{{.State.Status}}' silentsuite-init 2>/dev/null)" = exited ]; then
-      docker inspect -f '{{.State.ExitCode}}' silentsuite-init
+      INIT_EXIT="$(docker inspect -f '{{.State.ExitCode}}' silentsuite-init)"
+      [[ "$INIT_EXIT" =~ ^[0-9]+$ ]] || fail "init exit code unreadable"
       return
     fi
     sleep 2
@@ -99,9 +101,10 @@ wait_init() { # wait_init -> prints exit code of the one-shot init
   fail "init did not finish"
 }
 
-runtime_hashes() { # SHA-256 of credentials and Django key as the services see them
+runtime_hashes() { # SHA-256 of credentials, server config and Django key as the services see them
   docker exec silentsuite-server sha256sum /data/secret.txt /run/silentsuite/owner-password \
-    /run/silentsuite/registration-signing /run/silentsuite/database-password
+    /run/silentsuite/registration-signing /run/silentsuite/database-password \
+    /etc/etebase-server/etebase-server.ini
   docker exec silentsuite-db sha256sum /run/silentsuite/password
 }
 
@@ -133,7 +136,7 @@ app="$work/app"
 mkdir -p "$app"
 render "$app"
 dc up -d >/dev/null
-test "$(wait_init)" = 0 || fail "init failed on a fresh install"
+wait_init; test "$INIT_EXIT" = 0 || fail "init failed on a fresh install"
 assert_platform
 web_image="$(docker inspect -f '{{.Image}}' silentsuite-web)"
 docker run --rm --entrypoint sh "$web_image" -c 'grep -rlq "Installation password" apps/web/.next/static' \
@@ -172,6 +175,8 @@ step "restart"
 dc restart >/dev/null
 run_probe after-restart ci_casaos_user
 test "$(runtime_hashes)" = "$baseline" || fail "credentials or Django key changed across restart"
+load_credentials "$app"
+run_probe owner-login ci_casaos_user
 sentinel_visible ci-sentinel-1 || fail "sentinel lost across restart"
 
 # ── 3. Server-side guard: CasaOS Restart and --no-deps do not rerun init ──
@@ -226,7 +231,8 @@ init_refuses() { # init_refuses LABEL: init on the current case tree must refuse
   before="$(tree_hashes "$case_dir")"
   render "$case_dir"
   dc up -d >/dev/null 2>&1 || true
-  test "$(wait_init)" != 0 || fail "init accepted $1"
+  wait_init
+  test "$INIT_EXIT" = 1 || fail "init did not refuse $1 (exit $INIT_EXIT)"
   server_state="$(docker inspect -f '{{.State.Status}}' silentsuite-server 2>/dev/null || echo absent)"
   case "$server_state" in created|absent) ;; *) fail "server started with $1" ;; esac
   dc down >/dev/null
@@ -249,6 +255,17 @@ case_dir="$work/case"
 sudo cp -a "$app" "$case_dir"
 sudo cp "$case_dir/server-secrets/owner-password" "$case_dir/server-secrets/registration-signing"
 init_refuses "owner password equal to signing material"
+# Root init never follows a link planted in a mounted folder.
+case_dir="$work/case"
+sudo cp -a "$app" "$case_dir"
+sudo mv "$case_dir/server/secret.txt" "$case_dir/server/real-secret.txt"
+sudo ln -s real-secret.txt "$case_dir/server/secret.txt"
+init_refuses "a link in place of secret.txt"
+case_dir="$work/case"
+sudo cp -a "$app" "$case_dir"
+sudo mv "$case_dir/postgres/pgdata" "$case_dir/postgres/moved-pgdata"
+sudo ln -s /nonexistent "$case_dir/postgres/pgdata"
+init_refuses "a dangling link in place of pgdata"
 # A non-empty PGDATA without PG_VERSION is still an existing database.
 case_dir="$work/case"
 sudo cp -a "$app" "$case_dir"
@@ -264,7 +281,7 @@ sudo touch "$fresh/server-secrets/registration-signing"
 kept="$(sudo sha256sum "$fresh/server-secrets/owner-password" | cut -d' ' -f1)"
 render "$fresh"
 dc up -d >/dev/null
-test "$(wait_init)" = 0 || fail "init refused an interrupted first boot"
+wait_init; test "$INIT_EXIT" = 0 || fail "init refused an interrupted first boot"
 test "$(sudo sha256sum "$fresh/server-secrets/owner-password" | cut -d' ' -f1)" = "$kept" \
   || fail "init replaced a valid owner password on retry"
 load_credentials "$fresh"
@@ -278,7 +295,7 @@ up_dir="$work/upgrade"
 mkdir -p "$up_dir"
 render "$up_dir" --web-image "$OLD_WEB" --server-image "$OLD_SERVER"
 dc up -d >/dev/null
-test "$(wait_init)" = 0 || fail "init failed on the previous release"
+wait_init; test "$INIT_EXIT" = 0 || fail "init failed on the previous release"
 load_credentials "$up_dir"
 run_probe full ci_upgrade_user
 add_sentinel "$up_dir" ci-sentinel-1
@@ -286,7 +303,7 @@ upgrade_baseline="$(runtime_hashes)"
 dc down >/dev/null
 render "$up_dir"
 dc up -d >/dev/null
-test "$(wait_init)" = 0 || fail "init failed after the upgrade"
+wait_init; test "$INIT_EXIT" = 0 || fail "init failed after the upgrade"
 run_probe after-restart ci_upgrade_user
 case "$(docker logs silentsuite-server 2>&1)" in
   *"applying database migrations"*) ;;
@@ -294,6 +311,7 @@ case "$(docker logs silentsuite-server 2>&1)" in
 esac
 test "$(runtime_hashes)" = "$upgrade_baseline" || fail "credentials or Django key changed across upgrade"
 sentinel_visible ci-sentinel-1 || fail "sentinel lost across upgrade"
+load_credentials "$up_dir"
 run_probe owner-login ci_upgrade_user
 
 # ── 7. Restore, exactly as documented ────────────────────────────────
@@ -302,7 +320,7 @@ dc down >/dev/null
 test -z "$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT")" || fail "containers still running"
 sudo cp -a "$up_dir" "$work/backup"
 dc up -d >/dev/null
-test "$(wait_init)" = 0 || fail "init failed after the backup"
+wait_init; test "$INIT_EXIT" = 0 || fail "init failed after the backup"
 run_probe full ci_after_backup_user
 add_sentinel "$up_dir" ci-sentinel-2
 dc down >/dev/null
@@ -311,12 +329,13 @@ sudo mv "$up_dir" "$work/upgrade-aside"
 sudo cp -a "$work/backup" "$up_dir"
 sudo mv "$work/backup" "$work/backup-away"  # the restored copy must not depend on the backup
 dc up -d >/dev/null
-test "$(wait_init)" = 0 || fail "init failed after the restore"
+wait_init; test "$INIT_EXIT" = 0 || fail "init failed after the restore"
 run_probe after-restart ci_upgrade_user
 run_probe absent-account ci_after_backup_user
 test "$(runtime_hashes)" = "$upgrade_baseline" || fail "credentials or Django key changed across restore"
 sentinel_visible ci-sentinel-1 || fail "backed-up sentinel missing after restore"
 if sentinel_visible ci-sentinel-2; then fail "post-backup sentinel survived the restore"; fi
+load_credentials "$up_dir"
 run_probe owner-login ci_upgrade_user
 
 echo "PASS CasaOS package smoke ($platform)"

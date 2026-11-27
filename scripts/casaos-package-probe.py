@@ -8,6 +8,7 @@ Umbrel probe. Prints check names only, never a credential.
 """
 
 import importlib.util
+import json
 import sys
 import time
 from pathlib import Path
@@ -25,8 +26,18 @@ def owner_login_grant():
     if not probe.wait_for_stack():
         probe.check("router reaches the server", False)
         return
-    status, headers, _ = probe.owner_login(probe.OWNER_PASSWORD)
-    probe.check("owner login with the visible installation password issues a grant", status == 200)
+    status, headers, body = probe.owner_login(probe.OWNER_PASSWORD)
+    grant = ""
+    if status == 200:
+        try:
+            payload = json.loads(body)
+            grant = payload.get("registration_token", "") if isinstance(payload, dict) else ""
+        except ValueError:
+            grant = ""
+    probe.check(
+        "owner login with the visible installation password issues a grant",
+        isinstance(grant, str) and 0 < len(grant) <= 512,
+    )
     probe.check("owner login response is no-store", "no-store" in headers.get("cache-control", ""))
 
 
@@ -34,11 +45,14 @@ def absent_account():
     if not probe.wait_for_stack():
         probe.check("router reaches the server", False)
         return
-    status, _, _ = probe.request(
+    status, _, body = probe.request(
         "POST", "/api/v1/authentication/login_challenge/",
         probe.msgpack({"username": probe.USERNAME}), probe.MSGPACK,
     )
-    probe.check("account created after the backup is absent after restore", status != 200)
+    probe.check(
+        "account created after the backup is absent after restore (401 user_not_found)",
+        status == 401 and b"user_not_found" in body,
+    )
 
 
 def server_down(seconds=20):

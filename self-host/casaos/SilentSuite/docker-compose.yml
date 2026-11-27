@@ -100,7 +100,7 @@ services:
       - -I
       - -c
       - |
-        import os, pwd, re, secrets, sys
+        import os, pwd, re, secrets, stat, sys
 
         NAMES = ("owner-password", "registration-signing", "database-password")
         VALID = re.compile(r"[0-9a-f]{64}\n?")
@@ -110,12 +110,15 @@ services:
             print("[init] " + message, file=sys.stderr)
             sys.exit(1)
 
+        # Root never follows a link inside the mounted folders: every file it reads, writes
+        # or re-owns is opened with O_NOFOLLOW, and temporary files are created exclusively.
         def read(name):
             try:
-                with open("/secrets/" + name, encoding="ascii") as handle:
+                descriptor = os.open("/secrets/" + name, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(descriptor, encoding="ascii") as handle:
+                    if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                        return None
                     raw = handle.read(200)
-            except FileNotFoundError:
-                return None
             except (OSError, UnicodeError):
                 return None
             return raw.rstrip("\n") if VALID.fullmatch(raw) else None
@@ -128,29 +131,47 @@ services:
                 os.close(descriptor)
 
         def write(path, text, uid, gid, mode):
-            temporary = path + ".tmp"
-            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(descriptor, "w", encoding="ascii") as handle:
-                handle.write(text)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chown(temporary, uid, gid)
-            os.chmod(temporary, mode)
-            os.replace(temporary, path)
+            temporary = path + "." + secrets.token_hex(8) + ".tmp"
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            try:
+                with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+                    handle.write(text)
+                    handle.flush()
+                    os.fchown(handle.fileno(), uid, gid)
+                    os.fchmod(handle.fileno(), mode)
+                    os.fsync(handle.fileno())
+                os.replace(temporary, path)
+            except BaseException:
+                if os.path.lexists(temporary):
+                    os.unlink(temporary)
+                raise
             fsync_dir(os.path.dirname(path))
 
-        def own(path, uid, gid, mode):
-            os.chown(path, uid, gid)
-            os.chmod(path, mode)
+        def own(path, uid, gid, mode, directory=False):
+            flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if directory else 0)
+            try:
+                descriptor = os.open(path, flags)
+            except OSError:
+                stop(path + " is not a plain " + ("folder" if directory else "file")
+                     + " (links are refused). Restore the folder from your backup.")
+            try:
+                kind = os.fstat(descriptor).st_mode
+                if not (stat.S_ISDIR(kind) if directory else stat.S_ISREG(kind)):
+                    stop(path + " has an unexpected type.")
+                os.fchown(descriptor, uid, gid)
+                os.fchmod(descriptor, mode)
+            finally:
+                os.close(descriptor)
 
         os.umask(0o077)
         account = pwd.getpwnam("etebase")
         uid, gid = account.pw_uid, account.pw_gid
 
         # A database exists as soon as PGDATA holds anything, with or without PG_VERSION.
-        existing_database = os.path.isdir("/pg/pgdata") and bool(os.listdir("/pg/pgdata"))
-        if os.path.exists("/pg/pgdata") and not os.path.isdir("/pg/pgdata"):
-            stop("postgres/pgdata is not a directory.")
+        # Anything at that path other than a real folder (a file, any link) is refused.
+        if os.path.lexists("/pg/pgdata") and not stat.S_ISDIR(os.lstat("/pg/pgdata").st_mode):
+            stop("postgres/pgdata is not a folder. Nothing was changed.")
+        existing_database = os.path.lexists("/pg/pgdata") and bool(os.listdir("/pg/pgdata"))
         values = {name: read(name) for name in NAMES}
 
         if existing_database:
@@ -174,14 +195,16 @@ services:
             if len(set(values.values())) != len(NAMES):
                 stop("The generated credentials collided; start the app again.")
 
-        own("/secrets", uid, gid, 0o700)
+        own("/secrets", uid, gid, 0o700, directory=True)
         for name in NAMES:
             own("/secrets/" + name, uid, gid, 0o600)
 
-        for path in ("/data", "/data/media", "/data/static"):
-            os.makedirs(path, exist_ok=True)
-            own(path, uid, gid, 0o700)
-        if os.path.exists("/data/secret.txt"):
+        own("/data", uid, gid, 0o700, directory=True)
+        for path in ("/data/media", "/data/static"):
+            if not os.path.lexists(path):
+                os.mkdir(path, 0o700)
+            own(path, uid, gid, 0o700, directory=True)
+        if os.path.lexists("/data/secret.txt"):
             own("/data/secret.txt", uid, gid, 0o600)
 
         write("/config/etebase-server.ini", "\n".join([
@@ -203,13 +226,13 @@ services:
             "port = 5432",
             "",
         ]), uid, gid, 0o600)
-        own("/config", uid, gid, 0o700)
+        own("/config", uid, gid, 0o700, directory=True)
 
         write("/pgsecret/password", values["database-password"], POSTGRES_UID, POSTGRES_UID, 0o400)
-        own("/pgsecret", POSTGRES_UID, POSTGRES_UID, 0o700)
+        own("/pgsecret", POSTGRES_UID, POSTGRES_UID, 0o700, directory=True)
 
         write("/visible/password.txt", values["owner-password"] + "\n", 0, 0, 0o600)
-        own("/visible", 0, 0, 0o700)
+        own("/visible", 0, 0, 0o700, directory=True)
         print("[init] Ready. The installation password is in "
               "/DATA/AppData/silentsuite/installation-password/password.txt")
     volumes:

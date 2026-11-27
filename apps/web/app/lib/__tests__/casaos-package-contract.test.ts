@@ -144,9 +144,18 @@ describe('CasaOS package credentials', () => {
 
   it('refuses an existing database without a valid credential set, markerless PGDATA included', () => {
     const init = program('silentsuite-init')
-    expect(init).toContain('existing_database = os.path.isdir("/pg/pgdata") and bool(os.listdir("/pg/pgdata"))')
+    expect(init).toContain('if os.path.lexists("/pg/pgdata") and not stat.S_ISDIR(os.lstat("/pg/pgdata").st_mode):')
+    expect(init).toContain('existing_database = os.path.lexists("/pg/pgdata") and bool(os.listdir("/pg/pgdata"))')
     expect(init).toContain('Nothing was changed.')
     expect(init).not.toContain('PG_VERSION")')
+  })
+
+  it('never follows a link as root: no-follow opens, exclusive temporary files, fd-based ownership', () => {
+    const init = program('silentsuite-init')
+    expect(init).toContain('os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW')
+    expect(init).toContain('os.O_RDONLY | os.O_NOFOLLOW')
+    expect(init).not.toMatch(/os\.(chown|chmod)\(/)
+    expect(init).not.toContain('os.makedirs')
   })
 
   it('makes the server validate all three credentials itself and export only two', () => {

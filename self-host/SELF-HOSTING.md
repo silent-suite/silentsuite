@@ -602,7 +602,7 @@ unsure about.
 
 ## CasaOS and ZimaOS
 
-A package for the CasaOS / ZimaOS app store lives in [`casaos/`](casaos/README.md). It runs
+A package for the CasaOS / ZimaOS app store lives in the repository's [`self-host/casaos/` folder](https://github.com/silent-suite/silentsuite/blob/main/self-host/casaos/README.md). It runs
 the web app and the sync server together on one port, makes its own credentials on first
 start, and needs your own HTTPS proxy or tunnel before sign-up works. Its backup is a copy of
 the stopped app's folder, described in that README. The `backup.sh` helper in this guide is for the installer stack only.
