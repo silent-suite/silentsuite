@@ -90,11 +90,11 @@ function readPaymentSessionRecoveryContext(pending: {
 export default function PendingPaymentRecovery({ onReleased }: { onReleased?: () => void } = {}) {
   const completeSignup = useAuthStore((s) => s.completeSignup)
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
-  const etebaseAccountReady = useAuthStore((s) => s.pendingSignup?.etebaseAccountReady === true)
   const finalizePaidSignup = useAuthStore((s) => s.finalizePaidSignup)
   const saveSignupStateForRedirect = useAuthStore((s) => s.saveSignupStateForRedirect)
   const restoreSignupStateFromRedirect = useAuthStore((s) => s.restoreSignupStateFromRedirect)
   const pendingSignup = useAuthStore((s) => s.pendingSignup)
+  const etebaseAccountReady = pendingSignup?.etebaseAccountReady === true
   const [returnTo, setReturnTo] = useState<string | null>(null)
   const [showReturnFallback, setShowReturnFallback] = useState(false)
   const [ownedPayable, setOwnedPayable] = useState<{ identity: string; value: AnonymousPaymentSessionRecovery['continuation'] }>()
