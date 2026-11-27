@@ -60,3 +60,20 @@ test('does not classify generic, credentialed, or path-bearing external links', 
   assert.equal(classifyDocsOutboundEvent('not a url', '/user-guide/getting-started'), undefined)
   assert.equal(classifyDocsOutboundEvent('https://app.silentsuite.io', '/contributing/testing'), undefined)
 })
+
+test('every docs page is a registered analytics path', async () => {
+  const { readdir } = await import('node:fs/promises')
+  const { fileURLToPath } = await import('node:url')
+  const { REGISTERED_DOCS_PATHS } = await import('./public-analytics.mts')
+  const docsRoot = fileURLToPath(new URL('../../', import.meta.url))
+  const pages: string[] = []
+  for (const entry of await readdir(docsRoot, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue
+    // Forward slashes on every platform, so the page maps to its URL path.
+    const relative = `${entry.parentPath.slice(docsRoot.length)}/${entry.name}`.replaceAll('\\', '/').replace(/^\/+/, '')
+    if (relative.split('/').some((part) => part === 'node_modules' || part.startsWith('.'))) continue
+    pages.push(`/${relative}`.replace(/(?:\/index)?\.md$/, '') || '/')
+  }
+  assert.ok(pages.length > 40, 'docs pages were found')
+  assert.deepEqual(pages.filter((path) => !REGISTERED_DOCS_PATHS.has(path)).sort(), [])
+})
