@@ -697,7 +697,13 @@ def test_dashboard_install_task_app_routes_to_android_apps_docs():
     # Source-routing contract only; runtime intent behaviour is not exercised here.
     activity = ACTIVITY.read_text(encoding="utf-8")
 
-    assert "AccountDashboardAction.INSTALL_TASK_APP -> WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)" in activity
+    # The task-app advice is a quiet text link to the "Choosing a Task App" docs section; the
+    # primary button stays hidden for this action and does nothing if pressed.
+    assert "taskAppLink.setOnClickListener { WebViewActivity.openUrl(this, Constants.androidTaskAppDocsUri) }" in activity
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> Unit" in activity
+    constants = (ROOT / "android/app/src/main/java/io/silentsuite/sync/Constants.kt").read_text(encoding="utf-8")
+    assert 'val androidTaskAppDocsUri: Uri = androidAppsDocsUri.buildUpon().fragment("choosing-a-task-app").build()' in constants
+    assert "\n## Choosing a Task App\n" in (ROOT / "apps/docs/user-guide/apps/android.md").read_text(encoding="utf-8")
     assert "AccountDashboardAction.INSTALL_TASK_APP -> installPackage(" not in activity
     assert "AccountDashboardAction.INSTALL_TASK_APP -> R.string.dashboard_install_task_app" in activity
     assert "installPackage(tasksOrgPackage)" in activity

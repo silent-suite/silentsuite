@@ -84,4 +84,6 @@ def test_modern_notification_and_certificate_safety_guards_remain():
 def test_android_installation_documents_new_floor_and_legacy_update_boundary():
     docs = read("apps/docs/user-guide/apps/android.md")
     assert "Android 10" in docs
-    assert "last compatible" in docs.lower()
+    text = " ".join(docs.replace("**", "").split())
+    assert "Devices running Android 9 or older can stay on v0.5.15-beta, the last release that supports them" in text
+    assert "cannot install later updates" in text

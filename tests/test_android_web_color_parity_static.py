@@ -154,9 +154,11 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 229, f"expected 229 Android resource XML files, found {len(files)}"
+    assert len(files) == 231, f"expected 231 Android resource XML files, found {len(files)}"
     assert {
         "drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml",
+        # AppTheme's text colour state lists (disabled rows at 38%).
+        "color/theme_text_primary.xml", "color/theme_text_secondary.xml",
         # The month widget adds 19 XML files; all remain subject to the color rules below.
         "drawable/widget_month_add.xml",
         "drawable/widget_month_background.xml",
@@ -791,6 +793,35 @@ def test_every_android_resource_xml_obeys_the_closed_color_contract():
     assert all(locations == alias_declarations for locations in found_alias_declarations.values()), found_alias_declarations
 
 
+def state_list_roles(name: str) -> set[str]:
+    assert not (RES / f"color-night/{name}.xml").exists(), name
+    items = ET.parse(RES / f"color/{name}.xml").getroot().findall("item")
+    roles = set()
+    for item in items:
+        reference = COLOR_REFERENCE.fullmatch(item.attrib.get(f"{ANDROID_NS}color", ""))
+        assert reference is not None, (name, item.attrib)
+        roles.add(reference.group(1))
+    return roles
+
+
+# Theme state lists and the one semantic role each resolves to, enabled or disabled.
+THEME_STATE_LIST_ROLES = {
+    "theme_text_primary": "semantic_on_surface",
+    "theme_text_secondary": "semantic_on_surface_variant",
+}
+
+
+def test_theme_text_state_lists_keep_their_surface_role_and_only_dim_when_disabled():
+    for name, role in THEME_STATE_LIST_ROLES.items():
+        assert state_list_roles(name) == {role}, name
+        items = ET.parse(RES / f"color/{name}.xml").getroot().findall("item")
+        # The default (last) item is the full-strength role; only the disabled state dims it.
+        assert set(items[-1].attrib) == {f"{ANDROID_NS}color"}, (name, items[-1].attrib)
+        dimmed = items[:-1]
+        assert [item.attrib.get(f"{ANDROID_NS}state_enabled") for item in dimmed] == ["false"], name
+        assert dimmed[0].attrib.get(f"{ANDROID_NS}alpha") == "0.38", name
+
+
 def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_contract():
     day, night = colors("values"), colors("values-night")
     theme_references = {}
@@ -801,8 +832,12 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
         }
         theme_references[qualifier] = references
         for name in references:
-            assert name in day, (qualifier, name, "missing day color")
-            assert name in night, (qualifier, name, "missing night color")
+            # A theme colour may be a state list in res/color as long as every colour it uses has a
+            # day and a night value; the list then resolves correctly in both themes.
+            roles = state_list_roles(name) if (RES / f"color/{name}.xml").exists() else {name}
+            for role in roles:
+                assert role in day, (qualifier, name, role, "missing day color")
+                assert role in night, (qualifier, name, role, "missing night color")
     assert theme_references["values"] == theme_references["values-night"]
 
     for qualifier, declared in (("values", day), ("values-night", night)):
@@ -898,11 +933,8 @@ def test_context_aware_vector_roles_and_tint_consumers_are_exact():
             "menu/collection_item_fragment.xml",
             "menu/activity_journal_item.xml",
         ),
-        "ic_save_light": (
-            "menu/fragment_edit_collection.xml",
-            "menu/activity_create_collection.xml",
-            "menu/activity_edit_collection.xml",
-        ),
+        # The create and edit collection forms use a "Create"/"Save" text action instead.
+        "ic_save_light": ("menu/activity_edit_collection.xml",),
         "ic_share_light": ("menu/activity_debug_info.xml",),
         "ic_sync_light": (
             "menu/activity_account.xml",
@@ -1153,8 +1185,12 @@ def test_legacy_window_action_bars_are_navy_with_white_foreground_in_both_themes
             assert items.get("android:textColorPrimary") == ON_TOP_BAR, (qualifier, items)
             assert items.get("colorControlNormal") == ON_TOP_BAR, (qualifier, items)
         # White belongs to the bar overlay only; content text and icons keep their surface roles.
-        assert app_theme.get("android:textColorPrimary") == "@color/semantic_on_surface"
-        assert app_theme.get("android:textColorSecondary") == "@color/semantic_on_surface_variant"
+        # The state lists only dim disabled rows; enabled text keeps these surface roles
+        # (test_theme_text_state_lists_keep_their_surface_role_and_only_dim_when_disabled).
+        assert app_theme.get("android:textColorPrimary") == "@color/theme_text_primary"
+        assert app_theme.get("android:textColorSecondary") == "@color/theme_text_secondary"
+        assert state_list_roles("theme_text_primary") == {"semantic_on_surface"}
+        assert state_list_roles("theme_text_secondary") == {"semantic_on_surface_variant"}
         assert "colorControlNormal" not in app_theme
         # The About toolbar already uses the approved pair and must stay that way.
         about = resource_styles(qualifier)["toolbar_style"]
