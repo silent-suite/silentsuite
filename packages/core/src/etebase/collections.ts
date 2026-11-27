@@ -358,16 +358,3 @@ export async function deleteItem(
   item.delete();
   await itemManager.batch([item]);
 }
-
-/**
- * Upload a batch of items at once.
- */
-export async function batchUpload(
-  account: Etebase.Account,
-  collection: Etebase.Collection,
-  items: Etebase.Item[],
-): Promise<void> {
-  const collectionManager = account.getCollectionManager();
-  const itemManager = collectionManager.getItemManager(collection);
-  await itemManager.batch(items);
-}
