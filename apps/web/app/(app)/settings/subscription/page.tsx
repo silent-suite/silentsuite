@@ -258,8 +258,8 @@ function PaymentChoiceDialog({
 }) {
   return (
     <ModalDialog
-      title="Continue with silentsuite.io"
-      description="Review the current server-authorized annual payment options before choosing a payment method."
+      title="Choose how to pay"
+      description="Choose a payment method for your annual plan."
       onClose={onClose}
       closeOnEscape={dismissible}
       closeOnBackdrop={dismissible}
@@ -269,7 +269,7 @@ function PaymentChoiceDialog({
         onSuccess={onSuccess}
         onCancel={onClose}
         onDismissibilityChange={onDismissibilityChange}
-        title="Payment options"
+        title={null}
       />
       {/* While a payment may exist, Escape and the backdrop stay disabled, but
           the user can always leave on purpose. Close only unmounts the panel:

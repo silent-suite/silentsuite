@@ -70,7 +70,7 @@ describe('subscription card: open cryptocurrency payment', () => {
     expect(calls.writes()).toHaveLength(0)
 
     fireEvent.click(within(await card()).getByRole('button', { name: 'View payment' }))
-    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const dialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
     expect(await within(dialog).findByText('Payment already in progress')).toBeInTheDocument()
     expect(calls.writes()).toHaveLength(0)
   })

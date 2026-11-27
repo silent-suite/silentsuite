@@ -2203,7 +2203,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
         setProvisionError('Setup or payment has already started. Your selection was not cancelled. Continue or recover the existing setup; do not start another payment.')
       } else if (error instanceof BillingResponseError && error.billingStatus === 400) {
         setSelectionCancellation('verify')
-        setProvisionError('Cancellation could not be verified. Your selection is retained. Verify ownership again using the same signup request, then retry.')
+        setProvisionError('Cancellation could not be checked. Your selection is kept. Verify your email again, then retry.')
       } else {
         setSelectionCancellation('unknown')
         setProvisionError('Cancellation is not confirmed. Your selection is retained. Retry cancellation to check this exact selection before choosing again.')
@@ -2354,14 +2354,14 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   if (paymentRecoveryRequested || (!paymentReceiptReceived && (initialPaymentRecovery || navigation.recovery === 'payment'))) return <PendingPaymentPage onReleased={handleRecoveredPaymentRelease} />
   if (paymentNeedsVerification) return <div className="space-y-4">
     <h1 className="text-xl font-semibold">Verify email to choose a payment method</h1>
-    <p>Payment cancelled. This browser no longer has valid email verification and signed signup terms. Verify your email again to load payment choices.</p>
+    <p>Payment cancelled. Your email verification on this browser has expired. Verify your email again to see payment choices.</p>
     <Button onClick={() => { setPaymentNeedsVerification(false); setStep('account') }}>Verify email again</Button>
   </div>
   if (navigation.recovery) {
     return <div className="mx-auto w-full max-w-md space-y-4">
       <SignupRecoveryWarning />
       <h1 className="text-xl font-semibold">Continue your signup safely</h1>
-      <p role="status">Your password and verification proof were not saved. Refreshing has not repeated account creation or started another payment.</p>
+      <p role="status">Your password and email verification were not saved. Refreshing did not create a second account or start another payment.</p>
       {navigation.recovery === 'review' ? <>
         <p>Verify your email again to continue. If you already chose a trial, it may remain reserved briefly; we will not replace a pending payment.</p>
         <Button onClick={() => navigation.clear()}>Verify email again</Button>
@@ -2389,7 +2389,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
           {selectionCancellation === 'confirm' && <Button variant="outline" disabled={provisioning} onClick={() => {
             if (!operationRef.current) setSelectionCancellation(null)
           }}>Keep current selection</Button>}
-          {selectionCancellation === 'verify' && <Button variant="outline" disabled={provisioning} onClick={handleVerifySelectionOwnership}>Verify ownership again</Button>}
+          {selectionCancellation === 'verify' && <Button variant="outline" disabled={provisioning} onClick={handleVerifySelectionOwnership}>Verify email again</Button>}
           {selectionCancellation !== 'confirm' && <Button onClick={() => { setSelectionCancellation(null); setPlanView('confirm') }}>Continue current selection</Button>}
         </section>}
         {step === 'plan' && !selectionCancellation && planView !== 'confirm' && pendingAnnualClaim && <Button variant="outline" disabled={provisioning} className="mb-4 w-full" onClick={() => { setProvisionError(null); setPlanView('confirm') }}>Return to current selection</Button>}

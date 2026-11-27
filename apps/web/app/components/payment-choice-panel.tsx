@@ -95,7 +95,8 @@ interface PaymentChoicePanelProps {
   onSuccess: () => void | Promise<void>
   onCancel?: () => void
   onDismissibilityChange?: (dismissible: boolean) => void
-  title?: string
+  /** Pass null when the surrounding dialog already shows the heading. */
+  title?: string | null
   successPoll?: () => void | Promise<void>
 }
 function PriceDisplay({ offer }: { offer: AnnualOffer }) {
@@ -748,7 +749,7 @@ export default function PaymentChoicePanel({
       <BitcoinPaymentPanel
         session={bitcoinSession}
         title={`Pay ${formatDisclosureAmount(paymentDisclosure)}/year annual with Bitcoin, Lightning and Monero`}
-        description={`Scan the QR code or copy the payment details to pay ${formatDisclosureAmount(paymentDisclosure)} for ${paymentPlan ? `${annualOfferPlanLabel(paymentPlan)} (${paymentPlan.planId})` : 'this annual payment'}. ${compactAnnualPaymentCopy(paymentDisclosure)}`}
+        description={`Scan the QR code or copy the payment details to pay ${formatDisclosureAmount(paymentDisclosure)} for ${paymentPlan ? annualOfferPlanLabel(paymentPlan) : 'this annual payment'}. ${compactAnnualPaymentCopy(paymentDisclosure)}`}
         settledMessage="Payment settled. Refreshing your subscription..."
         backLabel={loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         backDisabled={cancellationDisabled}
@@ -794,7 +795,7 @@ export default function PaymentChoicePanel({
               <Crown className="h-4 w-4 text-amber-400" />
               <div>
                 <span className="text-sm font-medium text-[rgb(var(--foreground))]">{paymentPlan ? annualOfferPlanLabel(paymentPlan) : 'Annual payment'}</span>
-                <p className="text-xs text-[rgb(var(--muted))]">{paymentPlan ? `Annual card payment · ${paymentPlan.planId}` : 'Annual card payment'}</p>
+                <p className="text-xs text-[rgb(var(--muted))]">Annual card payment</p>
               </div>
             </div>
             <div className="text-right">
@@ -906,7 +907,7 @@ export default function PaymentChoicePanel({
 
   return (
     <div className="space-y-5">
-      <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{title}</h2>
+      {title && <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{title}</h2>}
       {!annualOffer && (
         <p role="status" className="text-sm text-[rgb(var(--muted))]">
           {!optionsLoaded ? 'Loading payment options...' : offerUnavailableMessage}
@@ -917,7 +918,7 @@ export default function PaymentChoicePanel({
         <div className="flex items-center justify-end" data-plan-id={annualOffer.offer.planId}>
           <div className="flex items-center gap-2">
             <Crown className="h-3.5 w-3.5 text-amber-400" />
-            <span className="sr-only">{annualOfferPlanLabel(annualOffer.offer)} ({annualOffer.offer.planId})</span>
+            <span className="sr-only">{annualOfferPlanLabel(annualOffer.offer)}</span>
             <PriceDisplay offer={annualOffer.offer} />
           </div>
         </div>

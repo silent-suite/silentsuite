@@ -401,7 +401,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
     </div>
   }
 
-  if (released) return <div className="space-y-4"><h1 className="text-xl font-semibold">Verify email to choose a payment method</h1><p>Payment cancelled. This browser no longer has valid email verification and signed signup terms. Verify your email again to load payment choices.</p><a href="/signup" className="underline">Verify email again</a></div>
+  if (released) return <div className="space-y-4"><h1 className="text-xl font-semibold">Verify email to choose a payment method</h1><p>Payment cancelled. Your email verification on this browser has expired. Verify your email again to see payment choices.</p><a href="/signup" className="underline">Verify email again</a></div>
 
   if (state === 'vault') {
     return (

@@ -169,7 +169,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     render(<SubscriptionPage />)
 
     expect(await screen.findByRole('button', { name: /choose payment/i })).toBeInTheDocument()
-    expect(screen.getByText(/Review your server-owned annual payment options and get 14 bonus days/)).toBeInTheDocument()
+    expect(screen.getByText(/Choose an annual payment option and get 14 bonus days/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /cancel subscription/i })).not.toBeInTheDocument()
   })
 
@@ -192,7 +192,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     opener.focus()
     fireEvent.click(opener)
 
-    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const dialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(dialog).toHaveAttribute('aria-describedby')
     expect(screen.getByText('Plan').closest('[aria-hidden="true"]')).toHaveAttribute('inert')
@@ -203,14 +203,14 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(inert.blurred).not.toHaveLength(0)
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument())
     expect(document.activeElement).toBe(opener)
 
     fireEvent.click(opener)
-    const reopenedDialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const reopenedDialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
     await screen.findByRole('button', { name: /continue to card payment/i })
     fireEvent.click(reopenedDialog.previousElementSibling!)
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument())
   })
 
   it('keeps no-card payment authority visible on Escape/backdrop and uses the cancellation endpoint for active or unverified flows', async () => {
@@ -229,19 +229,19 @@ describe('SubscriptionPage billing recovery CTAs', () => {
 
     render(<SubscriptionPage />)
     fireEvent.click(await screen.findByRole('button', { name: /choose payment/i }))
-    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const dialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
     await screen.findByText(/card payment in progress/i)
 
     fireEvent.keyDown(document, { key: 'Escape' })
     fireEvent.click(dialog.previousElementSibling!)
-    expect(screen.getByRole('dialog', { name: /continue with silentsuite\.io/i })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /choose how to pay/i })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel card payment' }))
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => (
       url === 'https://billing.test/subscription/payment-flows/cancel'
         && (init as RequestInit | undefined)?.method === 'POST'
     ))).toBe(true))
-    expect(screen.getByRole('dialog', { name: /continue with silentsuite\.io/i })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /choose how to pay/i })).toBeInTheDocument()
   })
 
   it('preserves no-card CTA payment success confirmation in the shared chooser', async () => {
@@ -263,7 +263,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     fireEvent.click(await screen.findByRole('button', { name: /continue to card payment/i }))
     fireEvent.click(await screen.findByRole('button', { name: /mock payment success/i }))
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument())
     expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
   })
 
@@ -298,7 +298,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
       url === 'https://billing.test/subscription/payment-flows/cancel'
         && (init as RequestInit | undefined)?.method === 'POST'
     ))).toBe(true))
-    expect(screen.getByRole('dialog', { name: /continue with silentsuite\.io/i })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /choose how to pay/i })).toBeInTheDocument()
     expect(await screen.findByText('Could not cancel the pending payment flow.')).toBeInTheDocument()
     expect(screen.queryByText('Cancellation could not be confirmed.')).not.toBeInTheDocument()
   })
@@ -397,19 +397,19 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     render(<SubscriptionPage />)
     const opener = await screen.findByRole('button', { name: /reactivate/i })
     fireEvent.click(opener)
-    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const dialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
     await within(dialog).findByRole('button', { name: /retry payment status/i })
     expect(within(dialog).queryByRole('button', { name: /continue to card payment/i })).not.toBeInTheDocument()
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument())
     expect(writes()).toHaveLength(0)
 
     // Reopening reads the payment status again before any payment can start.
     const readsBeforeReopen = statusReads()
     currentFlowOk = true
     fireEvent.click(opener)
-    const reopened = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const reopened = await screen.findByRole('dialog', { name: /choose how to pay/i })
     await within(reopened).findByRole('button', { name: /continue to card payment/i })
     expect(statusReads()).toBeGreaterThan(readsBeforeReopen)
     expect(writes()).toHaveLength(0)
@@ -424,15 +424,15 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     render(<SubscriptionPage />)
     const opener = await screen.findByRole('button', { name: /reactivate/i })
     fireEvent.click(opener)
-    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const dialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
     await within(dialog).findByText(/card payment in progress/i)
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument())
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/payment-flows/cancel'))).toBe(false)
 
     fireEvent.click(opener)
-    const reopened = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const reopened = await screen.findByRole('dialog', { name: /choose how to pay/i })
     expect(await within(reopened).findByText(/card payment in progress/i)).toBeInTheDocument()
     expect(within(reopened).queryByRole('button', { name: /continue to card payment/i })).not.toBeInTheDocument()
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/payment-flows/cancel'))).toBe(false)
@@ -445,7 +445,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     })
     render(<SubscriptionPage />)
     fireEvent.click(await screen.findByRole('button', { name: /reactivate/i }))
-    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const dialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
     await within(dialog).findByRole('button', { name: /continue to card payment/i })
     await waitFor(() => expect(within(dialog).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument())
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
@@ -461,7 +461,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     const opener = await screen.findByRole('button', { name: /reactivate/i })
     opener.focus()
     fireEvent.click(opener)
-    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const dialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(dialog).toHaveAttribute('aria-describedby')
     expect(dialog.parentElement?.previousElementSibling).toHaveAttribute('aria-hidden', 'true')
@@ -469,14 +469,14 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     await waitFor(() => expect(document.activeElement).toHaveTextContent(/continue to card payment/i))
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument())
     expect(document.activeElement).toBe(opener)
 
     fireEvent.click(opener)
-    const reopenedDialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    const reopenedDialog = await screen.findByRole('dialog', { name: /choose how to pay/i })
     await screen.findByRole('button', { name: /continue to card payment/i })
     fireEvent.click(reopenedDialog.previousElementSibling!)
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument())
   })
 
   it('shows visible shared payment-flow errors and recovers the loading state', async () => {
@@ -1360,7 +1360,7 @@ describe('SubscriptionPage S2b confirmation ownership and store refresh', () => 
     fireEvent.click(review)
     await settle()
 
-    expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: /choose how to pay/i })).not.toBeInTheDocument()
     expect(vi.mocked(fetch).mock.calls.length).toBe(before)
     expect(calls.gets).toBe(4)
   })

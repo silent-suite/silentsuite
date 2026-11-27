@@ -936,7 +936,7 @@ describe('email-link seven-day no-card continuation', () => {
         return new Response(JSON.stringify({ contractVersion: 2, requestId,
           checkoutIntentJti: 'a2c4f872-01b7-4176-8325-522486b20cae', state: 'released' }))
       }
-      if (String(input).endsWith('/request')) {
+      if (String(input).endsWith('/signup-email-verifications/v2')) {
         expect(JSON.parse(String(init?.body)).requestId).toBe(requestId)
         return new Response('{}', { status: 202 })
       }
@@ -950,7 +950,7 @@ describe('email-link seven-day no-card continuation', () => {
       return originalFetch(input, init)
     }))
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Verify ownership again' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Verify email again' }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('same signup'))
     const saved = JSON.parse(localStorage.getItem('silentsuite-signup-email-proof')!)
     expect(Object.keys(saved)).toEqual([requestId])
@@ -994,7 +994,7 @@ describe('email-link seven-day no-card continuation', () => {
       expect(screen.queryByRole('button', { name: 'Cancel this selection and choose again' })).not.toBeInTheDocument()
     } else if (failure === 400) {
       vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 202 })))
-      fireEvent.click(screen.getByRole('button', { name: 'Verify ownership again' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Verify email again' }))
       await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('same signup'))
       expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).requestId).toBe(requestId)
       expect(screen.getByRole('button', { name: 'Retry cancellation' })).toBeInTheDocument()

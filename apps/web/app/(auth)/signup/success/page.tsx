@@ -195,9 +195,9 @@ function SignupSuccessInner() {
           Payment confirmation required
         </h2>
         <p className="text-sm leading-relaxed text-[rgb(var(--muted))]">
-          This return does not confirm payment. Open payment recovery to check the original
-          signup. If recovery details are missing or expired, use the original signup tab
-          or contact support. Do not start another payment.
+          This page can't tell whether your payment went through. Open payment recovery to
+          check your signup. If that doesn't work, go back to the tab where you signed up or
+          contact support. Don't start another payment.
         </p>
       </div>
       <Button onClick={() => router.push('/signup?recovery=payment')} className="w-full">
