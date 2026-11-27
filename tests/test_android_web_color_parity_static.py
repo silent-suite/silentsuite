@@ -914,7 +914,7 @@ def test_context_aware_vector_roles_and_tint_consumers_are_exact():
         "ic_people_light": ("res/layout/activity_account.xml", "res/menu/activity_accounts_drawer.xml"),
         "ic_task_light": ("res/layout/activity_account.xml",),
         "ic_file_white": ("java/io/silentsuite/sync/ui/importlocal/ImportActivity.kt",),
-        "ic_menu_light": ("java/io/silentsuite/sync/ui/AccountActivity.kt",),
+        "ic_more_vert_light": ("java/io/silentsuite/sync/ui/AccountActivity.kt",),
     }
 
     for icon, consumers in system_bar_icons.items():

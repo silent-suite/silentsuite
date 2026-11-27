@@ -294,18 +294,18 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         })
 
-        val icMenu = ContextCompat.getDrawable(this, R.drawable.ic_menu_light)
+        val icOverflow = ContextCompat.getDrawable(this, R.drawable.ic_more_vert_light)
 
         // CardDAV toolbar
         val tbCardDAV = findViewById<View>(R.id.carddav_menu) as Toolbar
-        tbCardDAV.overflowIcon = icMenu
+        tbCardDAV.overflowIcon = icOverflow
         tbCardDAV.inflateMenu(R.menu.carddav_actions)
         tbCardDAV.setOnMenuItemClickListener(this)
         tbCardDAV.setTitle(R.string.settings_carddav)
 
         // CalDAV toolbar
         val tbCalDAV = findViewById<View>(R.id.caldav_menu) as Toolbar
-        tbCalDAV.overflowIcon = icMenu
+        tbCalDAV.overflowIcon = icOverflow
         tbCalDAV.inflateMenu(R.menu.caldav_actions)
         tbCalDAV.setOnMenuItemClickListener(this)
         tbCalDAV.setTitle(R.string.settings_caldav)
@@ -313,14 +313,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         // TaskDAV toolbar
         val tbTaskDAV = findViewById<View>(R.id.taskdav_menu) as Toolbar
-        tbTaskDAV.overflowIcon = icMenu
+        tbTaskDAV.overflowIcon = icOverflow
         tbTaskDAV.inflateMenu(R.menu.taskdav_actions)
         tbTaskDAV.setOnMenuItemClickListener(this)
         tbTaskDAV.setTitle(R.string.settings_taskdav)
 
         // Notes toolbar (experimental; the card stays hidden until the account opts in)
         val tbNotes = findViewById<View>(R.id.notes_menu) as Toolbar
-        tbNotes.overflowIcon = icMenu
+        tbNotes.overflowIcon = icOverflow
         tbNotes.inflateMenu(R.menu.notes_actions)
         tbNotes.setOnMenuItemClickListener(this)
         tbNotes.setTitle(R.string.settings_notes)
