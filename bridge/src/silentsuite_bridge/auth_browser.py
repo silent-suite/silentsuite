@@ -25,6 +25,7 @@ import webbrowser
 from dataclasses import dataclass
 
 from etebase import Account, Client
+from etebase import etebase_python as _etebase_sdk
 
 from . import config
 from .accounts import store_authenticated_account
@@ -45,11 +46,39 @@ class AuthenticationError(Exception):
     """User-safe authentication failure for bridge login flows."""
 
 
+WRONG_CREDENTIALS_MESSAGE = "Wrong email or password."
+UNREACHABLE_MESSAGE = "Can't reach the server. Check your internet connection and try again."
+NOT_SILENTSUITE_MESSAGE = "This doesn't look like a SilentSuite server. Check the server URL."
+
+# etebase 0.32 raises one exception type, ``etebase_python.Error``, and keeps
+# only a message: the server's ``detail``, or the SDK's fallback text. A 401 from
+# the login endpoints carries one of these details (an unknown account and a
+# wrong password stay indistinguishable); "Unauthorized" is the SDK's text for
+# a 401 without a readable detail.
+_WRONG_CREDENTIALS_DETAILS = frozenset(
+    {"User not found", "Wrong password for user.", "Unauthorized"}
+)
+# Connection, DNS, TLS and timeout failures carry reqwest's error text, which
+# starts with one of these. The two exact texts are the SDK's fallback for a
+# 5xx (gateway or server down) without a readable detail.
+_UNREACHABLE_PREFIXES = ("error sending request", "request or response body error")
+_UNREACHABLE_DETAILS = frozenset({"Temporary server error", "Server error"})
+
+
 def _auth_error_message(exc):
-    error_text = str(exc)
-    if any(marker in error_text for marker in ("401", "Unauthorized", "404", "Not Found")):
-        return "Invalid email or password."
-    return "Authentication failed. Check the server URL and try again."
+    """Map a login failure to one of three user-facing messages.
+
+    Anything that is neither refused credentials nor a network or server outage
+    (a 404, a redirect, a non-msgpack reply, an invalid URL) means the URL does
+    not point at a SilentSuite server.
+    """
+    if isinstance(exc, _etebase_sdk.Error):
+        error_text = str(exc)
+        if error_text in _WRONG_CREDENTIALS_DETAILS:
+            return WRONG_CREDENTIALS_MESSAGE
+        if error_text in _UNREACHABLE_DETAILS or error_text.startswith(_UNREACHABLE_PREFIXES):
+            return UNREACHABLE_MESSAGE
+    return NOT_SILENTSUITE_MESSAGE
 
 
 def authenticate_and_store_account(email, password, server_url=None):
@@ -774,7 +803,7 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                 )
                 self._json_response(401, {
                     "success": False,
-                    "error": "Invalid email or password.",
+                    "error": str(exc),
                 })
                 return
             except Exception as exc:
