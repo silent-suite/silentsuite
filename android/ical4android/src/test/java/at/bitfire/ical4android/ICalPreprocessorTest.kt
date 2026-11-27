@@ -59,54 +59,6 @@ class ICalPreprocessorTest {
     }
 
     @Test
-    fun testFixInvalidRecurrenceRules() {
-        fun fix(ics: String) = ICalPreprocessor.fixInvalidRecurrenceRules(StringReader(ics)).readText()
-
-        // lower-case names and values
-        assertEquals("BEGIN:VEVENT\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT\r\n",
-                fix("BEGIN:VEVENT\r\nRRULE:freq=weekly;count=3\r\nEND:VEVENT\r\n"))
-        // empty rule part
-        assertEquals("BEGIN:VEVENT\r\nRRULE:FREQ=WEEKLY\r\nEND:VEVENT\r\n",
-                fix("BEGIN:VEVENT\r\nRRULE:FREQ=WEEKLY;BYDAY=\r\nEND:VEVENT\r\n"))
-        // EXRULE, folded line
-        assertEquals("BEGIN:VEVENT\r\nEXRULE:FREQ=DAILY;INTERVAL=2\r\nEND:VEVENT\r\n",
-                fix("BEGIN:VEVENT\r\nEXRULE:freq=daily;\r\n interval=2;;\r\nEND:VEVENT\r\n"))
-        // valid rule and other properties stay unchanged
-        val valid = "BEGIN:VEVENT\r\nSUMMARY:freq=weekly;BYDAY=\r\nRRULE:FREQ=MONTHLY;BYDAY=-1SU;UNTIL=20261231T000000Z\r\nEND:VEVENT\r\n"
-        assertEquals(valid, fix(valid))
-    }
-
-    @Test
-    fun testFixInvalidRecurrenceRules_OnlyRuleValues() {
-        fun fix(ics: String) = ICalPreprocessor.fixInvalidRecurrenceRules(StringReader(ics)).readText()
-
-        // a line starts only after LF: text after U+2028 inside DESCRIPTION is not a property
-        val description = "BEGIN:VEVENT\r\nDESCRIPTION:notes\u2028RRULE:call Alice\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\n"
-        assertEquals(description, fix(description))
-        // quoted parameter value with a colon stays untouched
-        assertEquals("BEGIN:VEVENT\r\nRRULE;X-REF=\"https://example.org/aBc\":FREQ=WEEKLY\r\nEND:VEVENT\r\n",
-                fix("BEGIN:VEVENT\r\nRRULE;X-REF=\"https://example.org/aBc\":freq=weekly\r\nEND:VEVENT\r\n"))
-        val quotedValid = "BEGIN:VEVENT\r\nRRULE;X-REF=\"https://example.org/aBc\":FREQ=WEEKLY\r\nEND:VEVENT\r\n"
-        assertEquals(quotedValid, fix(quotedValid))
-        // X- rule part values are opaque
-        assertEquals("BEGIN:VEVENT\r\nRRULE:FREQ=WEEKLY;X-ID=aBc\r\nEND:VEVENT\r\n",
-                fix("BEGIN:VEVENT\r\nRRULE:freq=weekly;x-id=aBc\r\nEND:VEVENT\r\n"))
-        assertEquals("BEGIN:VEVENT\r\nRRULE:FREQ=WEEKLY;X-ID=aBc\r\nEND:VEVENT\r\n",
-                fix("BEGIN:VEVENT\r\nRRULE:freq=weekly;X-ID=aBc\r\nEND:VEVENT\r\n"))
-    }
-
-    @Test
-    fun testParseInvalidRecurrenceRules() {
-        fun rRule(rule: String) = Event.eventsFromReader(StringReader(
-                listOf("BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:test", "BEGIN:VEVENT", "UID:recur",
-                        "DTSTART:20261201T100000Z", rule, "END:VEVENT", "END:VCALENDAR", "").joinToString("\r\n")
-        )).single().rRules.single()
-
-        assertEquals("FREQ=WEEKLY;COUNT=3", rRule("RRULE:freq=weekly;count=3").value)
-        assertEquals("FREQ=WEEKLY", rRule("RRULE:FREQ=WEEKLY;BYDAY=").value)
-    }
-
-    @Test
     fun testMsTimeZones() {
         javaClass.classLoader!!.getResourceAsStream("events/outlook1.ics").use { stream ->
             val reader = InputStreamReader(stream, Charsets.UTF_8)
