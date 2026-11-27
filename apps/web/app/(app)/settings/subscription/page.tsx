@@ -270,6 +270,15 @@ function PaymentChoiceDialog({
         onDismissibilityChange={onDismissibilityChange}
         title="Payment options"
       />
+      {/* While a payment may exist, Escape and the backdrop stay disabled, but
+          the user can always leave on purpose. Close only unmounts the panel:
+          it cancels and starts nothing, and reopening mounts a fresh panel that
+          re-checks the current payment before any new payment can start. */}
+      {!dismissible && (
+        <Button type="button" variant="ghost" size="sm" onClick={onClose} className="mt-3 w-full max-md:min-h-[44px]">
+          Close
+        </Button>
+      )}
     </ModalDialog>
   )
 }

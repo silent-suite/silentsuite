@@ -376,6 +376,77 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(document.activeElement).toBe(opener)
   })
 
+  it('closes the dialog while payment status is unresolved without cancelling anything, and re-checks status on reopen', async () => {
+    mockSubscription({
+      status: 'cancelled',
+      capabilities: { ...baseSubscription.capabilities, canReactivate: true },
+    })
+    let currentFlowOk = false
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (isCurrentFlow(String(url)) && !currentFlowOk) return { ok: false, status: 503, json: async () => ({}) } as Response
+      return baseFetch(url, init)
+    })
+    const writes = () => vi.mocked(fetch).mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method && (init as RequestInit).method !== 'GET')
+    const statusReads = () => vi.mocked(fetch).mock.calls.filter(([url]) => isCurrentFlow(String(url))).length
+
+    render(<SubscriptionPage />)
+    const opener = await screen.findByRole('button', { name: /reactivate/i })
+    fireEvent.click(opener)
+    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    await within(dialog).findByRole('button', { name: /retry payment status/i })
+    expect(within(dialog).queryByRole('button', { name: /continue to card payment/i })).not.toBeInTheDocument()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument())
+    expect(writes()).toHaveLength(0)
+
+    // Reopening reads the payment status again before any payment can start.
+    const readsBeforeReopen = statusReads()
+    currentFlowOk = true
+    fireEvent.click(opener)
+    const reopened = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    await within(reopened).findByRole('button', { name: /continue to card payment/i })
+    expect(statusReads()).toBeGreaterThan(readsBeforeReopen)
+    expect(writes()).toHaveLength(0)
+  })
+
+  it('closes the dialog over a payment in progress without cancelling it, and shows it again on reopen', async () => {
+    mockSubscription({
+      status: 'cancelled',
+      capabilities: { ...baseSubscription.capabilities, canReactivate: true },
+    }, pendingStripeFlow)
+
+    render(<SubscriptionPage />)
+    const opener = await screen.findByRole('button', { name: /reactivate/i })
+    fireEvent.click(opener)
+    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    await within(dialog).findByText(/card payment in progress/i)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument())
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/payment-flows/cancel'))).toBe(false)
+
+    fireEvent.click(opener)
+    const reopened = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    expect(await within(reopened).findByText(/card payment in progress/i)).toBeInTheDocument()
+    expect(within(reopened).queryByRole('button', { name: /continue to card payment/i })).not.toBeInTheDocument()
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/payment-flows/cancel'))).toBe(false)
+  })
+
+  it('shows no extra Close once Billing has verified there is no payment in progress', async () => {
+    mockSubscription({
+      status: 'cancelled',
+      capabilities: { ...baseSubscription.capabilities, canReactivate: true },
+    })
+    render(<SubscriptionPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /reactivate/i }))
+    const dialog = await screen.findByRole('dialog', { name: /continue with silentsuite\.io/i })
+    await within(dialog).findByRole('button', { name: /continue to card payment/i })
+    await waitFor(() => expect(within(dialog).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument())
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+  })
+
   it('exposes the payment choice overlay as an isolated labelled modal', async () => {
     mockSubscription({
       status: 'cancelled',
