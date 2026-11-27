@@ -23,6 +23,19 @@ describe('readableTextColor', () => {
     expect(readableTextColor('teal')).toBe(LIGHT_TEXT)
   })
 
+  it('keeps white text on a translucent chip over the dark surface (review fix: WEB-07)', () => {
+    const dark = tokens('.dark')
+    expect(readableTextColor('#ffffff00')).toBe(LIGHT_TEXT)
+    expect(readableTextColor('#fff0')).toBe(LIGHT_TEXT)
+    expect(readableTextColor('#ffffff80')).toBe(LIGHT_TEXT)
+    // A transparent chip shows the surface behind it, where white text stays readable.
+    for (const bg of ['background', 'surface']) {
+      expect(contrastRatio(readableTextColor('#ffffff00'), dark[bg]!), `text on ${bg}`).toBeGreaterThanOrEqual(4.5)
+    }
+    // A nearly opaque colour still decides by itself.
+    expect(readableTextColor('#ffffffee')).toBe(DARK_TEXT)
+  })
+
   it('matches WCAG reference ratios', () => {
     expect(contrastRatio('#ffffff', '#000000')).toBeCloseTo(21, 5)
     expect(contrastRatio('#ffffff', '#10b981')).toBeCloseTo(2.54, 2)

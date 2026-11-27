@@ -4,12 +4,25 @@
 export const LIGHT_TEXT = '#ffffff'
 export const DARK_TEXT = '#0a1018'
 
-function parseHex(color: string): [number, number, number] | null {
+// Below this alpha the chip mostly shows the surface behind it, which this static choice can't see.
+const OPAQUE_ENOUGH = 0.9
+
+function expandHex(color: string): string | null {
   const match = /^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(color.trim())
   if (!match) return null
-  let hex = match[1]!
-  if (hex.length <= 4) hex = hex.split('').map((digit) => digit + digit).join('')
+  const hex = match[1]!
+  return hex.length <= 4 ? hex.split('').map((digit) => digit + digit).join('') : hex
+}
+
+function parseHex(color: string): [number, number, number] | null {
+  const hex = expandHex(color)
+  if (!hex) return null
   return [0, 2, 4].map((index) => Number.parseInt(hex.slice(index, index + 2), 16)) as [number, number, number]
+}
+
+function alphaOf(color: string): number {
+  const hex = expandHex(color)
+  return hex && hex.length === 8 ? Number.parseInt(hex.slice(6), 16) / 255 : 1
 }
 
 function relativeLuminance([red, green, blue]: [number, number, number]): number {
@@ -28,8 +41,13 @@ export function contrastRatio(foreground: string, background: string): number | 
   return (light! + 0.05) / (dark! + 0.05)
 }
 
-/** Alpha in #rgba/#rrggbbaa is ignored. Unparseable colours keep white text. */
+/**
+ * Unparseable colours keep white text, and so do translucent ones (alpha below 0.9): the chip then
+ * shows mostly the theme surface behind it, so its own colour can't decide (a synced #ffffff00
+ * would otherwise get navy text on a transparent chip over a navy page).
+ */
 export function readableTextColor(background: string): typeof LIGHT_TEXT | typeof DARK_TEXT {
+  if (alphaOf(background) < OPAQUE_ENOUGH) return LIGHT_TEXT
   const light = contrastRatio(LIGHT_TEXT, background)
   const dark = contrastRatio(DARK_TEXT, background)
   if (light === null || dark === null) return LIGHT_TEXT
