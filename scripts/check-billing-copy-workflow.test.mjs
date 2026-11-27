@@ -11,7 +11,7 @@ test('public CI invokes the non-noop annual billing copy guard', () => {
 
 test('Web and Docs preview/deploy workflows enforce the root guard and preview filters cover its inputs', () => {
   const root = new URL('../', import.meta.url)
-  for (const name of ['preview-web.yml', 'deploy-web.yml', 'preview-docs.yml', 'deploy-docs.yml']) {
+  for (const name of ['preview-web.yml', 'deploy-web-standalone.yml', 'preview-docs.yml', 'deploy-docs-standalone.yml']) {
     const workflow = readFileSync(new URL(`.github/workflows/${name}`, root), 'utf8')
     assert.match(workflow, /pnpm run check:billing-copy/, `${name} must run the root copy guard`)
   }
