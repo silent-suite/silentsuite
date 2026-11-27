@@ -58,7 +58,20 @@ jobs:
           git -C "$RUNNER_TEMP/package_linter" fetch -q --depth 1 https://github.com/YunoHost/package_linter "$PACKAGE_LINTER_SHA"
           git -C "$RUNNER_TEMP/package_linter" checkout -q FETCH_HEAD
           test "$(git -C "$RUNNER_TEMP/package_linter" rev-parse HEAD)" = "$PACKAGE_LINTER_SHA"
-          python3 "$RUNNER_TEMP/package_linter/package_linter.py" "$STAGED"
+          # A package that is not listed yet fails exactly two catalogue tests; anything else fails CI.
+          python3 "$RUNNER_TEMP/package_linter/package_linter.py" --json "$STAGED" > "$RUNNER_TEMP/lint.json" || true
+          python3 - "$RUNNER_TEMP/lint.json" <<'PY'
+          import json, sys
+          text = open(sys.argv[1]).read()
+          report = json.loads(text[text.index("{"):])
+          for level in ("critical", "error", "warning", "info"):
+              for name in report.get(level, []):
+                  print(f"{level}: {name}")
+          expected = {"is_in_catalog", "state_is_working"}
+          blocking = [n for n in report.get("critical", []) + report.get("error", [])
+                      if n.rsplit(".", 1)[-1] not in expected]
+          sys.exit(1 if blocking else 0)
+          PY
 
       - name: Shellcheck
         run: |
@@ -217,7 +230,7 @@ jobs:
           mirror="$RUNNER_TEMP/package_linter_mirror.git"
           git init -q --bare "$mirror"
           git init -q "$pc/package_linter"
-          git -C "$pc/package_linter" fetch -q --depth 1 https://github.com/YunoHost/package_linter "$PACKAGE_LINTER_SHA"
+          git -C "$pc/package_linter" fetch -q https://github.com/YunoHost/package_linter "$PACKAGE_LINTER_SHA"
           git -C "$pc/package_linter" checkout -q FETCH_HEAD
           git -C "$pc/package_linter" push -q "$mirror" "HEAD:refs/heads/main"
           git -C "$pc/package_linter" remote add origin "$mirror"

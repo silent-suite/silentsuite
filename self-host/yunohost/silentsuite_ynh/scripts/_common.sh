@@ -48,19 +48,25 @@ _silentsuite_fetch_images() {
     install -d -m 0710 -o root -g "$fetch_user" "$fetch_root"
     install -d -m 0700 -o "$fetch_user" -g "$fetch_user" "$fetch_dir"
 
+    # A file, not an inline script: systemd expands $ references on the command line.
+    cat > "$fetch_root/fetch.sh" <<'FETCH'
+set -eu
+cd "$HOME"
+for pair in "$@"; do
+    name=${pair%%=*}
+    skopeo copy --quiet --retry-times 3 --preserve-digests "docker://${pair#*=}" "oci:oci-$name:img"
+    umoci raw unpack --rootless --image "oci-$name:img" "$name"
+    rm -rf "oci-$name"
+done
+FETCH
+    chmod 644 "$fetch_root/fetch.sh"
+
     if ! systemd-run --wait --pipe --quiet --collect --unit="silentsuite-fetch" \
         -p User="$fetch_user" -p Group="$fetch_user" \
         -p PrivateTmp=yes -p ProtectSystem=strict -p ProtectHome=yes -p NoNewPrivileges=yes \
         -p ReadWritePaths="$fetch_dir" -p Environment=HOME="$fetch_dir" \
-        /bin/sh -euc '
-            cd "$HOME"
-            for pair in "$@"; do
-                name=${pair%%=*}
-                skopeo copy --quiet --retry-times 3 --preserve-digests "docker://${pair#*=}" "oci:oci-$name:img"
-                umoci raw unpack --rootless --image "oci-$name:img" "$name"
-                rm -rf "oci-$name"
-            done
-        ' sh "server=$(_silentsuite_image_ref server)" "web=$(_silentsuite_image_ref web)"; then
+        /bin/sh "$fetch_root/fetch.sh" \
+        "server=$(_silentsuite_image_ref server)" "web=$(_silentsuite_image_ref web)"; then
         _silentsuite_cleanup_fetch
         ynh_die "Could not fetch and verify the SilentSuite images"
     fi
