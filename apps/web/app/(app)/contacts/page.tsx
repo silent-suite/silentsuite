@@ -56,10 +56,25 @@ function nameColor(name: string): string {
   return colors[Math.abs(hash) % colors.length]!
 }
 
+// Family name, then given name, then display name, so "Dr. Ada Lovelace" files under L.
+// A contact without a family name files under its given name, or else its display name.
 function sortContacts(contacts: Contact[]): Contact[] {
-  return [...contacts].sort((a, b) =>
-    a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }),
-  )
+  const keys = (c: Contact) => {
+    const family = c.name.family.trim()
+    const given = c.name.given.trim()
+    const display = c.displayName.trim()
+    return [family || given || display, family ? given : '', display]
+  }
+  const compare = (x: string, y: string) => x.localeCompare(y, undefined, { sensitivity: 'base' })
+  return [...contacts].sort((a, b) => {
+    const ka = keys(a)
+    const kb = keys(b)
+    for (let i = 0; i < ka.length; i++) {
+      const order = compare(ka[i]!, kb[i]!)
+      if (order !== 0) return order
+    }
+    return 0
+  })
 }
 
 const INPUT_CLASS =
@@ -213,7 +228,7 @@ function ContactListItem({
       <button type="button" onClick={onSelect} className="flex min-h-11 min-w-0 flex-1 items-center gap-3 text-left">
         <ContactAvatar contact={contact} size="sm" />
         <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-[rgb(var(--foreground))]">
+        <div className="line-clamp-2 break-words text-sm font-medium text-[rgb(var(--foreground))]">
           {contact.displayName}
         </div>
         <div className="truncate text-xs text-[rgb(var(--muted))]">
@@ -1383,7 +1398,7 @@ export default function ContactsPage() {
         <div className="flex flex-1 gap-4 overflow-hidden">
           {/* Contact list */}
           <div
-            className={`flex-1 overflow-y-auto space-y-0.5 md:max-w-xs md:flex-none md:border-r md:border-[rgb(var(--border))] md:pr-4 ${
+            className={`flex-1 overflow-y-auto space-y-0.5 md:max-w-xs xl:max-w-sm md:flex-none md:border-r md:border-[rgb(var(--border))] md:pr-4 ${
               selectedContact ? 'hidden md:block' : ''
             }`}
           >
