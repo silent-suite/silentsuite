@@ -116,12 +116,6 @@ importers:
       '@stripe/stripe-js':
         specifier: ^8.11.0
         version: 8.11.0
-      class-variance-authority:
-        specifier: ^0.7.1
-        version: 0.7.1
-      clsx:
-        specifier: ^2.1.1
-        version: 2.1.1
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
@@ -155,9 +149,6 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
-      tailwind-merge:
-        specifier: ^2.3.0
-        version: 2.6.1
       temporal-polyfill:
         specifier: ^0.3.2
         version: 0.3.2
