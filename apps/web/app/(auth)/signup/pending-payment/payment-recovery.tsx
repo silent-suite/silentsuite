@@ -350,7 +350,8 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
       setState('vault')
       return
     }
-    await createEtebaseAccount(restoredEmail, data.password)
+    // The restored checkpoint's server, as on the Stripe return page.
+    await createEtebaseAccount(restoredEmail, data.password, useAuthStore.getState().pendingSignup?.serverUrl)
     await finalizePaidSignup()
     setState('vault')
   }

@@ -68,7 +68,7 @@ function tooManyCancels(body: unknown, retryAfter: string) {
 }
 vi.mock('@/app/stores/use-etebase-store', () => ({ normalizeServerUrl: (value: string) => value }))
 vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
-vi.mock('@/app/lib/self-hosted', () => ({ isSelfHosted: false, isCustomServer: () => false }))
+vi.mock('@/app/lib/self-hosted', () => ({ isSelfHosted: false, isCustomServer: (url?: string) => url === 'https://sync.example.test' }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/app/components/stripe-payment-form', () => ({ default: ({ submitLabel, mode, onSuccess }: { submitLabel: string; mode: string; onSuccess: () => void }) => <button data-testid="card-submit" data-mode={mode} onClick={onSuccess}>{submitLabel}</button> }))
 const trackInPageCheckoutReturned = vi.hoisted(() => vi.fn())
@@ -754,14 +754,46 @@ describe('email-link seven-day no-card continuation', () => {
       expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
     })
 
-    it('a hosted signup refusal shows the re-verify screen and starts no payment', async () => {
-      authState.createEtebaseAccount.mockRejectedValueOnce(Object.assign(new Error('refused'), { name: 'HostedSignupRefusedError' }))
+    const refusal = () => Object.assign(new Error('refused'), { name: 'HostedSignupRefusedError' })
+
+    it('a hosted signup refusal shows the re-verify screen, starts no payment and keeps no password', async () => {
+      authState.createEtebaseAccount.mockRejectedValueOnce(refusal())
       await reachPlanScreen()
       await choosePaymentMethod('btcpay')
       expect(await screen.findByRole('heading', { name: 'Verify your email again' })).toBeVisible()
+      expect(screen.getByText(/so no account was created and no payment was started/)).toBeVisible()
       expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
       fireEvent.click(screen.getByRole('button', { name: 'Verify email again' }))
-      expect(await screen.findByLabelText(/^email$/i)).toBeInTheDocument()
+      expect(await screen.findByLabelText(/^email$/i)).toHaveValue('expiry@example.test')
+      // Only this refused attempt ran, so nothing needs recovery.
+      expect(phase()).not.toBe('setup')
+      // A custom server chosen now starts from empty password fields.
+      fireEvent.change(screen.getByPlaceholderText('https://sync.example.com'), { target: { value: 'https://sync.example.test' } })
+      expect(await screen.findByLabelText(/^password$/i)).toHaveValue('')
+      expect(screen.getByLabelText(/^confirm password$/i)).toHaveValue('')
+    })
+
+    it('a refusal after a lost account response keeps that uncertainty through re-verification', async () => {
+      authState.createEtebaseAccount
+        .mockRejectedValueOnce(new Error('Unable to reach the server. Please check your connection and try again.'))
+        .mockRejectedValueOnce(refusal())
+      await reachPlanScreen()
+      await choosePaymentMethod('btcpay')
+      expect(await screen.findByRole('alert')).toHaveTextContent('Unable to reach the server')
+      fireEvent.click(await screen.findByRole('button', { name: /^retry cryptocurrency payment$/i }))
+      expect(await screen.findByRole('heading', { name: 'Verify your email again' })).toBeVisible()
+      expect(screen.getByText(/An earlier attempt may already have created your account/)).toBeVisible()
+      expect(screen.queryByText(/no account was created/)).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Verify email again' }))
+      await screen.findByLabelText(/^email$/i)
+      expect(phase()).toBe('setup')
+      // A refresh still offers setup recovery, never a fresh password choice.
+      cleanup()
+      window.history.replaceState(window.history.state, '', '/signup')
+      render(<SignupPage />)
+      expect(await screen.findByText(/Setup may already have started/)).toBeVisible()
+      expect(authState.createEtebaseAccount).toHaveBeenCalledTimes(2)
+      expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
     })
 
     it('the no-card path refused by the server shows the same re-verify screen', async () => {

@@ -549,7 +549,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /complete restored account/i }))
     await waitFor(() => expect(authState.finalizePaidSignup).toHaveBeenCalledTimes(1))
-    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'RestoredPassword1')
+    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'RestoredPassword1', authState.pendingSignup?.serverUrl)
     expect(finalizedPending).toMatchObject({
       paymentSessionToken,
       paymentSessionRequestKey,

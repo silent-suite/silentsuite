@@ -1518,6 +1518,8 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const [paymentNeedsVerification, setPaymentNeedsVerification] = useState(false)
   // The hosted server refused account creation; no account or payment exists for this attempt.
   const [signupNeedsVerification, setSignupNeedsVerification] = useState(false)
+  // An earlier account write in this journey ended without a known outcome (e.g. a lost response).
+  const accountOutcomeUncertainRef = useRef(false)
   const etebaseAccountReady = useAuthStore((s) => s.pendingSignup?.etebaseAccountReady === true)
   const [emailOwnershipExpiresAt, setEmailOwnershipExpiresAt] = useState<string | null>(null)
   const [paymentSwitch, setPaymentSwitch] = useState<'stripe' | 'btcpay' | null>(null)
@@ -1944,8 +1946,9 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     const data = formDataRef.current
     if (!data) throw new Error('Please enter your account details again.')
     const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
-    encryptedAccountAttemptedRef.current = true
     if (navigation.currentPhase() !== 'payment') navigation.markMutation('setup')
+    if (encryptedAccountAttemptedRef.current) accountOutcomeUncertainRef.current = true
+    encryptedAccountAttemptedRef.current = true
     await createEtebaseAccount(data.email, data.password, normalizedUrl, undefined, { kind: 'intent', checkoutIntentToken: pending.activation.checkoutIntentToken })
     navigation.markMutation('payment')
     claimAttemptedRef.current = true
@@ -2123,6 +2126,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
         const data = formDataRef.current
         if (!data) throw new Error('Please enter your account details again.')
         const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
+        if (encryptedAccountAttemptedRef.current) accountOutcomeUncertainRef.current = true
         encryptedAccountAttemptedRef.current = true
         await createEtebaseAccount(data.email, data.password, normalizedUrl, undefined, { kind: 'intent', checkoutIntentToken: pending.activation.checkoutIntentToken })
         await provisionAnnualNoCard(pending.activation.checkoutIntentToken)
@@ -2339,15 +2343,23 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   </div>
   if (signupNeedsVerification) return <div className="space-y-4">
     <h1 className="text-xl font-semibold">Verify your email again</h1>
-    <p role="status">We could not confirm this signup, so no account was created and no payment was started. Verify your email again to continue.</p>
+    <p role="status">{accountOutcomeUncertainRef.current
+      ? 'We could not confirm this signup. No payment was started. An earlier attempt may already have created your account, so keep the password you chose. Verify your email again to continue.'
+      : 'We could not confirm this signup, so no account was created and no payment was started. Verify your email again to continue.'}</p>
     <Button onClick={() => {
-      // The server refused creation, so nothing from this attempt needs recovery.
       setSignupNeedsVerification(false)
       pendingAnnualClaimRef.current = null
       setPendingAnnualClaim(null)
       claimAttemptedRef.current = false
-      encryptedAccountAttemptedRef.current = false
-      navigation.clear()
+      // Re-verification needs only the email; no password reaches another server's form.
+      const data = formDataRef.current
+      formDataRef.current = data ? { email: data.email, confirmEmail: data.email, password: '', confirmPassword: '' } : null
+      // Only this refused attempt is known to have created nothing. An earlier
+      // uncertain write keeps the original-password guard and its setup marker.
+      if (!accountOutcomeUncertainRef.current) {
+        encryptedAccountAttemptedRef.current = false
+        navigation.clear()
+      }
       setStep('account')
     }}>Verify email again</Button>
   </div>
