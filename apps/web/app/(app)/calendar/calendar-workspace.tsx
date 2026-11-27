@@ -308,9 +308,14 @@ function CalendarPageBody() {
     if (!colors.has('default')) colors.set('default', '#10b981')
     return colors
   }, [calendars])
+  // Results render only for a query, and an empty query returns every event, so recurrences are
+  // expanded only while there is something to search for.
+  const searching = searchQuery.trim() !== ''
   const visibleSearchResults = useMemo(
-    () => toSearchResults(filteredEvents.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default'))),
-    [filteredEvents, visibleCalendarIds],
+    () => searching
+      ? toSearchResults(filteredEvents.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default')))
+      : [],
+    [searching, filteredEvents, visibleCalendarIds],
   )
 
   const handleSlotClick = useCallback((slot: SlotClickEvent) => {
