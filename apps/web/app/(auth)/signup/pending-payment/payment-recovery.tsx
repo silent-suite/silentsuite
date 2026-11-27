@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, Loader2 } from 'lucide-react'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
+import { isCustomServer } from '@/app/lib/self-hosted'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import {
 
@@ -350,8 +351,11 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
       setState('vault')
       return
     }
-    // The restored checkpoint's server, as on the Stripe return page.
-    await createEtebaseAccount(restoredEmail, data.password, useAuthStore.getState().pendingSignup?.serverUrl)
+    // The restored checkpoint's server, but only the hosted one: hosted payment
+    // recovery never sends the account password to another server.
+    const restoredServerUrl = useAuthStore.getState().pendingSignup?.serverUrl
+    if (isCustomServer(restoredServerUrl)) throw new Error('This payment can only be finished on the SilentSuite server. Contact support@silentsuite.io and we will finish your setup.')
+    await createEtebaseAccount(restoredEmail, data.password, restoredServerUrl)
     await finalizePaidSignup()
     setState('vault')
   }

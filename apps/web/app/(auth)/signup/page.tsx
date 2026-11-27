@@ -2341,29 +2341,27 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     <p>Payment cancelled. This browser no longer has valid email verification and signed signup terms. Verify your email again to load payment choices.</p>
     <Button onClick={() => { setPaymentNeedsVerification(false); setStep('account') }}>Verify email again</Button>
   </div>
-  if (signupNeedsVerification) return <div className="space-y-4">
+  // A refusal after an earlier account write with an unknown outcome: the account
+  // may exist, so offer the setup recovery (sign in or support), never a new email link.
+  const refusedAfterUncertainWrite = signupNeedsVerification && accountOutcomeUncertainRef.current
+  if (signupNeedsVerification && !refusedAfterUncertainWrite) return <div className="space-y-4">
     <h1 className="text-xl font-semibold">Verify your email again</h1>
-    <p role="status">{accountOutcomeUncertainRef.current
-      ? 'We could not confirm this signup. No payment was started. An earlier attempt may already have created your account, so keep the password you chose. Verify your email again to continue.'
-      : 'We could not confirm this signup, so no account was created and no payment was started. Verify your email again to continue.'}</p>
+    <p role="status">We could not confirm this signup, so no account was created and no payment was started. Verify your email again to continue.</p>
     <Button onClick={() => {
+      // Only this refused attempt ran, and the server created nothing for it.
       setSignupNeedsVerification(false)
       pendingAnnualClaimRef.current = null
       setPendingAnnualClaim(null)
       claimAttemptedRef.current = false
+      encryptedAccountAttemptedRef.current = false
       // Re-verification needs only the email; no password reaches another server's form.
       const data = formDataRef.current
       formDataRef.current = data ? { email: data.email, confirmEmail: data.email, password: '', confirmPassword: '' } : null
-      // Only this refused attempt is known to have created nothing. An earlier
-      // uncertain write keeps the original-password guard and its setup marker.
-      if (!accountOutcomeUncertainRef.current) {
-        encryptedAccountAttemptedRef.current = false
-        navigation.clear()
-      }
+      navigation.clear()
       setStep('account')
     }}>Verify email again</Button>
   </div>
-  if (navigation.recovery) {
+  if (navigation.recovery || refusedAfterUncertainWrite) {
     return <div className="mx-auto w-full max-w-md space-y-4">
       <SignupRecoveryWarning />
       <h1 className="text-xl font-semibold">Continue your signup safely</h1>

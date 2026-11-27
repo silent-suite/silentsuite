@@ -29,8 +29,8 @@ const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),
 const paths = () => vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)
 const paymentStarts = () => paths().filter((p) => p === '/auth/signup/payment-session/v2' || p.includes('checkout'))
 
-function checkpoint(accountReady: boolean) {
-  useAuthStore.setState({ pendingSignup: { email, serverUrl: official, paymentSessionToken: token, paymentSessionRequestKey: id,
+function checkpoint(accountReady: boolean, serverUrl = official) {
+  useAuthStore.setState({ pendingSignup: { email, serverUrl, paymentSessionToken: token, paymentSessionRequestKey: id,
     paymentMethod: 'btcpay', billingContractVersion: 2, ...(accountReady ? { etebaseAccountReady: true } : {}) } })
   useAuthStore.getState().saveSignupStateForRedirect('annual')
   const saved = JSON.parse(sessionStorage.getItem(key)!)
@@ -75,6 +75,19 @@ it('logs in from a ready checkpoint with an explicit official server URL, finali
   expect(paths()).not.toContain('/auth/signup-pass/v2')
   expect(paths().filter((p) => p === '/auth/signup/finalize-payment/v2')).toHaveLength(1)
   expect(paymentStarts()).toHaveLength(0)
+})
+
+it('refuses a ready checkpoint naming another server before any SDK call', async () => {
+  const saved = checkpoint(true, 'https://sync.example.test')
+  window.history.replaceState({}, '', '/signup/pending-payment')
+  render(<PendingPaymentPage />)
+  await submitPassword()
+  expect(await screen.findByRole('alert')).toHaveTextContent('can only be finished on the SilentSuite server')
+  expect(mocks.login).not.toHaveBeenCalled()
+  expect(mocks.signup).not.toHaveBeenCalled()
+  expect(paths()).not.toContain('/auth/signup/finalize-payment/v2')
+  expect(paymentStarts()).toHaveLength(0)
+  expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(saved)
 })
 
 it('an old paid document reloaded in the same tab with an old checkpoint shows the support path on a server refusal', async () => {

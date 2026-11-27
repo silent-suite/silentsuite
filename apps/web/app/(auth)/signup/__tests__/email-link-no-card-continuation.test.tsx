@@ -773,7 +773,7 @@ describe('email-link seven-day no-card continuation', () => {
       expect(screen.getByLabelText(/^confirm password$/i)).toHaveValue('')
     })
 
-    it('a refusal after a lost account response keeps that uncertainty through re-verification', async () => {
+    it('a refusal after a lost account response offers only setup recovery (sign in or support), never a new email link', async () => {
       authState.createEtebaseAccount
         .mockRejectedValueOnce(new Error('Unable to reach the server. Please check your connection and try again.'))
         .mockRejectedValueOnce(refusal())
@@ -781,17 +781,16 @@ describe('email-link seven-day no-card continuation', () => {
       await choosePaymentMethod('btcpay')
       expect(await screen.findByRole('alert')).toHaveTextContent('Unable to reach the server')
       fireEvent.click(await screen.findByRole('button', { name: /^retry cryptocurrency payment$/i }))
-      expect(await screen.findByRole('heading', { name: 'Verify your email again' })).toBeVisible()
-      expect(screen.getByText(/An earlier attempt may already have created your account/)).toBeVisible()
+      // The account may exist: the screen offers signing in or support and nothing that re-verifies or picks a password.
+      expect(await screen.findByRole('heading', { name: 'Continue your signup safely' })).toBeVisible()
+      expect(screen.getByText(/Setup may already have started/)).toBeVisible()
+      expect(screen.getByText('Sign in to your account')).toBeVisible()
+      expect(screen.getByRole('link', { name: 'Contact support' })).toHaveAttribute('href', 'mailto:support@silentsuite.io')
+      expect(screen.queryByRole('button')).not.toBeInTheDocument()
       expect(screen.queryByText(/no account was created/)).not.toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: 'Verify email again' }))
-      await screen.findByLabelText(/^email$/i)
+      expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument()
+      // The setup marker stays, so a refresh lands on the same recovery.
       expect(phase()).toBe('setup')
-      // A refresh still offers setup recovery, never a fresh password choice.
-      cleanup()
-      window.history.replaceState(window.history.state, '', '/signup')
-      render(<SignupPage />)
-      expect(await screen.findByText(/Setup may already have started/)).toBeVisible()
       expect(authState.createEtebaseAccount).toHaveBeenCalledTimes(2)
       expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
     })
