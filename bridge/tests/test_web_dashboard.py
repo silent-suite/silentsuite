@@ -163,6 +163,7 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     assert "Add / Re-authenticate Account" in html
     assert "Add or re-authenticate an account" in html
     assert 'class="login-panel hidden"' in html
+    assert 'onclick="hideLoginPanel()">Cancel</button>' in html
     assert 'data-account="alice@example.com"' in html
     assert 'onclick="logoutAccount(this)"' in html
     assert 'onclick="removeAccount(this)"' in html
@@ -304,6 +305,8 @@ def test_render_dashboard_handles_no_accounts(tmp_path, monkeypatch):
     assert "No accounts configured" in html
     assert "Set up your bridge account" in html
     assert 'data-required="true"' in html
+    # The panel can't be hidden without an account, so first run has no Cancel.
+    assert 'onclick="hideLoginPanel()"' not in html
     assert 'id="dashboardLoginForm"' in html
     assert 'name="password"' in html
     assert "Add / Re-authenticate Account" in html

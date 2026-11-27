@@ -1140,7 +1140,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         </details>
                         <div class="login-actions">
                             <button id="dashboardLoginSubmit" class="account-action-btn primary" type="submit">Sign in</button>
-                            <button class="account-action-btn" type="button" onclick="hideLoginPanel()">Cancel</button>
+                            {{LOGIN_CANCEL}}
                         </div>
                     </form>
                 </div>
@@ -1782,6 +1782,7 @@ def _render_dashboard():
     if users:
         login_panel_class = "hidden"
         login_required = "false"
+        login_cancel = '<button class="account-action-btn" type="button" onclick="hideLoginPanel()">Cancel</button>'
         login_title = "Add or re-authenticate an account"
         login_copy = "Sign in with your SilentSuite account. Existing accounts stay configured; signing in again refreshes credentials for that account."
         account_html = ""
@@ -1894,6 +1895,8 @@ def _render_dashboard():
     else:
         login_panel_class = ""
         login_required = "true"
+        # Nothing to go back to without an account, so no Cancel.
+        login_cancel = ""
         login_title = "Set up your bridge account"
         login_copy = "Sign in here to store this account locally, start its sync thread, and reveal your CalDAV/CardDAV URL."
         account_html = '<div class="log-empty">No accounts configured yet. Sign in above to get started.</div>'
@@ -1937,6 +1940,7 @@ def _render_dashboard():
     page = page.replace("{{CSRF_TOKEN}}", json.dumps(_dashboard_csrf_token))
     page = page.replace("{{LOGIN_PANEL_CLASS}}", login_panel_class)
     page = page.replace("{{LOGIN_REQUIRED}}", login_required)
+    page = page.replace("{{LOGIN_CANCEL}}", login_cancel)
     page = page.replace("{{LOGIN_TITLE}}", esc(login_title))
     page = page.replace("{{LOGIN_COPY}}", esc(login_copy))
     page = page.replace("{{SERVER_URL}}", esc(config.ETEBASE_SERVER_URL))
