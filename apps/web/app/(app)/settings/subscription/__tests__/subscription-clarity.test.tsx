@@ -280,7 +280,7 @@ describe('subscription card clarity', () => {
   it('omits the price but keeps the action when the signed offer cannot be read', async () => {
     const reads = route(endedTrial, () => ({ ok: false, status: 503, json: async () => ({ detail: 'unavailable' }) }))
     render(<SubscriptionPage />)
-    await screen.findByText('Plan')
+    await screen.findByRole('heading', { name: 'Subscription' })
     await waitFor(() => expect(reads.offerReads()).toBe(1))
     await act(async () => { await Promise.resolve() })
     expect(screen.queryByText(/per year/)).not.toBeInTheDocument()
@@ -292,7 +292,7 @@ describe('subscription card clarity', () => {
     const pending = new Promise(resolve => { release = resolve })
     const reads = route(endedTrial, () => pending)
     render(<SubscriptionPage />)
-    await screen.findByText('Plan')
+    await screen.findByRole('heading', { name: 'Subscription' })
     await waitFor(() => expect(reads.offerReads()).toBe(1))
     act(() => { bumpAccountEpoch() })
     release({ ok: true, json: async () => offerResponse })
@@ -321,6 +321,27 @@ describe('subscription card clarity', () => {
     await act(async () => { await Promise.resolve() })
     expect(screen.queryByRole('button', { name: /choose payment|subscribe/i })).not.toBeInTheDocument()
     expect(reads.offerReads()).toBe(0)
+  })
+
+  it('names the plan from the offer that prices it, never the stored monthly plan (SIGNUP-03)', async () => {
+    route({ ...endedTrial, plan: 'standard_monthly', planLabel: 'Standard Monthly', billingInterval: 'monthly', earlyAdopter: true })
+    render(<SubscriptionPage />)
+    expect(await screen.findByText(price)).toBeInTheDocument()
+    const section = card()
+    expect(within(section).getByText('Plan')).toBeInTheDocument()
+    expect(within(section).getByText('Early Adopter')).toBeInTheDocument()
+    expect(screen.queryByText(/monthly/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Billing')).not.toBeInTheDocument()
+  })
+
+  it('shows no stored plan name next to a purchase action when the offer cannot be read', async () => {
+    const reads = route({ ...endedTrial, plan: 'standard_monthly', planLabel: 'Standard Monthly', billingInterval: 'monthly' },
+      () => ({ ok: false, status: 503, json: async () => ({}) }))
+    render(<SubscriptionPage />)
+    await waitFor(() => expect(reads.offerReads()).toBe(1))
+    await act(async () => { await Promise.resolve() })
+    expect(within(card()).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+    expect(screen.queryByText(/monthly/i)).not.toBeInTheDocument()
   })
 
   it('hides the Billing row when the plan name already says annual', async () => {

@@ -10,7 +10,7 @@ import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { parseAccountNotice, parseBillingDate, type BillingDate } from '@/app/lib/account-notice'
 import { fetchAuthenticatedAccountOffer } from '@/app/lib/billing-v2'
 import { createAuthenticatedPaymentFetch } from '@/app/lib/authenticated-payment-fetch'
-import { formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
+import { annualOfferClassLabel, formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
 import { formatDaysLeft, isHostedBillingAccount, useEligibleAccountNotice, useTrialCountdown } from '@/app/hooks/use-trial-countdown'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import AddCardBanner from '@/app/components/add-card-banner'
@@ -291,7 +291,7 @@ export default function SubscriptionPage() {
   ))
   const [data, setData] = useState<SubscriptionData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [offerQuote, setOfferQuote] = useState<{ price: string; owner: OperationOwner; sequence: number } | null>(null)
+  const [offerQuote, setOfferQuote] = useState<{ price: string; planName: string; owner: OperationOwner; sequence: number } | null>(null)
   const [showCancelDialog, setShowCancelDialog] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<{ owner: OperationOwner; message: string } | null>(null)
@@ -419,13 +419,18 @@ export default function SubscriptionPage() {
       fetcher: (input, init) => fetch(input, { ...init, credentials: 'include' }),
       billingApiUrl: BILLING_API_URL,
     }).then(
-      (account) => { if (live()) setOfferQuote({ price: `${formatAnnualOfferAmount(account.offer.offer)} per year`, owner, sequence }) },
+      (account) => {
+        if (!live()) return
+        const { offer } = account.offer
+        setOfferQuote({ price: `${formatAnnualOfferAmount(offer)} per year`, planName: annualOfferClassLabel(offer), owner, sequence })
+      },
       () => { if (live()) setOfferQuote(null) },
     )
   }, [purchaseAction, data, liveUser, captureOwner, ownerCurrent])
-  const offerPrice = offerQuote && offerQuote.sequence === offerSequenceRef.current && ownerCurrent(offerQuote.owner)
-    ? offerQuote.price
+  const liveOffer = offerQuote && offerQuote.sequence === offerSequenceRef.current && ownerCurrent(offerQuote.owner)
+    ? offerQuote
     : null
+  const offerPrice = liveOffer?.price ?? null
 
   useEffect(() => {
     const { hasStripeParameters, paymentIntent, redirectStatus } = stripePaymentReturn
@@ -642,7 +647,11 @@ export default function SubscriptionPage() {
   const capabilities = getCapabilities(data)
   const { showAddCard, showPaidRecovery } = getCardActions(data, paymentConfirmationPending, paymentReturnFailure)
   const dateRow = getDateRow(data)
-  const showBillingRow = !!data.plan && !data.planLabel.toLowerCase().includes(data.billingInterval)
+  // Next to a purchase action the stored plan is often a legacy one (say "Standard Monthly") that
+  // isn't what the price below offers. Name the plan from the signed offer that prices it, and
+  // show no stored interval: hosted plans are annual-only.
+  const planName = purchaseAction ? liveOffer?.planName ?? null : data.planLabel
+  const showBillingRow = !purchaseAction && !!data.plan && !data.planLabel.toLowerCase().includes(data.billingInterval)
   const endedNotice = notice?.kind === 'trial_ended' || notice?.kind === 'access_ended'
   // Only Billing's notice (seven-day countdown or a verified end) replaces the raw status badge.
   const headline = countdown
@@ -726,10 +735,12 @@ export default function SubscriptionPage() {
 
         <div className="space-y-3">
           {/* Plan name */}
-          <div>
-            <p className="text-xs text-[rgb(var(--muted))]">Plan</p>
-            <p className="text-sm text-[rgb(var(--foreground))]">{data.planLabel}</p>
-          </div>
+          {planName && (
+            <div>
+              <p className="text-xs text-[rgb(var(--muted))]">Plan</p>
+              <p className="text-sm text-[rgb(var(--foreground))]">{planName}</p>
+            </div>
+          )}
 
           {/* Billing interval, unless the plan name already says it */}
           {showBillingRow && (
