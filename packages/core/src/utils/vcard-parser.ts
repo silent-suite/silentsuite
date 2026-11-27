@@ -174,32 +174,81 @@ export function splitVCardFile(text: string): { cards: string[]; incomplete: num
   return { cards, incomplete };
 }
 
-/** One logical line under construction. Segments are joined once, so the work
- * stays linear in the input however many folds a property has. */
+/** Reads the ENCODING parameter of a property header one character at a time,
+ * with the same answer as parseProperty on the whole header. Buffers are capped
+ * just past the longest text that can still match, so each step is O(1). */
+class HeaderEncodingScanner {
+  private inParams = false;
+  private inQuotes = false;
+  /** ENCODING value from finished parameters, as parseProperty joins them. */
+  private encoding: string | undefined;
+  /** Current parameter: key until its first '=', then the value. */
+  private key: string | null = null;
+  private keyText = '';
+  private valueText = '';
+
+  feed(ch: string): void {
+    if (!this.inParams) {
+      if (ch === ';') this.inParams = true;
+      return;
+    }
+    if (ch === '"') this.inQuotes = !this.inQuotes;
+    else if (ch === ';' && !this.inQuotes) {
+      this.encoding = this.joined();
+      this.key = null;
+      this.keyText = '';
+      this.valueText = '';
+      return;
+    }
+    if (this.key !== null) this.valueText = (this.valueText + ch).slice(0, 19);
+    else if (ch === '=') this.key = this.keyText.toUpperCase();
+    else this.keyText = (this.keyText + ch).slice(0, 9);
+  }
+
+  /** ENCODING including the current parameter; longer than 17 means no match. */
+  private joined(): string | undefined {
+    if (this.key !== 'ENCODING') return this.encoding;
+    const value = this.valueText.replace(/^"(.*)"$/, '$1');
+    return (this.encoding ? `${this.encoding},${value}` : value).slice(0, 17);
+  }
+
+  isQuotedPrintable(): boolean {
+    return this.joined()?.toUpperCase() === 'QUOTED-PRINTABLE';
+  }
+
+  clone(): HeaderEncodingScanner {
+    return Object.assign(new HeaderEncodingScanner(), this);
+  }
+}
+
+/** One logical line under construction. Segments are joined once, and the
+ * header is scanned incrementally, so the work stays linear in the input
+ * however many folds a property or its header has. */
 class LogicalLine {
   private readonly segments: string[] = [];
-  private header = '';
+  private readonly scanner = new HeaderEncodingScanner();
+  /** Last header character, held back so a QP soft-break '=' can be dropped. */
+  private pending: string | null = null;
   private inQuotes = false;
   private colonFound = false;
-  private headerQp: boolean | null = null;
 
   append(text: string): void {
     if (text === '') return;
     this.segments.push(text);
     if (this.colonFound) return;
     for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
+      const ch = text[i]!;
       if (ch === '"') {
         this.inQuotes = !this.inQuotes;
       } else if (ch === ':' && !this.inQuotes) {
-        this.header += text.slice(0, i);
+        if (this.pending !== null) this.scanner.feed(this.pending);
+        this.pending = null;
         this.colonFound = true;
-        this.headerQp = null;
         return;
       }
+      if (this.pending !== null) this.scanner.feed(this.pending);
+      this.pending = ch;
     }
-    this.header += text;
-    this.headerQp = null;
   }
 
   get isEmpty(): boolean {
@@ -217,19 +266,15 @@ class LogicalLine {
     const last = this.segments[index]!;
     if (last.length === 1) this.segments.pop();
     else this.segments[index] = last.slice(0, -1);
-    if (!this.colonFound) {
-      this.header = this.header.slice(0, -1);
-      this.headerQp = null;
-    }
+    if (!this.colonFound) this.pending = null;
   }
 
   /** Same answer as parseProperty(joined line) for the ENCODING parameter. */
   isQuotedPrintable(): boolean {
-    if (this.headerQp === null) {
-      const params = parseProperty(this.colonFound ? `${this.header}:` : this.header).params;
-      this.headerQp = params['ENCODING']?.toUpperCase() === 'QUOTED-PRINTABLE';
-    }
-    return this.headerQp;
+    if (this.pending === null) return this.scanner.isQuotedPrintable();
+    const peek = this.scanner.clone();
+    peek.feed(this.pending);
+    return peek.isQuotedPrintable();
   }
 
   toString(): string {
