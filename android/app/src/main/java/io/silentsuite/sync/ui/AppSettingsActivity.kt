@@ -41,7 +41,6 @@ import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.ui.settings.SettingsCategory
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
 import io.silentsuite.sync.utils.HintManager
-import io.silentsuite.sync.utils.LanguageUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -749,26 +748,6 @@ class AppSettingsActivity : BaseActivity() {
             requirePreference<Preference>("show_debug_info").setOnPreferenceClickListener {
                 startActivity(DebugInfoActivity.newIntent(requireContext()))
                 true
-            }
-            initLanguagePreference()
-        }
-
-        private fun initLanguagePreference() {
-            val preference = requirePreference<ListPreference>("select_language")
-            lifecycleScope.launch {
-                val locales = withContext(Dispatchers.IO) { LanguageUtils.getAppLanguages(requireContext()) }
-                preference.entries = locales.displayNames
-                preference.entryValues = locales.localeData
-                preference.value = appPreferences.forcedLanguage
-                preference.setOnPreferenceChangeListener { current, value ->
-                    if (value.toString() == (current as ListPreference).value) return@setOnPreferenceChangeListener true
-                    appPreferences.forcedLanguage = value.toString()
-                    LanguageUtils.setLanguage(requireContext(), value.toString())
-                    startActivity(Intent(requireContext(), AccountsActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
-                    })
-                    false
-                }
             }
         }
 

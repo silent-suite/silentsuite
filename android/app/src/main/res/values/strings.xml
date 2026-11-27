@@ -143,8 +143,6 @@
     <string name="app_settings_show_debug_info_details">View/share software and configuration details</string>
     <string name="app_settings_scheduling_diagnostics">Sync scheduling diagnostics</string>
     <string name="app_settings_scheduling_diagnostics_details">View/share sync scheduling state without account or device details</string>
-    <string name="app_settings_force_language">Force Language</string>
-    <string name="app_settings_force_language_default">Auto</string>
     <string name="app_settings_change_notification">Show change notifications</string>
 
     <!-- AccountActivity -->
@@ -746,12 +744,12 @@
     <string name="settings_category_privacy_security">Privacy and security</string>
     <string name="settings_category_privacy_security_summary">Encryption and local privacy protections</string>
     <string name="settings_category_help">Help and troubleshooting</string>
-    <string name="settings_category_help_summary">Advanced connection, certificate, language, and diagnostic options</string>
+    <string name="settings_category_help_summary">Advanced connection, certificate, and diagnostic options</string>
     <string name="settings_recover_deleted_contacts">Recover deleted contacts</string>
     <string name="settings_recover_deleted_contacts_summary">Choose an address book to view and restore deleted contacts</string>
     <string name="settings_recover_deleted_contacts_none">No address books available</string>
     <string name="settings_category_advanced">Advanced</string>
-    <string name="settings_category_advanced_summary">Proxy, certificates, language, logging, and debug information</string>
+    <string name="settings_category_advanced_summary">Proxy, certificates, logging, and debug information</string>
     <string name="settings_account_current">Current account</string>
     <string name="settings_account_not_available">No account selected</string>
     <string name="settings_account_dashboard_summary">Open this account’s encrypted-sync overview</string>
