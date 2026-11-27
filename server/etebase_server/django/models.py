@@ -174,6 +174,23 @@ class BillingLinkProof(models.Model):
         return self.audience == "billing" and self.consumed_at is None and self.expires_at > timezone.now()
 
 
+class SignupPass(models.Model):
+    """One-time permission to create the hosted account for one login email address.
+
+    Billing asks for it (machine key) once the address's owner has proven they control it. The
+    bearer value is never stored, only its SHA-256 digest. Several live passes may exist for one
+    address; the signup name lock and collision check still allow only one account.
+    """
+
+    pass_hash = models.CharField(max_length=64, unique=True)
+    email = models.CharField(max_length=150)
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField(db_index=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    objects: models.manager.BaseManager["SignupPass"]
+
+
 class CollectionItemRevision(models.Model):
     stoken = models.OneToOneField(Stoken, on_delete=models.PROTECT)
     uid = models.CharField(
