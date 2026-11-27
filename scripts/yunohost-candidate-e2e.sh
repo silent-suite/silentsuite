@@ -127,7 +127,8 @@ settings_hash() { ct sh -c "yunohost app setting $app owner_password; yunohost a
 check_data() {
     witness verify || fail "witness ($1)"
     state_markers
-    [ "$(media_list)" = "$MEDIA" ] || fail "media files ($1)"
+    # Every chunk file from the witness is still there, unchanged (later writes may add more).
+    [ -z "$(comm -23 <(echo "$MEDIA") <(media_list))" ] || fail "media files ($1)"
     [ "$(settings_hash)" = "$SETTINGS" ] || fail "installation secrets ($1)"
     pass "data intact ($1)"
 }
