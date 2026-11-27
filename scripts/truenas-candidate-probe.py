@@ -235,7 +235,9 @@ def markers_mode(marker, after_stop):
     upgrade = {"Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13",
                "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}
     status = status_only(f"/api/v1/ws/{marker}-ws/", upgrade, **kwargs)
-    check(f"WebSocket upgrade request got an answer (HTTP {status})", status in (101, 400, 401, 403, 404))
+    # Without Redis (no self-host stack configures it) the server's WebSocket endpoint
+    # answers 500 before any upgrade; the request still reaches the server and its logs.
+    check(f"WebSocket upgrade request reached the server (HTTP {status})", status in (101, 400, 401, 403, 404, 500))
 
 
 def main():
