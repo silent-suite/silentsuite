@@ -701,7 +701,7 @@ def _summary_bytes(targets_scanned: int, prohibited: int, excepted: int, result:
         f'  "reviewed_exceptions": {excepted},\n'
         f'  "result": "{result}"\n'
         "}\n"
-    ).encode("utf-8")
+    ).replace("\n", os.linesep).encode("utf-8")  # the scanner writes in text mode
 
 
 class _CountingPattern:
