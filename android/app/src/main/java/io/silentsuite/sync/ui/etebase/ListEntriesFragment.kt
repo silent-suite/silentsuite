@@ -70,7 +70,11 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
                     restored = true
                 }
 
-                emptyTextView!!.text = getString(emptyTextRes(requireContext(), col.collectionType))
+                // Only the deleted-contacts recovery list is created with arguments.
+                emptyTextView!!.text = getString(
+                    if (CollectionLifecycleIdentity.from(arguments) != null) R.string.journal_entries_list_empty_deleted_contacts
+                    else emptyTextRes(requireContext(), col.collectionType)
+                )
             }
         }
 
