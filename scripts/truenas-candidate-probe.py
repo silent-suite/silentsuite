@@ -212,15 +212,14 @@ def published_mode():
           wait_ready(port=PUBLIC_PORT, address="127.0.0.1"))
 
 
-def status_line_only(path, headers, **kwargs):
-    """Send one request and read only the status line (a 101 upgrade would never end)."""
+def status_only(path, headers, **kwargs):
+    """One request whose body is never read (a 101 upgrade would never end)."""
     conn = connection(kwargs["address"], kwargs["port"], True)
-    lines = [f"GET {path} HTTP/1.1", f"Host: {HOST}"] + [f"{k}: {v}" for k, v in headers.items()]
-    conn.sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("ascii"))
-    first = conn.sock.recv(64).split(b"\r\n", 1)[0].decode("ascii", "replace")
-    conn.close()
-    parts = first.split(" ")
-    return int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    try:
+        conn.request("GET", path, headers={"Host": HOST, **headers})
+        return conn.getresponse().status
+    finally:
+        conn.close()
 
 
 def markers_mode(marker, after_stop):
@@ -235,8 +234,8 @@ def markers_mode(marker, after_stop):
     request("POST", f"/api/v1/owner/login/?{marker}-owner", b"{}", {"Content-Type": "application/json"}, **kwargs)
     upgrade = {"Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13",
                "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}
-    status = status_line_only(f"/api/v1/ws/{marker}-ws/", upgrade, **kwargs)
-    check("WebSocket upgrade request got an answer", status in (101, 400, 401, 403, 404))
+    status = status_only(f"/api/v1/ws/{marker}-ws/", upgrade, **kwargs)
+    check(f"WebSocket upgrade request got an answer (HTTP {status})", status in (101, 400, 401, 403, 404))
 
 
 def main():
