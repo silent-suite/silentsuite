@@ -397,7 +397,7 @@ def start_tray():
         from .tray import TRAY_AVAILABLE, BridgeTray
 
         if not TRAY_AVAILABLE:
-            logger.info("System tray not available (pystray/Pillow not installed)")
+            logger.info("No tray icon in this build; use the bridge dashboard in your browser")
             return None
 
         tray = BridgeTray(bridge_state="starting")
