@@ -25,6 +25,26 @@ class SiblingMaterialAccessibilityContractTest {
     }
 
     @Test
+    fun createCollectionFormUsesOutlinedFieldsPlainLabelsAndTextActions() {
+        val layout = source("res/layout/activity_create_collection.xml")
+        val strings = source("res/values/strings.xml")
+        val fragment = source("java/io/silentsuite/sync/ui/etebase/EditCollectionFragment.kt")
+
+        assertTrue(layout.contains("Widget.AppTheme.Material3.TextInputLayout"))
+        assertTrue(layout.contains("android:id=\"@+id/display_name\""))
+        assertTrue(layout.contains("android:id=\"@+id/description\""))
+        assertFalse(layout.contains("<EditText"))
+        assertTrue(strings.contains("<string name=\"create_collection_display_name\">Name</string>"))
+        assertTrue(strings.contains("<string name=\"create_collection_submit\">Create</string>"))
+        assertFalse(strings.contains("Display name (title)"))
+        listOf("activity_create_collection.xml", "fragment_edit_collection.xml").forEach {
+            assertFalse(source("res/menu/$it").contains("ic_save_light"))
+        }
+        assertTrue(fragment.contains("setTitle(R.string.create_collection_submit)"))
+        assertFalse(fragment.contains("title.setHint("))
+    }
+
+    @Test
     fun siblingLayoutsAreRtlSafeScrollableAndExposeNonColorStatus() {
         val layouts = listOf(
             "activity_permissions.xml",

@@ -20,6 +20,7 @@ import android.view.MenuItem
 import android.view.View
 import android.widget.EditText
 import androidx.core.app.NavUtils
+import com.google.android.material.textfield.TextInputLayout
 import io.silentsuite.sync.R
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.model.CollectionInfo
@@ -44,11 +45,11 @@ open class CreateCollectionActivity : BaseActivity() {
 
         setContentView(R.layout.activity_create_collection)
 
-        val displayName = findViewById<View>(R.id.display_name) as EditText
+        val displayNameLayout = findViewById<TextInputLayout>(R.id.display_name_layout)
         when (info.enumType) {
             CollectionInfo.Type.CALENDAR -> {
                 setTitle(R.string.create_calendar)
-                displayName.setHint(R.string.create_calendar_display_name_hint)
+                displayNameLayout.placeholderText = getString(R.string.create_calendar_display_name_hint)
 
                 val colorSquare = findViewById<View>(R.id.color)
                 colorSquare.setBackgroundColor(LocalCalendar.defaultColor)
@@ -64,7 +65,7 @@ open class CreateCollectionActivity : BaseActivity() {
             }
             CollectionInfo.Type.TASKS -> {
                 setTitle(R.string.create_tasklist)
-                displayName.setHint(R.string.create_tasklist_display_name_hint)
+                displayNameLayout.placeholderText = getString(R.string.create_tasklist_display_name_hint)
 
                 val colorSquare = findViewById<View>(R.id.color)
                 colorSquare.setBackgroundColor(LocalTaskList.defaultColor)
@@ -80,14 +81,14 @@ open class CreateCollectionActivity : BaseActivity() {
             }
             CollectionInfo.Type.ADDRESS_BOOK -> {
                 setTitle(R.string.create_addressbook)
-                displayName.setHint(R.string.create_addressbook_display_name_hint)
+                displayNameLayout.placeholderText = getString(R.string.create_addressbook_display_name_hint)
 
                 val colorGroup = findViewById<View>(R.id.color_group)
                 colorGroup.visibility = View.GONE
             }
             CollectionInfo.Type.NOTES -> {
                 setTitle(R.string.create_notebook)
-                displayName.setHint(R.string.create_notebook_display_name_hint)
+                displayNameLayout.placeholderText = getString(R.string.create_notebook_display_name_hint)
             }
             null -> {
             }
