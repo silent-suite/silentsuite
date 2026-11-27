@@ -94,7 +94,7 @@ export function GlobalAddButton() {
         <button
           onClick={handlePrimaryClick}
           disabled={!canWrite}
-          className={`flex items-center gap-2 rounded-l-full bg-emerald-600 px-4 py-3 text-sm font-medium text-white transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 md:px-5 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-700 active:scale-[0.97]'}`}
+          className={`flex items-center gap-2 rounded-l-full bg-emerald-700 px-4 py-3 text-sm font-medium text-white transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 md:px-5 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-800 active:scale-[0.97]'}`}
           title={!canWrite ? 'Subscription required' : undefined}
         >
           <Plus className="h-4 w-4" />
@@ -103,7 +103,7 @@ export function GlobalAddButton() {
         <button
           onClick={() => canWrite && setOpen(!open)}
           disabled={!canWrite}
-          className={`flex items-center rounded-r-full border-l border-emerald-500/30 bg-emerald-600 px-3.5 py-3 text-white transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-700 active:scale-[0.97]'}`}
+          className={`flex items-center rounded-r-full border-l border-emerald-500/30 bg-emerald-700 px-3.5 py-3 text-white transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-800 active:scale-[0.97]'}`}
           aria-label="More options"
           aria-expanded={open}
           title={!canWrite ? 'Subscription required' : undefined}

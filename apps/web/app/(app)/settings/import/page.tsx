@@ -248,7 +248,7 @@ export default function ImportPage() {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className="animate-in slide-in-from-bottom-2 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-lg"
+            className="animate-in slide-in-from-bottom-2 rounded-lg bg-emerald-700 px-4 py-3 text-sm font-medium text-white shadow-lg"
           >
             {toast.message}
           </div>

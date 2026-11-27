@@ -57,7 +57,7 @@ function PasswordStrength({ password }: { password: string }) {
         {checks.map((check) => (
           <li
             key={check.label}
-            className={`flex items-center gap-1.5 text-xs ${check.met ? 'text-[rgb(var(--primary))]' : 'text-[rgb(var(--muted))]'}`}
+            className={`flex items-center gap-1.5 text-xs ${check.met ? 'text-[rgb(var(--primary-text))]' : 'text-[rgb(var(--muted))]'}`}
           >
             {check.met ? <Check className="h-3 w-3" /> : <div className="h-3 w-3 rounded-full border border-[rgb(var(--border))]" />}
             {check.label}

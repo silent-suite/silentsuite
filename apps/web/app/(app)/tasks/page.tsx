@@ -192,7 +192,7 @@ function TaskQuickAdd() {
         <button
           type="submit"
           disabled={!title.trim() || !canWrite || pending}
-          className={`rounded-lg bg-emerald-600 px-4 py-2 max-md:min-h-[44px] text-sm font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${canWrite ? 'hover:bg-emerald-500' : ''}`}
+          className={`rounded-lg bg-emerald-700 px-4 py-2 max-md:min-h-[44px] text-sm font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${canWrite ? 'hover:bg-emerald-800' : ''}`}
           title={!canWrite ? readOnlyTitle : undefined}
         >
           Add
@@ -393,7 +393,7 @@ function TaskDialog({
             <button
               onClick={handleSave}
               disabled={!title.trim() || creating || !canWrite || !datesValid}
-              className="shrink-0 rounded-md bg-emerald-600 px-3 py-1 max-md:min-h-[44px] text-sm font-medium text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="shrink-0 rounded-md bg-emerald-700 px-3 py-1 max-md:min-h-[44px] text-sm font-medium text-white hover:bg-emerald-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title={!canWrite ? readOnlyTitle : undefined}
             >
               {mode === 'create' ? 'Create' : 'Save'}
@@ -887,7 +887,7 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onEdit(task) }}
-              className="flex rounded max-md:min-h-[44px] max-md:min-w-[44px] items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
+              className="flex rounded max-md:min-h-[44px] max-md:min-w-[44px] items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary-text))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
               aria-label="Edit task"
             >
               <Pencil className="h-3.5 w-3.5" />
@@ -896,7 +896,7 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
-              className="hidden md:flex rounded p-1 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
+              className="hidden md:flex rounded p-1 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary-text))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
               aria-label="Edit task"
             >
               <Pencil className="h-3.5 w-3.5" />
@@ -1055,7 +1055,7 @@ export default function TasksPage() {
           <button
             onClick={() => setShowDialog(true)}
             disabled={!canWrite}
-            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
+            className={`flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-800'}`}
             title={listsLoading ? undefined : !canWriteAccount ? 'Subscription required' : !hasWritableList ? 'This task list is read-only' : undefined}
           >
             <Plus className="h-4 w-4" />

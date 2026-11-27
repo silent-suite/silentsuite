@@ -34,6 +34,7 @@ import {
   toScheduleXDayBoundariesInternal,
 } from '../lib/calendar-day-boundaries'
 
+import { readableTextColor } from '@/app/lib/readable-text-color'
 import '@schedule-x/theme-default/dist/index.css'
 
 // Temporal polyfill — patches globalThis.Temporal and registers types
@@ -338,8 +339,9 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         const cls = `sx-cal-color-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
         const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#10b981'
         // Schedule-X nests text spans inside event chips; keep descendants readable on custom colors.
-        return `.${cls} { background-color: ${safeColor} !important; color: #fff !important; }
-.${cls} * { color: #fff !important; }`
+        const textColor = readableTextColor(safeColor)
+        return `.${cls} { background-color: ${safeColor} !important; color: ${textColor} !important; }
+.${cls} * { color: ${textColor} !important; }`
       })
       .join('\n')
     // Keep the shared style node in place across multiple CalendarGrid instances
@@ -1704,7 +1706,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
           >
             {dragSelection.startTime && dragSelection.endTime && (
               <>
-                <span className="text-[11px] font-medium text-[rgb(var(--primary))] leading-none">
+                <span className="text-[11px] font-medium text-[rgb(var(--primary-text))] leading-none">
                   {dragSelection.startTime.toLocaleTimeString('en-US', {
                     hour: 'numeric',
                     minute: '2-digit',
@@ -1712,7 +1714,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
                     timeZone: userTz,
                   })}
                 </span>
-                <span className="text-[11px] font-medium text-[rgb(var(--primary))] leading-none self-end">
+                <span className="text-[11px] font-medium text-[rgb(var(--primary-text))] leading-none self-end">
                   {dragSelection.endTime.toLocaleTimeString('en-US', {
                     hour: 'numeric',
                     minute: '2-digit',
@@ -1789,7 +1791,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
               setUndoToast(null)
               if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
             }}
-            className="font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
+            className="font-medium text-emerald-300 hover:text-emerald-200 dark:text-emerald-800 dark:hover:text-emerald-900 transition-colors"
           >
             Undo
           </button>

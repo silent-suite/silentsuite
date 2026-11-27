@@ -1007,7 +1007,7 @@ export function EventDialog({
               <button
                 onClick={() => void handleSave()}
                 disabled={!canSave || saving || !canWrite}
-                className={`shrink-0 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-950/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
+                className={`shrink-0 rounded-full bg-emerald-700 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-950/20 transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
                 title={!canWriteAccount ? 'Subscription required' : !calendarWritable ? 'This calendar is read-only' : undefined}
               >
                 {saving ? 'Saving…' : 'Done'}

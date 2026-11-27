@@ -124,7 +124,7 @@ export function PlanningPanel({ calendarId, onCalendarChange, armedTaskId, onArm
                   disabled={!usable}
                   aria-pressed={armed}
                   aria-label={`${armed ? 'Cancel placing' : 'Place'} ${task.title || 'Untitled'}`}
-                  className="no-min-size shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-[rgb(var(--primary))] hover:bg-[rgb(var(--surface))] disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  className="no-min-size shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-[rgb(var(--primary-text))] hover:bg-[rgb(var(--surface))] disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                 >
                   {pending ? 'Adding…' : armed ? 'Cancel' : 'Place'}
                 </button>

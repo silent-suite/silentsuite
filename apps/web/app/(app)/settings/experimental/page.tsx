@@ -85,7 +85,7 @@ function ExperimentalSettings() {
         {!enabled && !ready && <p role="status" className="text-sm text-[rgb(var(--muted))]">Finish syncing your account before enabling Notes.</p>}
         {busy && <p role="status" className="text-sm text-[rgb(var(--muted))]">Updating Notes…</p>}
         {error && <p role="alert" className="text-sm text-[rgb(var(--foreground))]">{error}</p>}
-        {enabled && <Link href="/notes" className="inline-block text-sm text-[rgb(var(--primary))] underline">Open Notes</Link>}
+        {enabled && <Link href="/notes" className="inline-block text-sm text-[rgb(var(--primary-text))] underline">Open Notes</Link>}
       </div>
       <BirthdaysSetting />
       <PlanningSetting />

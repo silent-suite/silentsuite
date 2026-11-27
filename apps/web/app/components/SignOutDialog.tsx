@@ -128,7 +128,7 @@ export function SignOutDialog({ account, changes: initialChanges, onLogout, onCl
             >
               {t('logOutAndDelete')}
             </button>
-            <button type="button" onClick={() => void syncNow()} disabled={busy} className={`${BUTTON_CLASS} bg-emerald-600 text-white hover:bg-emerald-500`}>
+            <button type="button" onClick={() => void syncNow()} disabled={busy} className={`${BUTTON_CLASS} bg-emerald-700 text-white hover:bg-emerald-800`}>
               {t('syncNow')}
             </button>
           </>

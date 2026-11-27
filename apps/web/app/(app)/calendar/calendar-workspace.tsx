@@ -446,7 +446,7 @@ function CalendarPageBody() {
                 end.setHours(end.getHours() + 1)
                 setCreateDialog({ startDate: start, endDate: end, allDay: false })
               }}
-              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
               aria-label="New event"
             >
               <Plus className="h-4 w-4" />
@@ -508,7 +508,7 @@ function CalendarPageBody() {
             aria-pressed={mobileCalendarMode === 'agenda'}
             className={`max-md:min-h-[44px] rounded-md px-3 text-sm font-medium transition-colors ${
               mobileCalendarMode === 'agenda'
-                ? 'bg-[rgb(var(--primary))] text-white'
+                ? 'bg-[rgb(var(--primary-strong))] text-white'
                 : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))]'
             }`}
           >
@@ -520,7 +520,7 @@ function CalendarPageBody() {
             aria-pressed={mobileCalendarMode === 'threeDay'}
             className={`max-md:min-h-[44px] rounded-md px-3 text-sm font-medium transition-colors ${
               mobileCalendarMode === 'threeDay'
-                ? 'bg-[rgb(var(--primary))] text-white'
+                ? 'bg-[rgb(var(--primary-strong))] text-white'
                 : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))]'
             }`}
           >
@@ -532,7 +532,7 @@ function CalendarPageBody() {
             aria-pressed={mobileCalendarMode === 'sevenDay'}
             className={`max-md:min-h-[44px] rounded-md px-3 text-sm font-medium transition-colors ${
               mobileCalendarMode === 'sevenDay'
-                ? 'bg-[rgb(var(--primary))] text-white'
+                ? 'bg-[rgb(var(--primary-strong))] text-white'
                 : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))]'
             }`}
           >

@@ -41,7 +41,7 @@ export default function AppError({
         <div className="flex items-center justify-center gap-3">
           <button
             onClick={reset}
-            className="rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
+            className="rounded-lg bg-[rgb(var(--primary-strong))] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
           >
             {t('tryAgain')}
           </button>

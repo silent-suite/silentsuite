@@ -97,7 +97,7 @@ export function ListSwitcher({
                   {list.name}
                 </span>
                 {list.id === activeListId && (
-                  <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-[rgb(var(--primary))]" />
+                  <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-[rgb(var(--primary-text))]" />
                 )}
               </button>
               {list.id !== 'default' && canWrite && (

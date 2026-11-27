@@ -282,7 +282,7 @@ function PasswordStrength({ password }: { password: string }) {
           <li
             key={check.label}
             className={`flex items-center gap-1.5 text-xs ${
-              check.met ? 'text-[rgb(var(--primary))]' : 'text-[rgb(var(--muted))]'
+              check.met ? 'text-[rgb(var(--primary-text))]' : 'text-[rgb(var(--muted))]'
             }`}
           >
             {check.met ? (
@@ -491,7 +491,7 @@ function StepCreateAccount({
               type="checkbox"
               checked={rememberDevice}
               onChange={(e) => onRememberDeviceChange(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
+              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary-text))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
             />
             <span className="text-xs text-[rgb(var(--muted))] leading-relaxed">Keep me signed in on this device</span>
           </label>
@@ -1384,7 +1384,7 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
               <div
                 className={`flex h-8 w-8 items-center justify-center rounded-full border-2 text-sm font-semibold transition-colors ${
                   i < currentIndex
-                    ? 'border-emerald-500 bg-emerald-500 text-white'
+                    ? 'border-emerald-700 bg-emerald-700 text-white'
                     : i === currentIndex
                       ? 'border-emerald-500 text-emerald-500'
                       : 'border-[rgb(var(--border))] text-[rgb(var(--muted))]'
@@ -1426,7 +1426,7 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
               <div
                 className={`flex h-6 w-6 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors ${
                   i < currentIndex
-                    ? 'border-emerald-500 bg-emerald-500 text-white'
+                    ? 'border-emerald-700 bg-emerald-700 text-white'
                     : i === currentIndex
                       ? 'border-emerald-500 text-emerald-500'
                       : 'border-[rgb(var(--border))] text-[rgb(var(--muted))]'
@@ -2530,7 +2530,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
             {showReturnFallback && returnTo && (
               <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
                 <p className="font-medium">Browser did not reopen the Android app automatically.</p>
-                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary-text))] underline">
                   Tap here to return to Android
                 </a>
               </div>

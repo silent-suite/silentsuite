@@ -416,7 +416,7 @@ function ContactForm({
             <button
               type="button"
               onClick={() => photoInputRef.current?.click()}
-              className="group relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-600 text-2xl font-semibold text-white transition-opacity"
+              className="group relative flex h-20 w-20 items-center justify-center rounded-full bg-emerald-700 text-2xl font-semibold text-white transition-opacity"
               aria-label="Add photo"
             >
               {photoUrl ? (
@@ -604,7 +604,7 @@ function ContactForm({
             <button
               type="submit"
               disabled={(!given.trim() && !family.trim()) || !canWrite}
-              className="flex-1 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors md:flex-initial"
+              className="flex-1 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors md:flex-initial"
               title={!canWriteAccount ? 'Subscription required' : !listWritable ? 'This address book is read-only' : undefined}
             >
               Save Contact
@@ -1344,7 +1344,7 @@ export default function ContactsPage() {
             type="button"
             onClick={() => setShowNewForm(true)}
             disabled={!canWrite}
-            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
+            className={`flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-800'}`}
             title={!canWriteAccount ? 'Subscription required' : !hasWritableList ? 'This address book is read-only' : undefined}
           >
             <Plus className="h-4 w-4" />
@@ -1363,7 +1363,7 @@ export default function ContactsPage() {
             type="button"
             aria-pressed={contactView === view}
             onClick={() => setContactView(view)}
-            className={`min-h-11 rounded-md px-3 text-sm ${contactView === view ? 'bg-emerald-600 text-white' : 'text-[rgb(var(--muted))]'}`}
+            className={`min-h-11 rounded-md px-3 text-sm ${contactView === view ? 'bg-emerald-700 text-white' : 'text-[rgb(var(--muted))]'}`}
           >
             {view === 'all' ? 'All' : 'Favorites'}
           </button>

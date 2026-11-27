@@ -37,7 +37,7 @@ export function FloatingAddButton() {
     <>
       <button
         onClick={handleClick}
-        className="fixed bottom-20 right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg transition-colors hover:bg-emerald-500 active:bg-emerald-700 md:hidden"
+        className="fixed bottom-20 right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-700 text-white shadow-lg transition-colors hover:bg-emerald-800 active:bg-emerald-900 md:hidden"
         aria-label="New event"
       >
         <Plus className="h-6 w-6" />

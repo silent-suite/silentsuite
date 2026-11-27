@@ -10,6 +10,14 @@
   --primary-hover: 5 150 105;
   --muted: 71 85 105;
   --border: 200 210 222;
+  /* Accessible brand roles (web only; --primary stays the Android-parity brand fill).
+     --primary-text: green text and icons, 4.5:1 or more on the page and light tints.
+     --primary-strong: solid green fill behind white text (5.48:1).
+     --danger-text: red text, 4.5:1 or more on the page and light tints. */
+  --primary-text: 4 120 87;
+  --primary-strong: 4 120 87;
+  --primary-strong-hover: 6 95 70;
+  --danger-text: 185 28 28;
   color-scheme: light;
 }
 
@@ -21,15 +29,19 @@
   --primary-hover: 16 185 129;
   --muted: 163 179 201;
   --border: 37 53 73;
+  --primary-text: 52 211 153;
+  --primary-strong: 4 120 87;
+  --primary-strong-hover: 6 95 70;
+  --danger-text: 248 113 113;
   color-scheme: dark;
 }
 
 /* Schedule-X calendar theme overrides */
 .sx-silentsuite-calendar {
-  --sx-color-primary: rgb(var(--primary));
+  --sx-color-primary: rgb(var(--primary-strong));
   --sx-color-on-primary: #fff;
   --sx-color-primary-container: rgb(var(--primary) / 0.15);
-  --sx-color-on-primary-container: rgb(var(--primary));
+  --sx-color-on-primary-container: rgb(var(--primary-text));
   --sx-color-background: rgb(var(--background));
   --sx-color-on-background: rgb(var(--foreground));
   --sx-color-surface: rgb(var(--background));
@@ -128,7 +140,7 @@
    --------------------------------------------------------------------------- */
 .sx-silentsuite-calendar .sx__week-header-day.sx__week-header-day--today .sx__week-header-day-date,
 .sx-silentsuite-calendar .sx__week-header-day[data-is-today="true"] .sx__week-header-day-date {
-  background: rgb(var(--primary));
+  background: rgb(var(--primary-strong));
   color: #fff;
   font-weight: 700;
   border-radius: 50%;
@@ -136,7 +148,7 @@
 
 .sx-silentsuite-calendar .sx__is-today .sx__week-header-day-date,
 .sx-silentsuite-calendar [class*="is-today"] .sx__week-header-day-date {
-  background: rgb(var(--primary));
+  background: rgb(var(--primary-strong));
   color: #fff;
   font-weight: 700;
   border-radius: 50%;
@@ -411,7 +423,7 @@
 .sx-silentsuite-calendar .sx__month-grid-day.sx__is-today .sx__month-grid-day__header,
 .sx-silentsuite-calendar .sx__month-grid-day[data-is-today="true"] .sx__month-grid-day__header {
   color: #fff;
-  background: rgb(var(--primary));
+  background: rgb(var(--primary-strong));
   border-radius: 50%;
   width: 26px;
   height: 26px;

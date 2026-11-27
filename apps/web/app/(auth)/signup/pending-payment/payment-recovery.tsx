@@ -418,7 +418,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
         {showReturnFallback && returnTo && (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
             <p className="font-medium">Browser did not reopen the Android app automatically.</p>
-            <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+            <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary-text))] underline">
               Tap here to return to Android
             </a>
           </div>
@@ -518,7 +518,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
             {showReturnFallback && returnTo && (
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
                 <p className="font-medium">Browser did not reopen the Android app automatically.</p>
-                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary-text))] underline">
                   Tap here to return to Android
                 </a>
               </div>

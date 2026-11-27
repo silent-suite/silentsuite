@@ -69,7 +69,7 @@ function isSubscriptionData(value: unknown): value is SubscriptionData {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  active: 'bg-[rgb(var(--primary))]/20 text-[rgb(var(--primary))]',
+  active: 'bg-[rgb(var(--primary))]/20 text-emerald-800 dark:text-emerald-400',
   trialing: 'bg-amber-500/20 text-amber-700 dark:text-amber-400',
   past_due: 'bg-red-500/20 text-red-700 dark:text-red-400',
   cancelled: 'bg-neutral-500/20 text-neutral-600 dark:text-neutral-400',
@@ -761,7 +761,7 @@ export default function SubscriptionPage() {
                 <p className="text-sm text-[rgb(var(--muted))]">Your data is safe and read-only.</p>
                 <Link
                   href="/settings/export"
-                  className="inline-flex min-h-11 items-center text-sm font-medium text-[rgb(var(--primary))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:focus-visible:ring-emerald-300"
+                  className="inline-flex min-h-11 items-center text-sm font-medium text-[rgb(var(--primary-text))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:focus-visible:ring-emerald-300"
                 >
                   Export your data
                 </Link>

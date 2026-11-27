@@ -157,7 +157,7 @@ export default function MobileSettingsPage() {
       <p className="text-xs text-[rgb(var(--muted))] text-center">
         <Monitor className="inline h-3 w-3 mr-1 -mt-0.5" />
         Looking for desktop integration?{' '}
-        <Link href="/settings/desktop" className="text-[rgb(var(--primary))] hover:underline">
+        <Link href="/settings/desktop" className="text-[rgb(var(--primary-text))] hover:underline">
           See Settings → Desktop bridge
         </Link>
         .

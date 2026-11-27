@@ -134,7 +134,7 @@ export function OnboardingChecklist() {
             <span className="text-xs font-medium text-[rgb(var(--foreground))]">
               Get started
             </span>
-            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[10px] font-semibold text-white">
+            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-emerald-700 px-1.5 text-[10px] font-semibold text-white">
               {completedCount}/{items.length}
             </span>
           </div>
