@@ -337,7 +337,9 @@ function StepCreateAccount({
     // Remove this cast once @hookform/resolvers ships native zod v4 support.
     // Tracking: https://github.com/react-hook-form/resolvers/issues
     resolver: zodResolver(needsPassword ? signupSchema : z.object({ email: signupEmailSchema.shape.email })) as any,
-    mode: 'onChange',
+    // SIGNUP-17: show a field error only after the user leaves the field, then update it live.
+    // isValid (the Continue button) still updates on every change.
+    mode: 'onTouched',
     defaultValues: initialData ?? undefined,
   })
 
