@@ -8,6 +8,7 @@ Usage:
     silentsuite-bridge
 """
 
+import errno
 import ipaddress
 import logging
 import os
@@ -878,6 +879,56 @@ def setup_macos_apple_accounts(dns_names=(), ip_addresses=(), replace_existing=F
     return 0
 
 
+# errno values for a port that is taken or not allowed; 10048 and 10013 are
+# the Windows socket codes (WSAEADDRINUSE, WSAEACCES).
+_PORT_IN_USE_ERRNOS = frozenset({errno.EADDRINUSE, 10048})
+_PORT_DENIED_ERRNOS = frozenset({errno.EACCES, errno.EPERM, 10013})
+
+
+def _explain_bind_failure(registry) -> str | None:
+    """Print plain guidance when no listener could open its port.
+
+    Returns a short log reason, or None when the failure was not a port
+    that was taken or not allowed (the caller then logs it as a crash).
+    The port number is shown only where listener addresses may be printed.
+    """
+    if registry.bound_listeners():
+        return None
+    failures = registry.failed_binds()
+    in_use = [port for code, port in failures if code in _PORT_IN_USE_ERRNOS]
+    denied = [port for code, port in failures if code in _PORT_DENIED_ERRNOS]
+    if not in_use and not denied:
+        return None
+
+    port = (in_use or denied)[0]
+    port_text = f"port {port}" if address_detail_enabled() else "its port"
+    example = (
+        config.DEFAULT_LISTEN_PORT + 1
+        if port == config.DEFAULT_LISTEN_PORT
+        else config.DEFAULT_LISTEN_PORT
+    )
+    if config.SERVER_HOSTS != config.DEFAULT_SERVER_HOSTS:
+        hint = "To use another port, change it in SILENTSUITE_SERVER_HOSTS."
+    else:
+        hint = (
+            "To use another port, set SILENTSUITE_LISTEN_PORT, "
+            f"for example SILENTSUITE_LISTEN_PORT={example}."
+        )
+
+    print()
+    if in_use:
+        print(f"The bridge could not start: {port_text} is already in use.")
+        print("Another bridge may already be running. On Linux, check with:")
+        print("  systemctl --user status silentsuite-bridge")
+        reason = "listening port already in use"
+    else:
+        print(f"The bridge could not start: it is not allowed to use {port_text}.")
+        print("Ports below 1024 need extra permission, and some ports are reserved by the system.")
+        reason = "not allowed to use the listening port"
+    print(hint)
+    return reason
+
+
 def run_server():
     """Start the Radicale server with SilentSuite backends."""
     configuration = build_radicale_configuration()
@@ -927,9 +978,17 @@ def run_server():
     except KeyboardInterrupt:
         logger.info("Bridge stopped by user")
     except Exception as exc:
-        log_bounded_failure(logger, logging.ERROR, "Bridge crashed", exc)
-        if tray:
-            tray.update_state("error", "Bridge crashed")
+        from .radicale.server import get_registry
+
+        reason = _explain_bind_failure(get_registry())
+        if reason:
+            logger.error("Bridge could not start: %s", reason)
+            if tray:
+                tray.update_state("error", "Bridge could not start")
+        else:
+            log_bounded_failure(logger, logging.ERROR, "Bridge crashed", exc)
+            if tray:
+                tray.update_state("error", "Bridge crashed")
         sys.exit(1)
 
 
