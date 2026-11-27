@@ -6,7 +6,8 @@ categories:
 - productivity
 changelog_url: https://github.com/silent-suite/silentsuite/releases
 date_added: '2026-11-27'
-description: End-to-end encrypted calendar, contacts, tasks and notes, built on the Etebase protocol.
+description: End-to-end encrypted calendar, contacts, tasks and notes, built on the
+  Etebase protocol.
 home: https://silentsuite.io
 host_mounts: []
 icon: https://media.sys.truenas.net/apps/silentsuite/icons/icon.svg
@@ -25,31 +26,33 @@ maintainers:
   url: https://www.truenas.com/
 name: silentsuite
 run_as_context:
-- description: Container [server] runs as non-root user and group.
-  gid: 101
-  group_name: Host group is [101]
-  uid: 100
-  user_name: Host user is [100]
-- description: Container [web] runs as non-root user and group.
-  gid: 1001
-  group_name: Host group is [1001]
-  uid: 1001
-  user_name: Host user is [1001]
-- description: Container [router] runs as non-root user and group.
-  gid: 101
-  group_name: Host group is [101]
-  uid: 101
-  user_name: Host user is [101]
 - description: Container [postgres] runs as non-root user and group.
   gid: 999
   group_name: Host group is [docker]
   uid: 999
   user_name: Host user is [netdata]
+- description: Container [router] runs as non-root user and group.
+  gid: 101
+  group_name: Host group is [systemd-timesync]
+  uid: 101
+  user_name: Host user is [systemd-timesync]
+- description: Container [server] can run as any non-root user and group.
+  gid: 568
+  group_name: Host group is [apps]
+  uid: 568
+  user_name: Host user is [apps]
+- description: Container [web] runs as non-root user and group.
+  gid: 1001
+  group_name: Host group is [unknown (1001)]
+  uid: 1001
+  user_name: Host user is [unknown (1001)]
 screenshots: []
 sources:
+- https://apps.truenas.com/catalog/silentsuite_community/
 - https://github.com/silent-suite/silentsuite
 - https://github.com/silent-suite/silentsuite/pkgs/container/silentsuite-server
 - https://github.com/silent-suite/silentsuite/pkgs/container/silentsuite-web-selfhost
 title: SilentSuite
 train: community
 version: 1.0.0
+risks: []

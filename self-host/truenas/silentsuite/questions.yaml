@@ -185,8 +185,14 @@ questions:
                                     type: string
                                     required: true
                                     enum:
+                                      - value: postgres
+                                        description: postgres
                                       - value: router
                                         description: router
+                                      - value: server
+                                        description: server
+                                      - value: web
+                                        description: web
                                 - variable: config
                                   label: Container Network Configuration
                                   schema:
@@ -324,8 +330,8 @@ questions:
                         Enabling this, will check the top level directory,</br>
                         If it finds incorrect permissions, it will `chown` the
                         host path to the user and group required for the
-                        server container (uid 100, gid 101).</br>
-                        Without it, the path must be writable for uid 100 / gid 101.
+                        server container (the apps user, uid 568 / gid 568).</br>
+                        Without it, the path must be writable for uid 568 / gid 568.
                       schema:
                         type: boolean
                         default: false

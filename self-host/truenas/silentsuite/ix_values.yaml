@@ -24,9 +24,10 @@ consts:
   router_container_name: router
   postgres_container_name: postgres
   perms_container_name: permissions
-  # Users built into the images: etebase (server), nextjs (web), nginx (router).
-  server_user: 100
-  server_group: 101
+  # The server owns the data storage, so it runs as the TrueNAS apps user (568).
+  # The web (nextjs) and router (nginx) images keep their own users; they write no host storage.
+  server_user: 568
+  server_group: 568
   web_user: 1001
   web_group: 1001
   router_user: 101

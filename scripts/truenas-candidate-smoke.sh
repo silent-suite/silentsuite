@@ -195,8 +195,10 @@ wait_for_log() {
 render_private tls tls
 up tls
 server_image="$(docker inspect -f '{{.Config.Image}}' "$(cid server)")"
-server_uid="$(docker run --rm --pull=never --entrypoint id "$server_image" -u etebase)"
-server_gid="$(docker run --rm --pull=never --entrypoint id "$server_image" -g etebase)"
+server_user="$(docker inspect -f '{{.Config.User}}' "$(cid server)")"
+server_uid="${server_user%%:*}"
+server_gid="${server_user##*:}"
+[ "$server_user" = "568:568" ] || fail "server must run as the TrueNAS apps user"
 python3 "$work/probe/probe.py" published
 helper account
 

@@ -10,7 +10,8 @@ listed in the TrueNAS catalog yet.
   origin, with HTTPS from a TrueNAS certificate, or plain HTTP behind your own HTTPS reverse
   proxy. It keeps request paths out of its logs, never routes `/admin/`, and rate-limits the
   installation-owner login.
-- `server`: the published `silentsuite-server` image, started by `templates/macros/server-start.sh`.
+- `server`: the published `silentsuite-server` image, run as the TrueNAS `apps` user (568) and
+  started by `templates/macros/server-start.sh`.
   The wrapper writes the server configuration to a private tmpfs on every start, creates the
   registration signing key once in the data storage, and refuses to start on a data directory it
   cannot write or on secret files that are links or owned by someone else.
