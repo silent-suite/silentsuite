@@ -774,7 +774,10 @@ export default function SubscriptionPage() {
         {/* A retryable payment has its own box below; otherwise say why the badge is red. */}
         {!notice && data.status === 'past_due' && !capabilities.canRetryPayment && (
           <p className="text-sm text-[rgb(var(--muted))]">
-            Your last payment didn&apos;t go through.{showPaidRecovery && ` ${paidRecoveryLabel} to start a new yearly plan.`}
+            {/* Only a confirmed open flow changes what Subscribe does; a failed or pending read keeps the plain sentence. */}
+            Your last payment didn&apos;t go through.{showPaidRecovery && (showCryptoFlowNotice
+              ? ` ${paidRecoveryLabel} to open the cryptocurrency payment you already started.`
+              : ` ${paidRecoveryLabel} to start a new yearly plan.`)}
           </p>
         )}
 
