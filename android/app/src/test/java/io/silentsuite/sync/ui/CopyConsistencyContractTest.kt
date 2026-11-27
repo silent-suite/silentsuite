@@ -32,6 +32,8 @@ class CopyConsistencyContractTest {
     fun dashboardSaysJustNowUnderAMinute() {
         assertTrue(strings.contains("<string name=\"dashboard_time_just_now\">just now</string>"))
         val relativeTime = account.substringAfter("private fun relativeTime(").substringBefore("\n    }\n")
-        assertTrue(relativeTime.contains("< DateUtils.MINUTE_IN_MILLIS) return getString(R.string.dashboard_time_just_now)"))
+        // Only 0 up to a minute ago; a future time falls back to Android's text.
+        assertTrue(relativeTime.contains("if (now - timestamp in 0 until DateUtils.MINUTE_IN_MILLIS) return getString(R.string.dashboard_time_just_now)"))
+        assertTrue(relativeTime.contains("return DateUtils.getRelativeTimeSpanString(timestamp, now, DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)"))
     }
 }

@@ -1335,10 +1335,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         else -> R.string.dashboard_services_title
     })
 
-    // Under a minute, Android would print "0 min. ago"; say "just now" instead.
+    // Under a minute, Android would print "0 min. ago"; say "just now" instead. A time in the future
+    // (the clock moved back) keeps Android's own text.
     private fun relativeTime(timestamp: Long): CharSequence {
         val now = System.currentTimeMillis()
-        if (now - timestamp < DateUtils.MINUTE_IN_MILLIS) return getString(R.string.dashboard_time_just_now)
+        if (now - timestamp in 0 until DateUtils.MINUTE_IN_MILLIS) return getString(R.string.dashboard_time_just_now)
         return DateUtils.getRelativeTimeSpanString(timestamp, now, DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
     }
 
