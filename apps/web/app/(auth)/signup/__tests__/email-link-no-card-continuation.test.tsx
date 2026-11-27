@@ -68,7 +68,7 @@ function tooManyCancels(body: unknown, retryAfter: string) {
 }
 vi.mock('@/app/stores/use-etebase-store', () => ({ normalizeServerUrl: (value: string) => value }))
 vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
-vi.mock('@/app/lib/self-hosted', () => ({ isSelfHosted: false, isCustomServer: () => false }))
+vi.mock('@/app/lib/self-hosted', () => ({ isSelfHosted: false, isCustomServer: (url?: string) => url === 'https://sync.example.test' }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/app/components/stripe-payment-form', () => ({ default: ({ submitLabel, mode, onSuccess }: { submitLabel: string; mode: string; onSuccess: () => void }) => <button data-testid="card-submit" data-mode={mode} onClick={onSuccess}>{submitLabel}</button> }))
 const trackInPageCheckoutReturned = vi.hoisted(() => vi.fn())
@@ -699,6 +699,112 @@ describe('email-link seven-day no-card continuation', () => {
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/activate'))).toHaveLength(1)
   })
 
+  describe('one account step before every payment (hosted signup pass)', () => {
+    const phase = () => window.history.state?.silentsuiteSignup?.phase
+    const unconfirmed = () => new BillingResponseError('Payment provider confirmation is pending. Retry with the same recovery secret.', 503, 'https://api.silentsuite.io/errors/provider-unavailable')
+
+    it.each(['stripe', 'btcpay'] as const)('creates the account with the intent before the first %s start, and a retry after dispatch keeps the payment phase', async (provider) => {
+      const order: string[] = []
+      authState.createEtebaseAccount.mockImplementation(async () => { order.push(`account:${phase()}`) })
+      authState.startAnnualSignupPayment.mockImplementation(async () => { order.push(`payment:${phase()}`); throw unconfirmed() })
+      await reachPlanScreen()
+      await choosePaymentMethod(provider)
+      await screen.findByText(/Payment creation is not yet confirmed/)
+      expect(authState.createEtebaseAccount).toHaveBeenCalledWith('expiry@example.test', 'ValidPass1', undefined, undefined, { kind: 'intent', checkoutIntentToken: signedCheckoutIntent })
+      fireEvent.click(await screen.findByRole('button', { name: provider === 'stripe' ? /^retry card (setup|payment)$/i : /^retry cryptocurrency payment$/i }))
+      await waitFor(() => expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(2))
+      // The confirm/retry path goes through the same account step (the store logs in), and never re-marks setup.
+      expect(order).toEqual(['account:setup', 'payment:payment', 'account:payment', 'payment:payment'])
+      expect(phase()).toBe('payment')
+      authState.createEtebaseAccount.mockReset()
+    })
+
+    it('a failed account step starts no payment; refresh shows setup recovery, not "Verify your email again"', async () => {
+      authState.createEtebaseAccount.mockRejectedValueOnce(new Error('Unable to reach the server. Please check your connection and try again.'))
+      await reachPlanScreen()
+      await choosePaymentMethod('btcpay')
+      expect(await screen.findByRole('alert')).toHaveTextContent('Unable to reach the server')
+      expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+      expect(phase()).toBe('setup')
+      cleanup()
+      window.history.replaceState(window.history.state, '', '/signup')
+      render(<SignupPage />)
+      expect(await screen.findByText(/Setup may already have started/)).toBeVisible()
+      expect(screen.queryByRole('button', { name: 'Verify email again' })).not.toBeInTheDocument()
+      expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+    })
+
+    it('after a lost account response, release and Back never reopen the password chooser', async () => {
+      authState.createEtebaseAccount.mockRejectedValueOnce(new Error('Encrypted account connection failed'))
+      await reachPlanScreen()
+      await choosePaymentMethod('stripe')
+      expect(await screen.findByRole('alert')).toHaveTextContent('Encrypted account connection failed')
+      expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+      const prior = vi.mocked(fetch).getMockImplementation()!
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith('/cancel')) return new Response(JSON.stringify({ contractVersion: 2, requestId,
+          checkoutIntentJti: 'a2c4f872-01b7-4176-8325-522486b20cae', state: 'released' }))
+        return prior(input, init)
+      }))
+      // The unattempted claim is released; then Back from the plans keeps the original password.
+      fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+      await screen.findByRole('heading', { name: /choose your plan/i })
+      fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Your original password remains unchanged')
+      expect(screen.queryByRole('heading', { name: 'Choose your password' })).not.toBeInTheDocument()
+      expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+    })
+
+    const refusal = () => Object.assign(new Error('refused'), { name: 'HostedSignupRefusedError' })
+
+    it('a hosted signup refusal shows the re-verify screen, starts no payment and keeps no password', async () => {
+      authState.createEtebaseAccount.mockRejectedValueOnce(refusal())
+      await reachPlanScreen()
+      await choosePaymentMethod('btcpay')
+      expect(await screen.findByRole('heading', { name: 'Verify your email again' })).toBeVisible()
+      expect(screen.getByText(/so no account was created and no payment was started/)).toBeVisible()
+      expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Verify email again' }))
+      expect(await screen.findByLabelText(/^email$/i)).toHaveValue('expiry@example.test')
+      // Only this refused attempt ran, so nothing needs recovery.
+      expect(phase()).not.toBe('setup')
+      // A custom server chosen now starts from empty password fields.
+      fireEvent.change(screen.getByPlaceholderText('https://sync.example.com'), { target: { value: 'https://sync.example.test' } })
+      expect(await screen.findByLabelText(/^password$/i)).toHaveValue('')
+      expect(screen.getByLabelText(/^confirm password$/i)).toHaveValue('')
+    })
+
+    it('a refusal after a lost account response offers only setup recovery (sign in or support), never a new email link', async () => {
+      authState.createEtebaseAccount
+        .mockRejectedValueOnce(new Error('Unable to reach the server. Please check your connection and try again.'))
+        .mockRejectedValueOnce(refusal())
+      await reachPlanScreen()
+      await choosePaymentMethod('btcpay')
+      expect(await screen.findByRole('alert')).toHaveTextContent('Unable to reach the server')
+      fireEvent.click(await screen.findByRole('button', { name: /^retry cryptocurrency payment$/i }))
+      // The account may exist: the screen offers signing in or support and nothing that re-verifies or picks a password.
+      expect(await screen.findByRole('heading', { name: 'Continue your signup safely' })).toBeVisible()
+      expect(screen.getByText(/Setup may already have started/)).toBeVisible()
+      expect(screen.getByText('Sign in to your account')).toBeVisible()
+      expect(screen.getByRole('link', { name: 'Contact support' })).toHaveAttribute('href', 'mailto:support@silentsuite.io')
+      expect(screen.queryByRole('button')).not.toBeInTheDocument()
+      expect(screen.queryByText(/no account was created/)).not.toBeInTheDocument()
+      expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument()
+      // The setup marker stays, so a refresh lands on the same recovery.
+      expect(phase()).toBe('setup')
+      expect(authState.createEtebaseAccount).toHaveBeenCalledTimes(2)
+      expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+    })
+
+    it('the no-card path refused by the server shows the same re-verify screen', async () => {
+      const confirm = await openConfirmation()
+      authState.createEtebaseAccount.mockRejectedValueOnce(Object.assign(new Error('refused'), { name: 'HostedSignupRefusedError' }))
+      fireEvent.click(confirm)
+      expect(await screen.findByRole('heading', { name: 'Verify your email again' })).toBeVisible()
+      expect(authState.provisionAnnualNoCard).not.toHaveBeenCalled()
+    })
+  })
+
   it('describes Bitcoin settlement separately from unfinished account and vault setup', async () => {
     await reachPlanScreen()
     authState.startAnnualSignupPayment.mockResolvedValue({ cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/settled', cryptoInvoiceId: 'settled', cryptoInvoiceLookupToken: 'lookup' })
@@ -913,7 +1019,7 @@ describe('email-link seven-day no-card continuation', () => {
     expect(authState.prepareSignupDraft).toHaveBeenCalledTimes(1)
     fireEvent.click(consent)
     await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(successorToken))
-    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('expiry@example.test', 'ValidPass1', undefined)
+    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('expiry@example.test', 'ValidPass1', undefined, undefined, { kind: 'intent', checkoutIntentToken: expect.any(String) })
   })
 
   it('ignores an independently delayed cancellation response from an unmounted predecessor', async () => {
@@ -1058,7 +1164,8 @@ describe('email-link seven-day no-card continuation', () => {
     if (provider === 'none') fireEvent.click(await openConfirmation())
     else { await reachPlanScreen(); await choosePaymentMethod('stripe') }
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid request')
-    expect(authState.createEtebaseAccount).toHaveBeenCalledTimes(provider === 'none' ? 1 : 0)
+    // Paid starts now create the account first, like the no-card path.
+    expect(authState.createEtebaseAccount).toHaveBeenCalledTimes(1)
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2100-01-01T00:00:00Z'))
     try {
       fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
@@ -1325,7 +1432,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(await acknowledgePasswordKey())
 
     await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
-    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'ValidPass1', undefined)
+    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'ValidPass1', undefined, undefined, { kind: 'intent', checkoutIntentToken: expect.any(String) })
     expect(window.location.search).toContain('return_to=silentsuite')
     expect(fetch).toHaveBeenCalledTimes(3)
     expect(localStorage.getItem('silentsuite-signup-email-proof') ?? '').not.toContain('ValidPass1')
@@ -1365,7 +1472,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(await acknowledgePasswordKey())
 
     await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
-    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('newtab@example.test', 'ValidPass1', undefined)
+    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('newtab@example.test', 'ValidPass1', undefined, undefined, { kind: 'intent', checkoutIntentToken: expect.any(String) })
     // The consumed continuation must not outlive the funnel it authorized.
     expect(localStorage.getItem('silentsuite-signup-email-proof')).toBeNull()
   })
@@ -1576,7 +1683,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     fireEvent.click(await acknowledgePasswordKey())
     await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
-    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('renew@example.test', 'ValidPass1', undefined)
+    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('renew@example.test', 'ValidPass1', undefined, undefined, { kind: 'intent', checkoutIntentToken: expect.any(String) })
   })
 
   it.each([

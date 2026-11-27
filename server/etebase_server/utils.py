@@ -15,6 +15,7 @@
 import os
 import stat
 
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management import utils
 
 
@@ -28,3 +29,23 @@ def get_secret_from_file(path):
             secret_key = utils.get_random_secret_key()
             f.write(secret_key)
             return secret_key
+
+
+def signup_mode(registration_token: str, owner_password: str, hosted_pass_required: bool) -> str:
+    """The name of the configured signup mode (never any configured value).
+
+    The hosted signup pass replaces the self-host registration token and owner modes, which use the
+    same request header, so combining them is a configuration error.
+    """
+    if hosted_pass_required:
+        if registration_token or owner_password:
+            raise ImproperlyConfigured(
+                "ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED cannot be combined with "
+                "ETEBASE_REGISTRATION_TOKEN or ETEBASE_OWNER_PASSWORD"
+            )
+        return "hosted-pass"
+    if owner_password:
+        return "owner"
+    if registration_token:
+        return "registration-token"
+    return "open"

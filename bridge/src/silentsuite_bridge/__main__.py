@@ -8,6 +8,7 @@ Usage:
     silentsuite-bridge
 """
 
+import errno
 import ipaddress
 import logging
 import os
@@ -35,6 +36,43 @@ _ACCOUNT_ACTION_FLAGS = (
     "--remove-account",
 )
 _RADICALE_SERVER_APPLICATION_LOCK = threading.Lock()
+
+# Every option main() reads. Keep in step with the handlers below and --help.
+_FLAG_OPTIONS = frozenset({
+    "--help", "-h", "--version", "--check-update", "--self-update",
+    "--login", "--manual-login", "--list-accounts", "--install-autostart",
+    "--remove-autostart", "--no-tray", "--background",
+    "--background-child",  # internal: the windowless copy --background starts
+    "--setup-macos-apple-accounts", "--replace-existing",
+})
+_VALUE_OPTIONS = frozenset({
+    "--server", "--logout", "--remove-account", "--dns-san", "--ip-san",
+})
+
+
+def _unknown_option(args):
+    """Return the first argument main() does not understand, or None.
+
+    Without this check a typo such as ``--lgout`` would fall through to a
+    full bridge start. Missing values are left to each option's own handler.
+    Arguments the OS or a frozen runtime adds are tolerated: macOS Launch
+    Services may pass ``-psn_<id>``, and Python's multiprocessing re-runs a
+    frozen Windows binary with ``--multiprocessing-fork`` and key=value
+    arguments.
+    """
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--multiprocessing-fork":
+            return None
+        if arg.startswith("-psn_") or arg in _FLAG_OPTIONS:
+            index += 1
+        elif arg in _VALUE_OPTIONS:
+            has_value = index + 1 < len(args) and not args[index + 1].startswith("--")
+            index += 2 if has_value else 1
+        else:
+            return arg.split("=", 1)[0] if arg.startswith("--") else arg
+    return None
 
 
 def configure_logging():
@@ -359,7 +397,7 @@ def start_tray():
         from .tray import TRAY_AVAILABLE, BridgeTray
 
         if not TRAY_AVAILABLE:
-            logger.info("System tray not available (pystray/Pillow not installed)")
+            logger.info("No tray icon in this build; use the bridge dashboard in your browser")
             return None
 
         tray = BridgeTray(bridge_state="starting")
@@ -841,6 +879,56 @@ def setup_macos_apple_accounts(dns_names=(), ip_addresses=(), replace_existing=F
     return 0
 
 
+# errno values for a port that is taken or not allowed; 10048 and 10013 are
+# the Windows socket codes (WSAEADDRINUSE, WSAEACCES).
+_PORT_IN_USE_ERRNOS = frozenset({errno.EADDRINUSE, 10048})
+_PORT_DENIED_ERRNOS = frozenset({errno.EACCES, errno.EPERM, 10013})
+
+
+def _explain_bind_failure(registry) -> str | None:
+    """Print plain guidance when no listener could open its port.
+
+    Returns a short log reason, or None when the failure was not a port
+    that was taken or not allowed (the caller then logs it as a crash).
+    The port number is shown only where listener addresses may be printed.
+    """
+    if registry.bound_listeners():
+        return None
+    failures = registry.failed_binds()
+    in_use = [port for code, port in failures if code in _PORT_IN_USE_ERRNOS]
+    denied = [port for code, port in failures if code in _PORT_DENIED_ERRNOS]
+    if not in_use and not denied:
+        return None
+
+    port = (in_use or denied)[0]
+    port_text = f"port {port}" if address_detail_enabled() else "its port"
+    example = (
+        config.DEFAULT_LISTEN_PORT + 1
+        if port == config.DEFAULT_LISTEN_PORT
+        else config.DEFAULT_LISTEN_PORT
+    )
+    if config.SERVER_HOSTS != config.DEFAULT_SERVER_HOSTS:
+        hint = "To use another port, change it in SILENTSUITE_SERVER_HOSTS."
+    else:
+        hint = (
+            "To use another port, set SILENTSUITE_LISTEN_PORT, "
+            f"for example SILENTSUITE_LISTEN_PORT={example}."
+        )
+
+    print()
+    if in_use:
+        print(f"The bridge could not start: {port_text} is already in use.")
+        print("Another bridge may already be running. On Linux, check with:")
+        print("  systemctl --user status silentsuite-bridge")
+        reason = "listening port already in use"
+    else:
+        print(f"The bridge could not start: it is not allowed to use {port_text}.")
+        print("Ports below 1024 need extra permission, and some ports are reserved by the system.")
+        reason = "not allowed to use the listening port"
+    print(hint)
+    return reason
+
+
 def run_server():
     """Start the Radicale server with SilentSuite backends."""
     configuration = build_radicale_configuration()
@@ -890,9 +978,17 @@ def run_server():
     except KeyboardInterrupt:
         logger.info("Bridge stopped by user")
     except Exception as exc:
-        log_bounded_failure(logger, logging.ERROR, "Bridge crashed", exc)
-        if tray:
-            tray.update_state("error", "Bridge crashed")
+        from .radicale.server import get_registry
+
+        reason = _explain_bind_failure(get_registry())
+        if reason:
+            logger.error("Bridge could not start: %s", reason)
+            if tray:
+                tray.update_state("error", "Bridge could not start")
+        else:
+            log_bounded_failure(logger, logging.ERROR, "Bridge crashed", exc)
+            if tray:
+                tray.update_state("error", "Bridge crashed")
         sys.exit(1)
 
 
@@ -1066,6 +1162,8 @@ def main():
         print(f"SilentSuite Bridge v{__version__}")
         print("E2EE CalDAV/CardDAV sync daemon\n")
         print("Usage: silentsuite-bridge [OPTIONS]\n")
+        print("While the bridge runs, its dashboard (default http://localhost:37358/) shows")
+        print("the status and DAV URLs and has Report a problem.\n")
         print("Options:")
         print("  --help, -h            Show this help message and exit")
         print("  --version             Show version and exit")
@@ -1084,7 +1182,8 @@ def main():
         print("                        settings.json so the clean-environment restart keeps them")
         print("  --remove-autostart    Remove auto-start for current platform (keeps settings;")
         print("                        on Windows a running bridge is not stopped)")
-        print("  --no-tray             Start without system tray icon")
+        print("  --no-tray             Start without the tray icon (source installs; the")
+        print("                        release binaries have no tray)")
         print("  --background          Windows: start the bridge without a window, so closing")
         print("                        the terminal does not stop it")
         print("  --setup-macos-apple-accounts")
@@ -1112,6 +1211,11 @@ def main():
         print("  SILENTSUITE_BRIDGE_SSL_CERT  Path to the SSL certificate file")
         print("  SILENTSUITE_BRIDGE_SSL_KEY   Path to the SSL private key file")
         sys.exit(0)
+
+    unknown = _unknown_option(sys.argv[1:])
+    if unknown is not None:
+        print(f"Unknown option {unknown}. Run silentsuite-bridge --help.", file=sys.stderr)
+        sys.exit(2)
 
     # Handle --version before any side effects
     if "--version" in sys.argv:
@@ -1242,7 +1346,7 @@ def main():
 
     # Handle --list-accounts before any bridge startup side effects.
     if "--list-accounts" in sys.argv:
-        from .accounts import list_accounts
+        from .accounts import list_accounts, list_signed_out_accounts
         from .radicale.creds import Credentials
 
         creds = Credentials()
@@ -1253,6 +1357,11 @@ def main():
             print("Configured accounts:")
             for user in users:
                 print(f"- {user} ({creds.get_server_url(user)})")
+        signed_out = list_signed_out_accounts(credentials=creds)
+        if signed_out:
+            print("Signed out, local copy kept:")
+            for user in signed_out:
+                print(f"- {user} (remove with: silentsuite-bridge --remove-account {user})")
         sys.exit(0)
 
     if "--logout" in sys.argv:

@@ -1,0 +1,154 @@
+{
+  "contractVersion": 2,
+  "header": "x-silentsuite-registration-token",
+  "ttlSeconds": 600,
+  "pass": {
+    "generator": "secrets.token_urlsafe(32)",
+    "length": 43,
+    "stored": "sha256-hex"
+  },
+  "server": {
+    "method": "POST",
+    "route": "/api/v1/billing/signup-pass/",
+    "machineKeyHeader": "x-etebase-billing-key",
+    "machineKeyEnv": "ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY",
+    "request": {
+      "email": "string"
+    },
+    "responses": {
+      "200": {
+        "signupPass": "string",
+        "expiresIn": 600
+      },
+      "400": {
+        "code": "unsupported_address"
+      },
+      "401": "machine key missing or wrong",
+      "409": {
+        "code": "name_taken"
+      }
+    },
+    "requiredSetting": "ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED",
+    "signupRefusal": {
+      "status": 403,
+      "code": "registration_token_required"
+    }
+  },
+  "billing": {
+    "method": "POST",
+    "route": "/auth/signup-pass/v2",
+    "requests": {
+      "intent": {
+        "contractVersion": 2,
+        "kind": "intent",
+        "email": "string",
+        "checkoutIntentToken": "string"
+      },
+      "ownership": {
+        "contractVersion": 2,
+        "kind": "ownership",
+        "email": "string",
+        "requestId": "string",
+        "emailOwnershipToken": "string"
+      }
+    },
+    "responses": {
+      "200": {
+        "signupPass": "string",
+        "expiresIn": 600
+      },
+      "400": [
+        {
+          "code": "ownership-required"
+        },
+        {
+          "code": "unsupported-address"
+        }
+      ],
+      "404": {
+        "code": "not_available"
+      },
+      "409": {
+        "code": "signup-name-taken"
+      },
+      "503": "server 5xx or unreachable"
+    }
+  },
+  "vectors": [
+    {
+      "name": "lower-case plain",
+      "input": "alice@example.com",
+      "supported": true
+    },
+    {
+      "name": "plus and dot",
+      "input": "alice.b+tag@example.com",
+      "supported": true
+    },
+    {
+      "name": "upper case",
+      "input": "Alice@example.com",
+      "supported": false
+    },
+    {
+      "name": "leading space",
+      "input": " alice@example.com",
+      "supported": false
+    },
+    {
+      "name": "trailing space",
+      "input": "alice@example.com ",
+      "supported": false
+    },
+    {
+      "name": "NFKC variant (fullwidth a)",
+      "input": "\uff41lice@example.com",
+      "supported": false
+    },
+    {
+      "name": "exactly 150 chars",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccc.com",
+      "supported": true
+    },
+    {
+      "name": "151 chars",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccc.com",
+      "supported": false
+    },
+    {
+      "name": "254 chars",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com",
+      "supported": false
+    },
+    {
+      "name": "two @",
+      "input": "alice@bob@example.com",
+      "supported": false
+    },
+    {
+      "name": "character the username validator rejects (!)",
+      "input": "alice!@example.com",
+      "supported": false
+    },
+    {
+      "name": "non-ASCII local part",
+      "input": "j\u00f6rg@example.com",
+      "supported": false
+    },
+    {
+      "name": "non-ASCII domain",
+      "input": "alice@ex\u00e4mple.com",
+      "supported": true
+    },
+    {
+      "name": "no @",
+      "input": "alice.example.com",
+      "supported": false
+    },
+    {
+      "name": "empty",
+      "input": "",
+      "supported": false
+    }
+  ]
+}

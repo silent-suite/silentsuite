@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, Loader2 } from 'lucide-react'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
+import { isCustomServer } from '@/app/lib/self-hosted'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import {
 
@@ -93,6 +94,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
   const saveSignupStateForRedirect = useAuthStore((s) => s.saveSignupStateForRedirect)
   const restoreSignupStateFromRedirect = useAuthStore((s) => s.restoreSignupStateFromRedirect)
   const pendingSignup = useAuthStore((s) => s.pendingSignup)
+  const etebaseAccountReady = pendingSignup?.etebaseAccountReady === true
   const [returnTo, setReturnTo] = useState<string | null>(null)
   const [showReturnFallback, setShowReturnFallback] = useState(false)
   const [ownedPayable, setOwnedPayable] = useState<{ identity: string; value: AnonymousPaymentSessionRecovery['continuation'] }>()
@@ -349,7 +351,11 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
       setState('vault')
       return
     }
-    await createEtebaseAccount(restoredEmail, data.password)
+    // The restored checkpoint's server, but only the hosted one: hosted payment
+    // recovery never sends the account password to another server.
+    const restoredServerUrl = useAuthStore.getState().pendingSignup?.serverUrl
+    if (isCustomServer(restoredServerUrl)) throw new Error('This payment can only be finished on the SilentSuite server. Contact support@silentsuite.io and we will finish your setup.')
+    await createEtebaseAccount(restoredEmail, data.password, restoredServerUrl)
     await finalizePaidSignup()
     setState('vault')
   }
@@ -471,7 +477,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
             <p className="text-xs text-[rgb(var(--muted))]">One last account step before your vault setup.</p>
           </div>
         </div>
-        <StepCreatePaidAccount email={restoredEmail} onNext={handlePaidAccountComplete} />
+        <StepCreatePaidAccount email={restoredEmail} onNext={handlePaidAccountComplete} accountReady={etebaseAccountReady} />
       </div>
     )
   }

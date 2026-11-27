@@ -3,13 +3,7 @@ import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { _resetForTests as resetOfflineQueue, casStub, clearFailed, getAll, getFailedCount, replay, retryFailed } from '@/app/lib/offline-queue'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
-import {
-  _resetForTests as resetDataCache,
-  _setEncryptedCacheAvailableForTests,
-  _setEnvelopeKeyForTests,
-  ensureFingerprint,
-  isCacheEnabled,
-} from '@/app/lib/data-cache'
+import { _resetForTests as resetDataCache } from '@/app/lib/data-cache'
 import { deserializeContact, serializeContact } from '@silentsuite/core'
 
 const toastMock = vi.hoisted(() => ({ showErrorToast: vi.fn() }))
@@ -915,57 +909,6 @@ describe('#744 destructive note and contact paths delete only what this context 
     for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 10))
   }
 
-  /**
-   * Storage timing observation only: the real IndexedDB delete of one cached item runs
-   * unchanged; its completion is handed to the caller only after the test's barrier.
-   */
-  function holdCacheDelete(uid: string) {
-    const proto = (globalThis as any).IDBObjectStore.prototype
-    const original = proto.delete
-    let release = () => {}
-    const gate = new Promise<void>((resolve) => { release = resolve })
-    let arrived = () => {}
-    const reached = new Promise<void>((resolve) => { arrived = resolve })
-    proto.delete = function heldDelete(this: IDBObjectStore, key: IDBValidKey) {
-      const request = original.call(this, key)
-      if (this.name === 'items' && key === uid) {
-        // The cache resolves on its transaction's completion: the real commit happens, its callback waits.
-        const tx = this.transaction
-        const complete = tx.oncomplete
-        tx.oncomplete = (event: Event) => { void gate.then(() => complete?.call(tx, event)) }
-        arrived()
-      }
-      return request
-    }
-    return { reached, release, restore: () => { proto.delete = original } }
-  }
-
-  it('#744 keeps a note shown with typing that began while its notebook clear waited on local storage', async () => {
-    const { collection, item } = await shownNotes()
-    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
-    _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
-    _setEncryptedCacheAvailableForTests(true)
-    await ensureFingerprint(FINGERPRINT, queueGuard().accountEpoch)
-    const editor = steerableEditor(item)
-    const cacheDelete = holdCacheDelete(item.uid)
-    try {
-      expect(isCacheEnabled()).toBe(true)
-      const clearing = useEtebaseStore.getState().deleteItemsInCollection('notes', collection.uid)
-      // The server delete was accepted and the retention check passed; typing starts during the storage wait.
-      await cacheDelete.reached
-      editor.type()
-      cacheDelete.release()
-      await clearing
-    } finally {
-      cacheDelete.restore()
-      vi.unstubAllEnvs()
-    }
-
-    // 744 wired boundary
-    expect(useNoteStore.getState().notes.map((note) => note.id)).toEqual([item.uid])
-    editor.unregister()
-  })
-
   it('#1113 D1 keeps the cached item of a note whose text is held while its notebook clear deletes it', async () => {
     const { collection, item } = await shownNotes()
     const deleting = server.holdNext((method, path) => method === 'post' && path.endsWith('item/transaction'))
@@ -978,29 +921,6 @@ describe('#744 destructive note and contact paths delete only what this context 
 
     expect(useNoteStore.getState().notes.map((note) => note.id)).toEqual([item.uid])
     expect(useEtebaseStore.getState().itemCache.has(item.uid)).toBe(true)
-  })
-
-  it('#1113 D1 keeps a note shown when its text is held while its notebook clear waited on local storage', async () => {
-    const { collection, item } = await shownNotes()
-    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
-    _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
-    _setEncryptedCacheAvailableForTests(true)
-    await ensureFingerprint(FINGERPRINT, queueGuard().accountEpoch)
-    const cacheDelete = holdCacheDelete(item.uid)
-    try {
-      expect(isCacheEnabled()).toBe(true)
-      const clearing = useEtebaseStore.getState().deleteItemsInCollection('notes', collection.uid)
-      // The server delete was accepted; a failed save holds the note's text during the storage wait.
-      await cacheDelete.reached
-      holdText(item)
-      cacheDelete.release()
-      await clearing
-    } finally {
-      cacheDelete.restore()
-      vi.unstubAllEnvs()
-    }
-
-    expect(useNoteStore.getState().notes.map((note) => note.id)).toEqual([item.uid])
   })
 
   it('#744 retires a settled queued favorite overlay when its last owner departs after another context acknowledged it', async () => {

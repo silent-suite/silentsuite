@@ -74,6 +74,7 @@ export function StepCreatePaidAccount({
   initialError,
   continuation = 'payment-confirmed',
   initialData,
+  accountReady = false,
 }: {
   email: string
   onNext: (data: PaidAccountFormData) => Promise<void>
@@ -81,7 +82,10 @@ export function StepCreatePaidAccount({
   initialData?: PaidAccountFormData
   /** Verified signup chooses a password once; the parent retains it only in memory. */
   continuation?: 'payment-confirmed' | 'payment-return' | 'verified-no-card'
+  /** This browser already created the account: ask for its existing password and sign in. */
+  accountReady?: boolean
 }) {
+  const passwordOnly = continuation === 'verified-no-card' || accountReady
   const [submitError, setSubmitError] = useState<string | null>(initialError ?? null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const submittingRef = useRef(false)
@@ -92,7 +96,7 @@ export function StepCreatePaidAccount({
     watch,
     formState: { errors, isValid },
   } = useForm<PaidAccountFormData>({
-    resolver: zodResolver(continuation === 'verified-no-card'
+    resolver: zodResolver(passwordOnly
       ? z.object({ password: paidAccountSchema.shape.password })
       : paidAccountSchema) as any,
     defaultValues: initialData,
@@ -104,11 +108,13 @@ export function StepCreatePaidAccount({
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
       <div className="space-y-2 text-center">
         <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">
-          {continuation === 'verified-no-card' ? 'Choose your password' : 'Create your account'}
+          {continuation === 'verified-no-card' ? 'Choose your password' : accountReady ? 'Enter your password' : 'Create your account'}
         </h2>
         <p className="text-sm text-[rgb(var(--muted))]">
           {continuation === 'verified-no-card'
             ? <>Your email is verified. Choose a password, then select a trial or payment option for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span>.</>
+            : accountReady
+            ? <>Your account is already created. Enter the password you chose for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span> to continue.</>
             : continuation === 'payment-return'
             ? <>Choose the password for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span>. Billing must confirm the original payment before access is activated.</>
             : <>Payment is confirmed. Choose the password for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span>.</>}
@@ -121,7 +127,7 @@ export function StepCreatePaidAccount({
         setSubmitError(null)
         setIsSubmitting(true)
         try {
-          await onNext(continuation === 'verified-no-card' ? { ...data, confirmPassword: data.password } : data)
+          await onNext(passwordOnly ? { ...data, confirmPassword: data.password } : data)
         } catch (err) {
           setSubmitError(err instanceof Error ? err.message : 'Could not create account. Please try again.')
         } finally {
@@ -142,7 +148,7 @@ export function StepCreatePaidAccount({
             <Input
               id="paid-signup-password"
               type={showPassword ? "text" : "password"}
-              autoComplete="new-password"
+              autoComplete={accountReady ? 'current-password' : 'new-password'}
               aria-invalid={!!errors.password}
               aria-describedby={errors.password ? 'paid-signup-password-hint paid-signup-password-error' : 'paid-signup-password-hint'}
               {...register('password')}
@@ -166,7 +172,7 @@ export function StepCreatePaidAccount({
           <PasswordStrength password={password} />
         </div>
 
-        {continuation !== 'verified-no-card' && <div className="space-y-2">
+        {!passwordOnly && <div className="space-y-2">
           <label htmlFor="paid-signup-confirm-password" className="block text-sm font-medium text-[rgb(var(--foreground))]/80">
             Confirm password
           </label>
@@ -188,7 +194,7 @@ export function StepCreatePaidAccount({
         )}
 
         <Button type="submit" disabled={!isValid || isSubmitting} className="w-full">
-          {isSubmitting ? 'Creating account...' : continuation === 'verified-no-card' ? 'Continue to trial options' : 'Create account and continue'}
+          {isSubmitting ? (accountReady ? 'Signing in...' : 'Creating account...') : continuation === 'verified-no-card' ? 'Continue to trial options' : accountReady ? 'Sign in and continue' : 'Create account and continue'}
         </Button>
       </form>
     </div>

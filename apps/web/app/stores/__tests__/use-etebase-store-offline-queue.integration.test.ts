@@ -36,7 +36,7 @@ vi.mock('@silentsuite/core', async (importOriginal) => ({
 vi.mock('@/app/stores/use-toast-store', () => toastMock)
 vi.mock('@/app/stores/use-label-suggestions-store', () => ({ useLabelSuggestionsStore: { getState: () => ({ recordUsage: vi.fn() }) } }))
 
-import { useEtebaseStore, withoutPendingDeletes } from '../use-etebase-store'
+import { useEtebaseStore } from '../use-etebase-store'
 import { useSyncStore } from '../use-sync-store'
 import { useContactStore } from '../use-contact-store'
 import { useContactListStore } from '../use-contact-list-store'
@@ -163,12 +163,10 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
   })
 
   it('persists and replays an offline favorite update from a cold cache without plaintext queue content', async () => {
-    // Production leaves the general local-cache feature disabled. This
-    // favorite-specific path must nevertheless create its encrypted envelope
-    // and fingerprint from an empty IndexedDB database before it queues.
+    // This favorite path must create its encrypted envelope and fingerprint
+    // from an empty IndexedDB database before it queues.
     await resetDataCache()
     _setEncryptedCacheAvailableForTests(true)
-    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', '')
     expect(await getMeta()).toBeNull()
     // A saved SDK item at its own revision; the conditional write goes through a clone (#744 §8).
     const savedItem: any = {
@@ -515,43 +513,38 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
   })
 
   it('keeps the pending offline note edit when the collection is refreshed from the server', async () => {
-    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
-    try {
-      const item = { ...cachedItem('note-1'), getMeta: vi.fn(() => ({ name: 'Server title', mtime: 1 })) }
-      const notesCollection = setNoteAccount([{ uid: 'note-1', collectionUid: 'notes-1', item }])
-      const serverItem = { ...remoteItem('note-1', 'SERVER BODY'), getMeta: vi.fn(() => ({ name: 'Server title', mtime: 1 })) }
-      useEtebaseStore.setState({
-        account: {
-          getCollectionManager: () => ({
-            fetch: async () => notesCollection,
-            getItemManager: () => ({ list: async () => ({ data: [serverItem], stoken: null, done: true }) }),
-          }),
-        } as any,
-      })
-      coreMock.updateItem.mockRejectedValueOnce(offlineError()).mockResolvedValueOnce(item)
-      await expect(useEtebaseStore.getState().updateItem(
-        'notes', 'note-1', 'OFFLINE BODY', { persistEncryptedOfflineContent: true, meta: { name: 'Offline title', mtime: 2 } },
-      )).resolves.toBe('queued')
+    const item = { ...cachedItem('note-1'), getMeta: vi.fn(() => ({ name: 'Server title', mtime: 1 })) }
+    const notesCollection = setNoteAccount([{ uid: 'note-1', collectionUid: 'notes-1', item }])
+    const serverItem = { ...remoteItem('note-1', 'SERVER BODY'), getMeta: vi.fn(() => ({ name: 'Server title', mtime: 1 })) }
+    useEtebaseStore.setState({
+      account: {
+        getCollectionManager: () => ({
+          fetch: async () => notesCollection,
+          getItemManager: () => ({ list: async () => ({ data: [serverItem], stoken: null, done: true }) }),
+        }),
+      } as any,
+    })
+    coreMock.updateItem.mockRejectedValueOnce(offlineError()).mockResolvedValueOnce(item)
+    await expect(useEtebaseStore.getState().updateItem(
+      'notes', 'note-1', 'OFFLINE BODY', { persistEncryptedOfflineContent: true, meta: { name: 'Offline title', mtime: 2 } },
+    )).resolves.toBe('queued')
 
-      await useEtebaseStore.getState().refreshCollection('notes')
+    await useEtebaseStore.getState().refreshCollection('notes')
 
-      // The cache replace must not overwrite the queued edit with the stale server copy.
-      expect(JSON.parse((await getItemsByType('notes')).find((record) => record.itemUid === 'note-1')!.content))
-        .toMatchObject({ title: 'Offline title', content: 'OFFLINE BODY' })
-      await replay(
-        (queued, checkpoint) => useEtebaseStore.getState().replayQueuedMutation(queued, queueGuard(), checkpoint),
-        queueGuard(),
-      )
-      expect(coreMock.updateItem).toHaveBeenLastCalledWith(
-        useEtebaseStore.getState().account,
-        expect.objectContaining({ uid: 'notes-1' }),
-        expect.objectContaining({ uid: 'note-1' }),
-        'OFFLINE BODY',
-        { name: 'Offline title', mtime: 2 },
-      )
-    } finally {
-      vi.unstubAllEnvs()
-    }
+    // The refresh must not overwrite the queued edit's payload with the stale server copy.
+    expect(JSON.parse((await getItemsByType('notes')).find((record) => record.itemUid === 'note-1')!.content))
+      .toMatchObject({ title: 'Offline title', content: 'OFFLINE BODY' })
+    await replay(
+      (queued, checkpoint) => useEtebaseStore.getState().replayQueuedMutation(queued, queueGuard(), checkpoint),
+      queueGuard(),
+    )
+    expect(coreMock.updateItem).toHaveBeenLastCalledWith(
+      useEtebaseStore.getState().account,
+      expect.objectContaining({ uid: 'notes-1' }),
+      expect.objectContaining({ uid: 'note-1' }),
+      'OFFLINE BODY',
+      { name: 'Offline title', mtime: 2 },
+    )
   })
 
   it('skips items with a non-empty type when refreshing a notebook', async () => {
@@ -1172,63 +1165,6 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     }
   })
 
-  it('hides cached notes only for a pending delete of this account and never on a failed or stale queue read', async () => {
-    const record = (itemUid: string) => ({ itemUid, collectionType: 'notes' as const, collectionUid: 'notes-1', content: `CACHED ${itemUid}`, lastModified: 1 })
-    const records = ['pending-delete', 'failed-delete', 'pending-update', 'other-account', 'untouched'].map(record)
-    const visible = async (fingerprint: string | null = TEST_FINGERPRINT) =>
-      (await withoutPendingDeletes('notes', records, getAccountEpoch(), fingerprint)).map((item) => item.itemUid)
-    setNoteAccount([])
-
-    // A delete that exhausted its retries is shown as failed and must not hide the note.
-    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'failed-delete' }, queueGuard())
-    for (let attempt = 0; attempt < 3; attempt++) {
-      await replay(async () => { throw new Error('rejected by server') }, queueGuard())
-    }
-    expect((await getAll(queueGuard()))[0]).toMatchObject({ itemUid: 'failed-delete', status: 'failed' })
-
-    await expect(useEtebaseStore.getState().deleteItem('notes', 'pending-delete', { collectionUid: 'notes-1' })).resolves.toBe('queued')
-    await enqueue({ type: 'update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'pending-update' }, queueGuard())
-    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', tempId: 'untouched' }, queueGuard())
-    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'other-account' }, queueGuard('other-account'))
-    await enqueue({ type: 'move', collectionType: 'notes', collectionUid: 'notes-1', targetCollectionUid: 'notes-2', itemUid: 'untouched' }, queueGuard())
-    const queuedBefore = await getAll()
-    expect(JSON.stringify(queuedBefore)).not.toContain('CACHED')
-
-    expect(await visible()).toEqual(['failed-delete', 'pending-update', 'other-account', 'untouched'])
-    expect(await visible('other-account')).toEqual(['pending-delete', 'failed-delete', 'pending-update', 'untouched'])
-    expect(await withoutPendingDeletes('notes', records, getAccountEpoch(), null)).toBe(records)
-    expect(await withoutPendingDeletes('notes', [], getAccountEpoch(), TEST_FINGERPRINT)).toEqual([])
-    expect((await withoutPendingDeletes('calendar', records, getAccountEpoch(), TEST_FINGERPRINT))).toBe(records)
-
-    // An ordinary queue read failure shows the cache as it is.
-    const readSpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementationOnce(() => { throw new Error('queue read failed') })
-    try {
-      expect(await withoutPendingDeletes('notes', records, getAccountEpoch(), TEST_FINGERPRINT)).toBe(records)
-    } finally {
-      readSpy.mockRestore()
-    }
-
-    // An account boundary during the queue read is never turned into a fallback list.
-    const originalGetAll = IDBObjectStore.prototype.getAll
-    const boundarySpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementationOnce(function (this: IDBObjectStore, ...args) {
-      bumpAccountEpoch()
-      return originalGetAll.apply(this, args)
-    })
-    const staleEpoch = getAccountEpoch()
-    try {
-      await expect(withoutPendingDeletes('notes', records, staleEpoch, TEST_FINGERPRINT)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
-    } finally {
-      boundarySpy.mockRestore()
-    }
-    await expect(withoutPendingDeletes('notes', records, staleEpoch, TEST_FINGERPRINT)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
-
-    // Reading for the projection never removes or rewrites queue entries.
-    expect(await getAll()).toEqual(queuedBefore)
-  })
-
-  // C3a-R14: the real bridge drives the pinned, patched Etebase SDK against the
-  // reference transport. A batch the server acknowledged must stay acknowledged
-  // when a later chunk of the same import fails offline.
   describe('C3a-R14 acknowledged-prefix settlement through the pinned SDK', () => {
     const originalRequest = EtebaseRequest.default
     const isItemBatch = (method: string, path: string) => method === 'post' && /(^|\/)item\/batch$/.test(path)

@@ -371,7 +371,7 @@ describe('useAuthStore', () => {
 
   it('reuses an Etebase account created by an ambiguous prior signup attempt', async () => {
     const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
-    vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('409 conflict'))
+    vi.mocked(etebaseSignUp).mockRejectedValueOnce(Object.assign(new Error('User already exists'), { name: 'ConflictError' }))
 
     useAuthStore.getState().prepareSignupDraft('recover@example.com', true, true)
     await useAuthStore.getState().createEtebaseAccount('recover@example.com', 'password123')

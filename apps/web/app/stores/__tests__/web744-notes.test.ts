@@ -10,7 +10,6 @@ import {
   _setEnvelopeKeyForTests,
   ensureFingerprint,
   getItemsByType,
-  isCacheEnabled,
   putMeta,
 } from '@/app/lib/data-cache'
 
@@ -572,12 +571,10 @@ describe('#1113 D1 the note store refuses with a reason and saves copies once', 
 
   it('does not count a copy whose server text this tab cannot read, and writes no display record of it', async () => {
     const { account, collection, item, held } = await staleDraft()
-    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
     _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
     _setEncryptedCacheAvailableForTests(true)
     try {
       await ensureFingerprint(FINGERPRINT, getAccountEpoch())
-      expect(isCacheEnabled()).toBe(true)
       loseFirstCopyResponse()
       expect(await useNoteStore.getState().saveNoteCopy(item.uid, held)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
       const itemManager = account.getCollectionManager().getItemManager(collection)
@@ -599,7 +596,6 @@ describe('#1113 D1 the note store refuses with a reason and saves copies once', 
       expect(useEtebaseStore.getState().itemCache.has(copyUid)).toBe(false)
       expect((await getItemsByType('notes')).some((record) => record.itemUid === copyUid)).toBe(false)
     } finally {
-      vi.unstubAllEnvs()
       _setEncryptedCacheAvailableForTests(null)
       _setEnvelopeKeyForTests(null)
     }

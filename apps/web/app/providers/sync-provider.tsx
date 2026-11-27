@@ -5,23 +5,15 @@ import * as Sentry from '@sentry/nextjs'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { logger } from '@/app/lib/logger'
 import { parseRemoteItems } from '@/app/lib/parse-remote-items'
-import { keepPendingCacheRecords, useEtebaseStore, withoutPendingDeletes } from '@/app/stores/use-etebase-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
-import { useNoteStore, type StoredNote } from '@/app/stores/use-note-store'
+import { useNoteStore } from '@/app/stores/use-note-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
-import {
-  getItemsByType as cacheGetItemsByType,
-  replaceItemsForType as cacheReplaceItemsForType,
-  replaceItemsForCollection as cacheReplaceItemsForCollection,
-  isCacheEnabled as isLocalCacheEnabled,
-  getCacheCapabilityStatus,
-  type CachedItem,
-} from '@/app/lib/data-cache'
 import {
   createSafeOperationalError,
   getSafeErrorDetails,
@@ -131,7 +123,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       const initStartedAt = markSyncTimingStart()
       try {
         setSyncStatus('syncing')
-        safeLogSyncTiming('cache-capability', initStartedAt, { ...getCacheCapabilityStatus() })
 
         // Restore session, create/fetch collections, and enumerate items. The
         // onDomainLoaded hook fires once per visible domain as soon as that
@@ -140,10 +131,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // post-initialize all-domain load, so no domain is replaced twice.
         const etebaseStartedAt = nowMs()
         await etebaseInitialize({
-          onCacheHydrate: async () => {
-            const cacheStartedAt = nowMs()
-            await hydrateFromCache(cacheStartedAt)
-          },
           onDomainLoaded: async (event) => {
             await loadDomainIntoStore(event.type)
             assertCurrentAccountEpoch(accountEpoch)
@@ -204,139 +191,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    /**
-     * Cache-first paint. Reads decrypted item content out of IndexedDB and
-     * pushes it into the domain stores so the UI renders from cache before
-     * the network sync settles. This is invoked only after the restored
-     * account fingerprint and encrypted cache envelope are verified. The
-     * subsequent per-domain server load overwrites with server data, which is
-     * the source of truth.
-     *
-     * Cheap (~10-50ms for a typical vault) and fully off the network path.
-     * Failures here are non-fatal; we just skip the optimistic paint.
-     */
-    async function hydrateFromCache(startedAt = nowMs()) {
-      try {
-        const [taskItems, contactItems, eventItems, noteItems, core] = await Promise.all([
-          cacheGetItemsByType('tasks'),
-          cacheGetItemsByType('contacts'),
-          cacheGetItemsByType('calendar'),
-          cacheGetItemsByType('notes'),
-          import('@silentsuite/core'),
-        ])
-        assertCurrentAccountEpoch(accountEpoch)
-
-        if (taskItems.length > 0) {
-          try {
-            const tasks = parseRemoteItems('tasks', taskItems, (it) => {
-              const task = core.deserializeTask(it.content)
-              return { ...task, id: it.itemUid, listId: it.collectionUid }
-            })
-            useTaskStore.getState().syncFromRemote(tasks)
-            logger.log(`[sync-provider] Hydrated ${tasks.length} tasks from cache`)
-          } catch (err) {
-            logger.warn('[sync-provider] Failed to hydrate tasks from cache', getSafeErrorDetails(err))
-          }
-        }
-
-        if (contactItems.length > 0) {
-          try {
-            const contacts = contactItems.map((it) => {
-              const contact = core.deserializeContact(it.content)
-              // The display cache holds no SDK item, so the revision is unknown (#744).
-              return { ...contact, id: it.itemUid, listId: it.collectionUid, revision: null }
-            })
-            useContactStore.getState().syncFromRemote(contacts)
-            logger.log(`[sync-provider] Hydrated ${contacts.length} contacts from cache`)
-          } catch (err) {
-            logger.warn('[sync-provider] Failed to hydrate contacts from cache', getSafeErrorDetails(err))
-          }
-        }
-
-        if (eventItems.length > 0) {
-          try {
-            const events = parseRemoteItems('calendar', eventItems, (it) => {
-              const event = core.deserializeCalendarEvent(it.content)
-              return { ...event, id: it.itemUid, calendarId: it.collectionUid }
-            })
-            useCalendarStore.getState().syncFromRemote(events)
-            logger.log(`[sync-provider] Hydrated ${events.length} events from cache`)
-          } catch (err) {
-            logger.warn('[sync-provider] Failed to hydrate calendar events from cache', getSafeErrorDetails(err))
-          }
-        }
-
-        if (noteItems.length > 0) {
-          try {
-            const visibleNoteItems = await withoutPendingDeletes('notes', noteItems, accountEpoch, useEtebaseStore.getState().accountFingerprint)
-            assertCurrentAccountEpoch(accountEpoch)
-            // The display cache holds no SDK item, so the revision is unknown (#744).
-            const notes = visibleNoteItems.map((it) => ({ ...core.deserializeNote(it.content, it.itemUid, it.collectionUid), revision: null }))
-            useNoteStore.getState().syncFromRemote(notes)
-            logger.log(`[sync-provider] Hydrated ${notes.length} notes from cache`)
-          } catch (err) {
-            if (err instanceof AccountBoundaryChangedError) throw err
-            logger.warn('[sync-provider] Failed to hydrate notes from cache', getSafeErrorDetails(err))
-          }
-        }
-        safeLogSyncTiming('cache-hydrate', startedAt, {
-          status: 'ok',
-          taskItemCount: taskItems.length,
-          contactItemCount: contactItems.length,
-          calendarItemCount: eventItems.length,
-          noteItemCount: noteItems.length,
-        })
-      } catch (err) {
-        if (err instanceof AccountBoundaryChangedError) throw err
-        logger.warn('[sync-provider] Cache hydration failed', getSafeErrorDetails(err))
-        safeLogSyncTiming('cache-hydrate-failed', startedAt, { status: 'failed', errorCategory: 'cache' })
-      }
-    }
-
-    /** Replaces the cached items of the type, or with `collectionUid`, of that collection only. */
-    async function mirrorToCache(
-      type: 'tasks' | 'contacts' | 'calendar' | 'notes',
-      items: { uid: string; content: string; collectionUid: string }[],
-      collectionUid?: string,
-    ) {
-      if (!isLocalCacheEnabled()) return
-      const startedAt = nowMs()
-      const records: CachedItem[] = items.map((it) => ({
-        itemUid: it.uid,
-        collectionType: type,
-        collectionUid: it.collectionUid,
-        content: it.content,
-        lastModified: Date.now(),
-      }))
-      try {
-        const kept = await keepPendingCacheRecords(type, records, accountEpoch, useEtebaseStore.getState().accountFingerprint, collectionUid)
-        assertCurrentAccountEpoch(accountEpoch)
-        if (collectionUid === undefined) await cacheReplaceItemsForType(type, kept, accountEpoch)
-        else await cacheReplaceItemsForCollection(collectionUid, kept, accountEpoch)
-        assertCurrentAccountEpoch(accountEpoch)
-        safeLogSyncTiming('cache-mirror', startedAt, { type, itemCount: items.length })
-      } catch (err) {
-        if (err instanceof AccountBoundaryChangedError) return
-        logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
-        safeLogSyncTiming('cache-mirror-failed', startedAt, { type, itemCount: items.length, errorCategory: 'cache' })
-      }
-    }
-
-    /**
-     * Notes go to the display cache as the note store kept them, not as the sync read
-     * them: a row read before this page's own save or delete landed is not written back.
-     * With `collectionUid` (a notes collection event) only that notebook is written, as its
-     * refresh was: the other notebooks' rows in this read may predate their own refresh.
-     */
-    async function mirrorNotesToCache(core: typeof import('@silentsuite/core'), notes: StoredNote[], collectionUid?: string) {
-      const written = collectionUid === undefined ? notes : notes.filter((note) => note.notebookId === collectionUid)
-      await mirrorToCache('notes', written.map((note) => ({
-        uid: note.id,
-        content: core.serializeNote(note),
-        collectionUid: note.notebookId ?? '',
-      })), collectionUid)
-    }
-
     // Explicit per-type phase names keep sync timing off arbitrary strings.
     const TIMING_PHASE_BY_TYPE = {
       tasks: 'tasks-load',
@@ -352,7 +206,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
      */
     async function loadDomainIntoStore(type: 'calendar' | 'tasks' | 'contacts' | 'notes') {
       const startedAt = nowMs()
-      const cacheEnabled = isLocalCacheEnabled()
       try {
         const items = await useEtebaseStore.getState().fetchAllItems(type, accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
@@ -371,7 +224,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             useTaskStore.getState().syncFromRemote(tasks)
             useDomainSnapshotStore.getState().markApplied('tasks', accountEpoch)
             logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
-            await mirrorToCache(type, items)
           } else if (type === 'contacts') {
             const contacts = items.map((item) => {
               const contact = core.deserializeContact(item.content)
@@ -382,14 +234,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             useContactStore.getState().syncFromRemote(contacts)
             useDomainSnapshotStore.getState().markApplied('contacts', accountEpoch)
             logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
-            await mirrorToCache(type, items)
             requestBirthdayReconcile(accountEpoch)
           } else if (type === 'notes') {
             const notes = items.map((item) => ({ ...core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid), revision: item.revision }))
             domainItemCount = notes.length
-            const saved = useNoteStore.getState().syncFromRemote(notes)
+            useNoteStore.getState().syncFromRemote(notes)
             logger.log(`[sync-provider] Loaded ${notes.length} notes from server`)
-            await mirrorNotesToCache(core, saved)
           } else {
             const events = parseRemoteItems('calendar', items, (item) => {
               const event = core.deserializeCalendarEvent(item.content)
@@ -399,13 +249,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             useCalendarStore.getState().syncFromRemote(events)
             useDomainSnapshotStore.getState().markApplied('calendar', accountEpoch)
             logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
-            await mirrorToCache(type, items)
           }
         }
         const countField = type === 'tasks' ? 'taskCount' : type === 'contacts' ? 'contactCount' : type === 'notes' ? 'noteCount' : 'eventCount'
         safeLogSyncTiming(TIMING_PHASE_BY_TYPE[type], startedAt, {
           source: 'server',
-          cacheEnabled,
           itemCount: items.length,
           [countField]: domainItemCount,
         })
@@ -497,10 +345,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
               assertCurrentAccountEpoch(accountEpoch)
               const notes = noteItems.map((item) => ({ ...core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid), revision: item.revision }))
               assertCurrentAccountEpoch(accountEpoch)
-              const saved = useNoteStore.getState().syncFromRemote(notes)
-              // refreshCollection wrote the notebook's rows it read to the display cache; the
-              // rows the note store kept replace them.
-              await mirrorNotesToCache(core, saved, event.collectionUid)
+              useNoteStore.getState().syncFromRemote(notes)
             }
           } catch (err) {
             if (err instanceof AccountBoundaryChangedError) return

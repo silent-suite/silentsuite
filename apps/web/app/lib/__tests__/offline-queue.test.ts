@@ -36,7 +36,6 @@ function enqueue(
 }
 
 beforeEach(async () => {
-  process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
   // Close existing connection and reset module state
   await _resetForTests()
   _setEncryptedQueuePersistenceAvailableForTests(true)

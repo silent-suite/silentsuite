@@ -36,9 +36,6 @@ ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
 ARG NEXT_PUBLIC_SENTRY_DSN=
 # Page-speed ratings on public pages (hosted production only). Default off.
 ARG NEXT_PUBLIC_WEB_VITALS_ENABLED=false
-# Durable encrypted local caching. Default-off: every build that does not pass
-# this argument explicitly, production included, ships with the flag disabled.
-ARG NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
 # Self-host build mode. With NEXT_PUBLIC_ETEBASE_SERVER_URL set empty, the web app
 # talks to the Etebase server on the browser's own origin.
 ARG NEXT_PUBLIC_SELF_HOSTED=false
@@ -51,7 +48,6 @@ ENV NEXT_PUBLIC_ETEBASE_SERVER_URL=$NEXT_PUBLIC_ETEBASE_SERVER_URL
 ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=$NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED
 ENV NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=$NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED
-ENV NEXT_PUBLIC_LOCAL_CACHE_ENABLED=$NEXT_PUBLIC_LOCAL_CACHE_ENABLED
 
 COPY --from=deps /app/ ./
 
