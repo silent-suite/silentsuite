@@ -36,6 +36,43 @@ _ACCOUNT_ACTION_FLAGS = (
 )
 _RADICALE_SERVER_APPLICATION_LOCK = threading.Lock()
 
+# Every option main() reads. Keep in step with the handlers below and --help.
+_FLAG_OPTIONS = frozenset({
+    "--help", "-h", "--version", "--check-update", "--self-update",
+    "--login", "--manual-login", "--list-accounts", "--install-autostart",
+    "--remove-autostart", "--no-tray", "--background",
+    "--background-child",  # internal: the windowless copy --background starts
+    "--setup-macos-apple-accounts", "--replace-existing",
+})
+_VALUE_OPTIONS = frozenset({
+    "--server", "--logout", "--remove-account", "--dns-san", "--ip-san",
+})
+
+
+def _unknown_option(args):
+    """Return the first argument main() does not understand, or None.
+
+    Without this check a typo such as ``--lgout`` would fall through to a
+    full bridge start. Missing values are left to each option's own handler.
+    Arguments the OS or a frozen runtime adds are tolerated: macOS Launch
+    Services may pass ``-psn_<id>``, and Python's multiprocessing re-runs a
+    frozen Windows binary with ``--multiprocessing-fork`` and key=value
+    arguments.
+    """
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--multiprocessing-fork":
+            return None
+        if arg.startswith("-psn_") or arg in _FLAG_OPTIONS:
+            index += 1
+        elif arg in _VALUE_OPTIONS:
+            has_value = index + 1 < len(args) and not args[index + 1].startswith("--")
+            index += 2 if has_value else 1
+        else:
+            return arg.split("=", 1)[0] if arg.startswith("--") else arg
+    return None
+
 
 def configure_logging():
     """Set up logging for the bridge."""
@@ -1115,6 +1152,11 @@ def main():
         print("  SILENTSUITE_BRIDGE_SSL_CERT  Path to the SSL certificate file")
         print("  SILENTSUITE_BRIDGE_SSL_KEY   Path to the SSL private key file")
         sys.exit(0)
+
+    unknown = _unknown_option(sys.argv[1:])
+    if unknown is not None:
+        print(f"Unknown option {unknown}. Run silentsuite-bridge --help.", file=sys.stderr)
+        sys.exit(2)
 
     # Handle --version before any side effects
     if "--version" in sys.argv:
