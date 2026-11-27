@@ -340,7 +340,8 @@ class AppSettingsActivity : BaseActivity() {
                 if (current.all { it.third.isNullOrEmpty() }) screen.addPreference(Preference(requireContext()).apply {
                     key = RECOVERY_NONE_KEY
                     setTitle(R.string.settings_recover_deleted_contacts_none)
-                    isEnabled = false
+                    // Not selectable rather than disabled, so the message keeps full contrast.
+                    isSelectable = false
                     isPersistent = false
                 })
             }

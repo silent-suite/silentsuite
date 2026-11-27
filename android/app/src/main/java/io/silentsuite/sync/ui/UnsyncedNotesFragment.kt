@@ -210,7 +210,8 @@ class UnsyncedNotesFragment : PreferenceFragmentCompat() {
             this.key = key
             setTitle(text)
             isSingleLineTitle = false
-            isEnabled = false
+            // Not selectable rather than disabled, so the text keeps full contrast (disabled rows dim).
+            isSelectable = false
             isPersistent = false
         })
     }
