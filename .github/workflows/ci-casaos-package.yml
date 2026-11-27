@@ -97,7 +97,7 @@ jobs:
           import sys, yaml
           source, twice = (yaml.safe_load(open(path, encoding="utf-8")) for path in sys.argv[1:])
           for name, service in source["services"].items():
-              assert twice["services"][name]["entrypoint"] == service["entrypoint"], name
+              assert twice["services"][name].get("entrypoint") == service.get("entrypoint"), name
               for volume in service.get("volumes", []):
                   assert volume.startswith("/DATA/AppData/$AppID/"), volume
           print("PASS programs survive two interpolation passes")
