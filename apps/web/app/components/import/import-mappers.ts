@@ -87,7 +87,8 @@ export function vEventToImportEvent(
       ? addICalDuration(start, event.duration, isAllDay) ?? defaultEndDate(start, isAllDay)
       : defaultEndDate(start, isAllDay)
   const exdateTzid = event.exdateParams?.['TZID'] ?? startTzid
-  const exceptions = event.exdate?.map((date) => parseICalDateValue(date, exdateTzid).date) ?? []
+  const exceptions = event.exdate?.map((date, i) =>
+    parseICalDateValue(date, event.exdateTzids ? event.exdateTzids[i] || startTzid : exdateTzid).date) ?? []
   // A DST-gap DTSTART's wall clock is taken from the source value before it is normalized.
   const startWallClock = isAllDay ? undefined : gapWallClock(startTzid, event.dtstart)
 

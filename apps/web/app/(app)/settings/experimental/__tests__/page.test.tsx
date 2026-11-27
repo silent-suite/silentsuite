@@ -26,7 +26,7 @@ function renderSettings() {
 beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
-  useExperimentalStore.setState({ hydrated: false, notesAccounts: [], birthdayAccounts: [], planningAccounts: [], loginEmailChangeAccounts: [], planningDispositions: {}, planningDurations: {} })
+  useExperimentalStore.setState({ hydrated: false, notesAccounts: [], birthdayAccounts: [], planningAccounts: [], planningDispositions: {}, planningDurations: {} })
   calls.reconcile.mockReset()
   useEtebaseStore.setState({ accountFingerprint: 'account-a', isInitialized: true, restoreBlocked: false, collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] }, domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded', preferences: 'unknown' } })
   calls.canWrite.mockReturnValue(true)
@@ -157,21 +157,6 @@ describe('Experimental Birthdays calendar opt-in', () => {
     await screen.findByRole('alert')
     expect(birthdaysSwitch()).not.toBeChecked()
     expect(calls.reconcile).not.toHaveBeenCalled()
-  })
-})
-
-describe('Experimental login email change opt-in', () => {
-  const loginSwitch = () => screen.getByRole('switch', { name: 'Change login email' })
-
-  it('is off by default and saves the choice for this account only', () => {
-    renderSettings()
-    expect(loginSwitch()).not.toBeChecked()
-    fireEvent.click(loginSwitch())
-    expect(loginSwitch()).toBeChecked()
-    expect(localStorage.getItem('silentsuite-experimental-login-email-change-v1')).toBe('["account-a"]')
-    expect(useExperimentalStore.getState().birthdayAccounts).toEqual([])
-    act(() => { bumpAccountEpoch(); useEtebaseStore.setState({ accountFingerprint: 'account-b' }) })
-    expect(loginSwitch()).not.toBeChecked()
   })
 })
 

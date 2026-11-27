@@ -3,7 +3,6 @@ import { create } from 'zustand'
 const STORAGE_KEY = 'silentsuite-experimental-v1'
 const BIRTHDAYS_STORAGE_KEY = 'silentsuite-experimental-birthdays-v1'
 const PLANNING_STORAGE_KEY = 'silentsuite-experimental-planning-v1'
-const LOGIN_EMAIL_CHANGE_STORAGE_KEY = 'silentsuite-experimental-login-email-change-v1'
 const PLANNING_DISPOSITION_STORAGE_KEY = 'silentsuite-experimental-planning-disposition-v1'
 
 /** What the planning view does with a task once its calendar event is confirmed saved. */
@@ -28,8 +27,6 @@ interface ExperimentalState {
   birthdayAccounts: string[]
   /** Public-key fingerprints only. */
   planningAccounts: string[]
-  /** Public-key fingerprints only. */
-  loginEmailChangeAccounts: string[]
   /** Per account fingerprint; a missing entry means 'label'. */
   planningDispositions: Record<string, PlanningDisposition>
   /** Per account fingerprint, in minutes; a missing entry means PLANNING_DURATION_DEFAULT. */
@@ -38,7 +35,6 @@ interface ExperimentalState {
   setNotesEnabled: (accountFingerprint: string, enabled: boolean) => void
   setBirthdaysEnabled: (accountFingerprint: string, enabled: boolean) => void
   setPlanningEnabled: (accountFingerprint: string, enabled: boolean) => void
-  setLoginEmailChangeEnabled: (accountFingerprint: string, enabled: boolean) => void
   setPlanningDisposition: (accountFingerprint: string, disposition: PlanningDisposition) => void
   setPlanningDuration: (accountFingerprint: string, minutes: number) => void
 }
@@ -98,7 +94,6 @@ export const useExperimentalStore = create<ExperimentalState>((set, get) => ({
   notesAccounts: [],
   birthdayAccounts: [],
   planningAccounts: [],
-  loginEmailChangeAccounts: [],
   planningDispositions: {},
   planningDurations: {},
   hydrate: () => {
@@ -108,7 +103,6 @@ export const useExperimentalStore = create<ExperimentalState>((set, get) => ({
       notesAccounts: readAccounts(STORAGE_KEY),
       birthdayAccounts: readAccounts(BIRTHDAYS_STORAGE_KEY),
       planningAccounts: readAccounts(PLANNING_STORAGE_KEY),
-      loginEmailChangeAccounts: readAccounts(LOGIN_EMAIL_CHANGE_STORAGE_KEY),
       planningDispositions: readDispositions(),
       planningDurations: readDurations(),
     })
@@ -131,12 +125,6 @@ export const useExperimentalStore = create<ExperimentalState>((set, get) => ({
     const planningAccounts = updateAccounts(get().planningAccounts, accountFingerprint, enabled)
     localStorage.setItem(PLANNING_STORAGE_KEY, JSON.stringify(planningAccounts))
     set({ planningAccounts })
-  },
-  setLoginEmailChangeEnabled: (accountFingerprint, enabled) => {
-    if (!accountFingerprint || !get().hydrated) return
-    const loginEmailChangeAccounts = updateAccounts(get().loginEmailChangeAccounts, accountFingerprint, enabled)
-    localStorage.setItem(LOGIN_EMAIL_CHANGE_STORAGE_KEY, JSON.stringify(loginEmailChangeAccounts))
-    set({ loginEmailChangeAccounts })
   },
   setPlanningDisposition: (accountFingerprint, disposition) => {
     if (!accountFingerprint || !get().hydrated || !PLANNING_DISPOSITIONS.includes(disposition)) return
