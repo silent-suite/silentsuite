@@ -222,6 +222,15 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/setup_notification_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_12"
+            android:text="@string/post_login_ready_notifications"
+            android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/setup_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

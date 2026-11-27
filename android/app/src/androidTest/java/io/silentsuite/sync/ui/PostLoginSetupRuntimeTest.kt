@@ -36,6 +36,7 @@ import io.silentsuite.sync.ui.setup.PostLoginSetupMigration
 import io.silentsuite.sync.ui.setup.StartupDiagnosticReport
 import io.silentsuite.sync.ui.setup.StartupDiagnosticReportDialog
 import io.silentsuite.sync.utils.AndroidCompat
+import io.silentsuite.sync.utils.NotificationUtils
 import at.bitfire.ical4android.TaskProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -558,6 +559,19 @@ class PostLoginSetupRuntimeTest {
                         org.junit.Assert.assertTrue("Unapproved setup title: $title", title in approvedTitles)
                         org.junit.Assert.assertFalse(states.any { body == it.name })
                         org.junit.Assert.assertFalse(body.startsWith("Setup:"))
+                        val notificationHint = activity.findViewById<android.widget.TextView>(
+                            requiredViewId(activity, "setup_notification_hint")
+                        )
+                        assertEquals(
+                            "Allow notifications so SilentSuite can tell you when sync needs attention.",
+                            notificationHint.text.toString(),
+                        )
+                        assertEquals(
+                            if (state == PostLoginSetupState.READY &&
+                                NotificationUtils.shouldRequestPermission(activity)
+                            ) View.VISIBLE else View.GONE,
+                            notificationHint.visibility,
+                        )
                         org.junit.Assert.assertTrue(
                             activity.findViewById<View>(requiredViewId(activity, "setup_stepper"))
                                 .contentDescription.toString().startsWith("Setup progress, step ")

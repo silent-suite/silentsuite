@@ -729,6 +729,7 @@
     <string name="post_login_initial_sync_body">Android will continue this work in the background.</string>
     <string name="post_login_ready_title">SilentSuite is ready</string>
     <string name="post_login_ready_body">Your first encrypted sync has been requested and may continue in the background. Synchronized data appears in Android apps where access and a compatible app are available.</string>
+    <string name="post_login_ready_notifications">Allow notifications so SilentSuite can tell you when sync needs attention.</string>
     <string name="post_login_open_sync_overview">Open sync overview</string>
     <string name="post_login_complete_title">Opening sync overview…</string>
     <string name="post_login_complete_body">Opening the exact account that just finished setup.</string>

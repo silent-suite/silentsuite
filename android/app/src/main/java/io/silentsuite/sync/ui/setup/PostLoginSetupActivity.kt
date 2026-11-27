@@ -35,6 +35,7 @@ import io.silentsuite.sync.ui.BaseActivity
 import io.silentsuite.sync.ui.UnsyncedNotesEntry
 import io.silentsuite.sync.ui.WebViewActivity
 import io.silentsuite.sync.ui.applySystemBarInsetsAsPadding
+import io.silentsuite.sync.utils.NotificationUtils
 import java.util.UUID
 
 /** Resumes a durable setup row. It deliberately accepts no credentials or session extra. */
@@ -713,6 +714,10 @@ class PostLoginSetupActivity : BaseActivity() {
         )
         findViewById<Button>(R.id.setup_done).visibility =
             visible(exact && current == PostLoginSetupState.READY)
+        // The sync overview asks for notification permission right after this step; say why first.
+        findViewById<View>(R.id.setup_notification_hint).visibility = visible(
+            current == PostLoginSetupState.READY && NotificationUtils.shouldRequestPermission(this)
+        )
         findViewById<Button>(R.id.setup_skip_integrations).visibility =
             visible(permitsSkip)
         findViewById<Button>(R.id.setup_continue_limited).visibility = visible(
@@ -782,6 +787,7 @@ class PostLoginSetupActivity : BaseActivity() {
         listOf(
             R.id.setup_stepper,
             R.id.setup_integration_details,
+            R.id.setup_notification_hint,
             R.id.setup_done,
             R.id.setup_continue_limited,
             R.id.setup_skip_integrations,
