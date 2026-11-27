@@ -99,19 +99,10 @@ esac
 }
 
 const jobContracts: Record<string, Record<string, { steps: string; permissions: string }>> = {
-  'deploy-web.yml': {
-    'build-and-push': { steps: '879dff8ef54f62febae9b7d55fb6411e3033a843e6b71104914b4922ab63114c', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
-    deploy: { steps: '0c0f3e19720c3a70dc8ac1f9997deae683af96b27de26cf6a249e8976790e90a', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
-  },
   'deploy-server.yml': {
     'build-and-push': { steps: 'eaaaecf8738fd3b7d25bfb6f383709911df7c00da94dff1cca81014fdb254a62', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
     deploy: { steps: '3388f73fc74265014da2ad5db98580d7d94c1a5d4a851b224997893825aedc3a', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
-  'deploy-docs.yml': {
-    build: { steps: 'aaa1a984b500e400dfe37e18519e66fff62ead0c6d96bc09b731174a2ad0ce5b', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
-    deploy: { steps: '6e12aca6ea1f36bec6c34603968cf8d2aa32e9434a9dd6805a6ce182301c0aca', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
-  },
-  // build and deploy permissions must equal deploy-docs.yml's.
   'deploy-docs-standalone.yml': {
     admission: { steps: '73ab530335bd89541c24b3c6ffb70983a5d78802ec7f697b4d7686e760524702', permissions: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' },
     build: { steps: '26c6b38174fcb382ca677de8a448dc78d43eb1f8446b73d2bdc96460b7385f22', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
@@ -120,9 +111,7 @@ const jobContracts: Record<string, Record<string, { steps: string; permissions: 
 }
 
 const workflowContracts: Record<string, string> = {
-  'deploy-web.yml': 'a1507e64f4617da3f9b7a17c9ad8ef81898b01d7e2471c6aadd96f0cc7c39deb',
   'deploy-server.yml': '8c8b1fbf34b763ed707cbae73fa25cd44ae704ede94cd7d8d40e5d1e1dcbae35',
-  'deploy-docs.yml': 'b75623f1069fc1a4d6ede2834a85b9e90bbc190a70260bf3e3d5b9e2d65f1d3d',
   'deploy-docs-standalone.yml': 'f26f9bc78ecfe56d61086bebc1aa6d945bed216645f6f443f6de3d825469e9cd',
 }
 
@@ -140,7 +129,6 @@ const approvedNode24ActionPins: Record<string, string> = {
   'actions/setup-node': '820762786026740c76f36085b0efc47a31fe5020',
   'actions/upload-artifact': '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
   'actions/download-artifact': '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
-  'actions/create-github-app-token': '0f859bf9e69e887678d5bbfbee594437cb440ffe',
   'docker/setup-buildx-action': 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
   'docker/login-action': 'dbcb813823bdd20940b903addbd779551569679f',
   'docker/build-push-action': '53b7df96c91f9c12dcc8a07bcb9ccacbed38856a',
@@ -256,9 +244,6 @@ function sshHostVerificationViolations(parsed: ParsedWorkflow): string[] {
   if (custody?.if !== undefined || custody?.['continue-on-error'] !== undefined || custody?.uses !== undefined || custody?.shell !== 'bash' ||
     JSON.stringify(custody?.env) !== JSON.stringify({ VPS_SSH_FINGERPRINT: sshFingerprintBinding }) || sha256(custody?.run ?? '') !== sshFingerprintPreflightSha256) {
     violations.push('fingerprint custody preflight must be the exact reviewed fail-closed validation')
-  }
-  if (JSON.stringify(parsed.on?.workflow_call?.secrets?.VPS_SSH_FINGERPRINT) !== '{"required":true}') {
-    violations.push('reusable workflow must declare VPS_SSH_FINGERPRINT as a required secret')
   }
   return violations
 }
@@ -626,8 +611,8 @@ function runSshFingerprintPreflight(run: string, value?: string) {
 // job digests stay in the calling test so these can also judge mutated sources.
 function expectManualOnlyContract(name: string, source: string, environment: string, approvalVariable: string, runDigests: string[], standaloneWebAdmission?: { build: string; deploy: string }) {
   const parsed = parseWorkflow(source)
-  const docs = name === 'deploy-docs.yml' || name === 'deploy-docs-standalone.yml'
-  const jobNames = standaloneWebAdmission ? ['admission', 'build-and-push', 'deploy'] : name === 'deploy-docs-standalone.yml' ? ['admission', 'build', 'deploy'] : docs ? ['build', 'deploy'] : ['build-and-push', 'deploy']
+  const docs = name === 'deploy-docs-standalone.yml'
+  const jobNames = standaloneWebAdmission ? ['admission', 'build-and-push', 'deploy'] : docs ? ['admission', 'build', 'deploy'] : ['build-and-push', 'deploy']
   expect(Object.keys(parsed.jobs).sort()).toEqual([...jobNames].sort())
 
   expect(source).toContain('workflow_dispatch:')
@@ -639,12 +624,6 @@ function expectManualOnlyContract(name: string, source: string, environment: str
   const stageASteps = Object.values(parsed.jobs).flatMap((job) => job.steps ?? []).filter(
     (step) => step.uses === './.github/actions/verify-annual-pre-public-admission',
   )
-  if (name === 'deploy-web.yml' || name === 'deploy-docs.yml') {
-    expect(parsed.on?.workflow_call?.secrets?.ANNUAL_PUBLIC_REVIEW_HMAC_KEY).toEqual({ required: true })
-    expect(stageASteps.filter(
-      (step) => step.with?.public_review_hmac_key === '${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}',
-    )).toHaveLength(2)
-  }
   if (name === 'deploy-docs-standalone.yml') {
     expect(parsed.on?.workflow_call).toBeUndefined()
     expect(stageASteps).toHaveLength(0)
@@ -658,7 +637,7 @@ function expectManualOnlyContract(name: string, source: string, environment: str
   }
 }
 
-function expectDocsBuildOnce(name: string, source: string, artifactName: string) {
+function expectDocsBuildOnce(source: string, artifactName: string) {
   const buildJob = jobBlock(source, 'build')
   const deployJob = jobBlock(source, 'deploy')
   const parsed = parseWorkflow(source)
@@ -687,41 +666,10 @@ function expectDocsBuildOnce(name: string, source: string, artifactName: string)
   expect(downloadIndex).toBeGreaterThan(-1)
   expect(downloadIndex).toBeLessThan(reauthorization)
   expect(mutation).toBe(reauthorization + 1)
-  if (name === 'deploy-docs.yml') {
-    expect(buildJob).toContain('Fetch and verify exact timestamp-free Stage A before docs publication')
-    expect(deployJob).toContain('Re-verify exact timestamp-free Stage A before docs deployment')
-  } else {
-    expect(source).not.toContain('name: docs-production-${{ inputs.expected_sha }}')
-    expect(source).not.toContain('timestamp-free Stage A')
-  }
+  expect(source).not.toContain('name: docs-production-${{ inputs.expected_sha }}')
+  expect(source).not.toContain('timestamp-free Stage A')
   expect(buildJob).toContain('deployment-identity.json')
   expect(deployJob).toContain('deployment-identity.json')
-}
-
-function expectStandaloneMirrorsAnnualDocs(source: string) {
-  const annual = parseWorkflow(workflow('deploy-docs.yml'))
-  const standalone = parseWorkflow(source)
-  const isAnnualAdmissionStep = (step: WorkflowStep) =>
-    step.uses === './.github/actions/verify-annual-pre-public-admission' || step.uses?.startsWith('actions/create-github-app-token@') === true
-  // The only two permitted differences in every retained step and job control.
-  const asStandalone = <T>(value: T): T => JSON.parse(JSON.stringify(value)
-    .replaceAll('DOCS_DEPLOY_APPROVED_SHA', 'DOCS_STANDALONE_DEPLOY_APPROVED_SHA')
-    .replaceAll('docs-production-${{ inputs.expected_sha }}', 'docs-standalone-production-${{ inputs.expected_sha }}'))
-  const controls = (job: WorkflowJob) => ({
-    if: job.if, environment: job.environment, permissions: job.permissions, 'timeout-minutes': job['timeout-minutes'], outputs: job.outputs,
-  })
-
-  for (const jobName of ['build', 'deploy']) {
-    const reference = annual.jobs[jobName]
-    const candidate = standalone.jobs[jobName]
-    expect((reference.steps ?? []).filter(isAnnualAdmissionStep)).toHaveLength(2)
-    expect(candidate?.steps).toStrictEqual(asStandalone((reference.steps ?? []).filter((step) => !isAnnualAdmissionStep(step))))
-    expect(controls(candidate)).toEqual(asStandalone(controls(reference)))
-  }
-  expect(standalone.jobs.build.needs).toBe('admission')
-  expect(standalone.jobs.deploy.needs).toBe(annual.jobs.deploy.needs)
-  expect(standalone.concurrency).toEqual(annual.concurrency)
-  expect(standalone.concurrency).toEqual({ group: 'deploy-docs-production', 'cancel-in-progress': false })
 }
 
 function expectStandaloneCarriesNoAnnualMaterial(source: string) {
@@ -784,22 +732,12 @@ function expectStandaloneAdmissionPreflight(source: string) {
   expect(run).not.toMatch(/\b(?:gh|git|curl|wget)\b/)
 }
 
-function expectCutoverInvokesOnlyAnnualDocs(cutoverSource: string) {
-  const cutover = parseWorkflow(cutoverSource)
-  expect(standaloneDocsCallers('annual-only-public-cutover.yml', cutoverSource)).toEqual([])
-  expect(cutover.jobs['deploy-docs'].uses).toBe('./.github/workflows/deploy-docs.yml')
-  expect(cutover.jobs.admission.env?.DOCS_DEPLOY_APPROVED_SHA).toBe('${{ vars.DOCS_DEPLOY_APPROVED_SHA }}')
-  expect(cutoverSource).not.toContain('deploy-docs-standalone')
-  expect(cutoverSource).not.toContain('DOCS_STANDALONE_DEPLOY_APPROVED_SHA')
-}
-
 function standaloneDocsCallers(name: string, source: string): string[] {
   return Object.entries(parseWorkflow(source).jobs ?? {})
     .filter(([, job]) => job.uses?.includes('deploy-docs-standalone.yml'))
     .map(([jobName]) => `${name}:${jobName}`)
 }
 
-const docsAuthorizationRunDigests = ['02f41b250b6256a39c271cde53df98c87759b77ad38987af6d92dee96814d77b', '34fd2be0097b650297047c7c918ec462bc6d5d77f17a3320dab5bd8eeaab309b']
 const standaloneAuthorizationRunDigests = ['448dc0c62dd76fca8eb4e273c3da1574d7f593f9a3be358ea3f966260df4d03f', '36f60a1654f28cfcb0ed697ea94bba3e620bf4b22492be26e560ed80b8a5edaf']
 
 // Every Stage 1 semantic contract that judges the standalone workflow source. None of
@@ -807,8 +745,7 @@ const standaloneAuthorizationRunDigests = ['448dc0c62dd76fca8eb4e273c3da1574d7f5
 // expectAuthorizedJob are unaffected by fixtures that leave both run bodies intact.
 const standaloneStage1Contracts: Record<string, (source: string) => void> = {
   'manual-only': (source) => expectManualOnlyContract('deploy-docs-standalone.yml', source, 'docs-production', 'DOCS_STANDALONE_DEPLOY_APPROVED_SHA', standaloneAuthorizationRunDigests),
-  'build-once': (source) => expectDocsBuildOnce('deploy-docs-standalone.yml', source, 'docs-standalone-production-${{ inputs.expected_sha }}'),
-  mirror: expectStandaloneMirrorsAnnualDocs,
+  'build-once': (source) => expectDocsBuildOnce(source, 'docs-standalone-production-${{ inputs.expected_sha }}'),
   'no-annual-material': expectStandaloneCarriesNoAnnualMaterial,
   'admission-preflight': expectStandaloneAdmissionPreflight,
 }
@@ -868,7 +805,7 @@ const standaloneJobEnvs: Record<string, Record<string, string>> = {
   deploy: { DOCS_STANDALONE_DEPLOY_APPROVED_SHA: standaloneApprovalBinding },
 }
 
-// Step env maps exactly as deploy-docs.yml declares them for the copied steps; every
+// Step env maps exactly as reviewed for the standalone steps; every
 // other step has no env.
 const standaloneStepEnvs: Record<string, Record<string, string>> = {
   'build/Verify exact owner-approved live main commit for build': standaloneExpectedShaBinding,
@@ -1001,8 +938,6 @@ function standaloneAdmissionRun(): string {
 }
 
 // Execute the real parsed SSH scalar against owned synthetic transports only.
-// Until the standalone workflow exists, deploy-web.yml is the old-source witness;
-// its successful root-only health check must not define standalone acceptance.
 const webCutoverIdentities = {
   imageName: 'ghcr.io/silent-suite/silentsuite-web',
   candidateSha: 'a'.repeat(40), previousSha: 'b'.repeat(40), wrongSha: 'c'.repeat(40),
@@ -1638,9 +1573,6 @@ describe('production deployment workflow integrity', () => {
       const caller = parseWorkflow(readFileSync(join(directory, name), 'utf8'))
       expect(Object.values(caller.jobs).filter(job => job.uses?.includes('deploy-web-standalone.yml')), name).toEqual([])
     }
-    const annual = parseWorkflow(workflow('annual-only-public-cutover.yml'))
-    expect(annual.jobs['deploy-web'].uses).toBe('./.github/workflows/deploy-web.yml')
-    expect(JSON.stringify(annual)).not.toContain('WEB_STANDALONE_DEPLOY_APPROVED_SHA')
     expect(deployRunbook).toContain('## Standalone Web admission (no annual Stage A)')
     const ci = parseWorkflow(workflow('ci.yml'))
     expect(ci.jobs.test.steps?.some(step => step.run === 'pnpm --filter @silentsuite/web test app/lib/__tests__/production-deploy-workflows.test.ts')).toBe(true)
@@ -1680,14 +1612,14 @@ describe('production deployment workflow integrity', () => {
   })
 
   it('strict AST rejects attacker checkout, no-op authorization, heredoc decoys, and duplicate keys', () => {
-    const source = workflow('deploy-web.yml')
+    const source = workflow('deploy-server.yml')
     const mutated = source
       .replace('          ref: ${{ inputs.expected_sha }}', '          ref: refs/heads/attacker')
       .replace('        run: |\n          set -euo pipefail', '        run: exit 0\n\n      - name: Harmless heredoc decoy\n        run: |\n          ref: ${{ inputs.expected_sha }}\n          set -euo pipefail')
     const job = parseWorkflow(mutated).jobs['build-and-push']
-    expect(() => expectAuthorizedJob(job, 'web-production', 'WEB_DEPLOY_APPROVED_SHA', 'Assert this is the live main commit', 'e6ba5b37eecde3082c3ec47f85d3885591e769998348d31fde7ca520d9e9413d')).toThrow()
+    expect(() => expectAuthorizedJob(job, 'server-production', 'SERVER_DEPLOY_APPROVED_SHA', 'Assert this is the live main commit', 'a42b337d7f795fd005cecaa0b450e8ed98ae71906b1541c0c5576fc7ddcd10b5')).toThrow()
 
-    const duplicate = source.replace('    environment: web-production', '    environment: web-production\n    environment: attacker')
+    const duplicate = source.replace('    environment: server-production', '    environment: server-production\n    environment: attacker')
     expect(() => parseWorkflow(duplicate)).toThrow()
   })
 
@@ -1805,13 +1737,13 @@ jobs:
   })
 
   it('plain-scalar comment decoys cannot satisfy exact structural lines', () => {
-    const source = workflow('deploy-web.yml')
-      .replace('    environment: web-production', "    name: Owner's build # environment: web-production")
-      .replace('      WEB_DEPLOY_APPROVED_SHA: ${{ vars.WEB_DEPLOY_APPROVED_SHA }}', '    name: Release 12" image # WEB_DEPLOY_APPROVED_SHA: ${{ vars.WEB_DEPLOY_APPROVED_SHA }}')
+    const source = workflow('deploy-server.yml')
+      .replace('    environment: server-production', "    name: Owner's build # environment: server-production")
+      .replace('      SERVER_DEPLOY_APPROVED_SHA: ${{ vars.SERVER_DEPLOY_APPROVED_SHA }}', '    name: Release 12" image # SERVER_DEPLOY_APPROVED_SHA: ${{ vars.SERVER_DEPLOY_APPROVED_SHA }}')
     const lines = jobBlock(source, 'build-and-push').split('\n')
 
-    expect(lines).not.toContain('    environment: web-production')
-    expect(lines).not.toContain('      WEB_DEPLOY_APPROVED_SHA: ${{ vars.WEB_DEPLOY_APPROVED_SHA }}')
+    expect(lines).not.toContain('    environment: server-production')
+    expect(lines).not.toContain('      SERVER_DEPLOY_APPROVED_SHA: ${{ vars.SERVER_DEPLOY_APPROVED_SHA }}')
   })
 
   it('documents repository approval variables and the actual revocation boundary', () => {
@@ -1827,10 +1759,6 @@ jobs:
     expect(deployRunbook).toContain('deployment branch policy that permits only `main`')
     expect(deployRunbook).toContain('Do not set an approval variable or dispatch any production workflow until this verification succeeds')
     expect(deployRunbook).toContain('all three component environments exist with a custom `main`-only deployment branch policy')
-    expect(deployRunbook).toContain('Stage A — private pre-public admission')
-    expect(deployRunbook).toContain('Stage B — truthful public-served attestation')
-    expect(deployRunbook).toContain('Stage C — private finalization')
-    expect(deployRunbook).toContain('no `clientServedAt` or `verifiedAt`')
     expect(deployRunbook).not.toContain('health/link-proof')
   })
 
@@ -1847,9 +1775,7 @@ jobs:
   })
 
   it.each([
-    ['deploy-web.yml', 'web-production', 'WEB_DEPLOY_APPROVED_SHA', ['e6ba5b37eecde3082c3ec47f85d3885591e769998348d31fde7ca520d9e9413d', 'cfc63a1210b969831bc73107aec443b5238a2a8feae86a1f01eadeeec969ce15']],
     ['deploy-server.yml', 'server-production', 'SERVER_DEPLOY_APPROVED_SHA', ['a42b337d7f795fd005cecaa0b450e8ed98ae71906b1541c0c5576fc7ddcd10b5', '9876fb19ad6579b278cb6d8aa8fbc6b011995d1b336ce80e6b0ab1d1fffbe0f4']],
-    ['deploy-docs.yml', 'docs-production', 'DOCS_DEPLOY_APPROVED_SHA', docsAuthorizationRunDigests],
     ['deploy-docs-standalone.yml', 'docs-production', 'DOCS_STANDALONE_DEPLOY_APPROVED_SHA', standaloneAuthorizationRunDigests],
   ])('%s is manual-only and binds every protected job to one reviewed SHA', (name, environment, approvalVariable, runDigests) => {
     const source = workflow(name)
@@ -1863,7 +1789,7 @@ jobs:
     expectManualOnlyContract(name, source, environment, approvalVariable, runDigests)
   })
 
-  it.each(['deploy-web.yml', 'deploy-server.yml'])('%s deploys only an exact live-main image', (name) => {
+  it.each(['deploy-server.yml'])('%s deploys only an exact live-main image', (name) => {
     const source = workflow(name)
 
     expect(source).toContain('git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main')
@@ -1877,7 +1803,7 @@ jobs:
     expect(source).not.toMatch(/silentsuite-(?:web|server):latest/)
   })
 
-  it.each(['deploy-web.yml', 'deploy-server.yml'])('%s reauthorizes as the final step before SSH mutation', (name) => {
+  it.each(['deploy-web-standalone.yml', 'deploy-server.yml'])('%s reauthorizes as the final step before SSH mutation', (name) => {
     const parsed = parseWorkflow(workflow(name))
     const steps = parsed.jobs.deploy.steps ?? []
     const reauthorization = steps.findIndex((step) => step.name === 'Re-assert live main immediately before deployment')
@@ -1888,34 +1814,10 @@ jobs:
     expect(mutation).toBe(reauthorization + 1)
   })
 
-  it('blocks public deployment until an exact immutable signed Stage A artifact admits this exact public SHA', () => {
-    for (const name of ['deploy-web.yml', 'deploy-docs.yml']) {
-      const source = workflow(name)
-      const gate = source.indexOf('verify-annual-pre-public-admission')
-      const deploy = source.indexOf(name === 'deploy-web.yml' ? 'name: Deploy via SSH' : 'name: Deploy to production Worker')
-      expect(gate).toBeGreaterThan(-1)
-      expect(deploy).toBeGreaterThan(gate)
-      expect(source).toContain('private_admission_run_id')
-      expect(source).toContain('private_admission_run_attempt')
-      expect(source).toContain('private_admission_artifact_id')
-      expect(source).toContain('actions/create-github-app-token@0f859bf9e69e887678d5bbfbee594437cb440ffe')
-      expect(source).toContain('ANNUAL_PRIVATE_ADMISSION_HMAC_KEY')
-      expect(source).not.toContain('BILLING_V2_CUTOVER_MANIFEST')
-      expect(source).not.toContain('https://api.silentsuite.io/health/link-proof')
-    }
-    expect(deployRunbook).toContain('annual-only-pre-public-admission-<private-run-id>-<private-run-attempt>')
-    expect(deployRunbook).toContain('ANNUAL_PRIVATE_ADMISSION_HMAC_KEY')
-  })
-
   it.each([
-    ['deploy-docs.yml', 'docs-production-${{ inputs.expected_sha }}'],
     ['deploy-docs-standalone.yml', 'docs-standalone-production-${{ inputs.expected_sha }}'],
   ])('%s builds docs once and deploys the admitted artifact after reauthorization', (name, artifactName) => {
-    expectDocsBuildOnce(name, workflow(name), artifactName)
-  })
-
-  it('the standalone docs workflow mirrors deploy-docs.yml exactly except for annual admission', () => {
-    expectStandaloneMirrorsAnnualDocs(workflow('deploy-docs-standalone.yml'))
+    expectDocsBuildOnce(workflow(name), artifactName)
   })
 
   it('the standalone docs workflow carries no annual admission material', () => {
@@ -1980,10 +1882,10 @@ jobs:
     ['Cloudflare secret in admission job env (row 27)', (source) => source.replace('      DOCS_STANDALONE_DEPLOY_APPROVED_SHA: ${{ vars.DOCS_STANDALONE_DEPLOY_APPROVED_SHA }}\n    steps:\n', '      DOCS_STANDALONE_DEPLOY_APPROVED_SHA: ${{ vars.DOCS_STANDALONE_DEPLOY_APPROVED_SHA }}\n      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}\n    steps:\n'), standaloneEnvelopeMessages.jobEnv('admission'), ['admission-preflight']],
     ['Cloudflare secret in deploy job env (row 28)', (source) => source.replace(standaloneJobEnvLine('deploy'), `${standaloneJobEnvLine('deploy')}      CLOUDFLARE_API_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}\n`), standaloneEnvelopeMessages.jobEnv('deploy'), []],
     ['Cloudflare secret in deploy job env (row 28) breaks secret locality', (source) => source.replace(standaloneJobEnvLine('deploy'), `${standaloneJobEnvLine('deploy')}      CLOUDFLARE_API_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}\n`), standaloneEnvelopeMessages.secretLocality, []],
-    ['Cloudflare secret on a non-Wrangler deploy step (row 28)', (source) => source.replace('        run: pnpm run check:public-analytics\n\n      - name: Re-assert owner approval', '        run: pnpm run check:public-analytics\n        env:\n          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}\n\n      - name: Re-assert owner approval'), standaloneEnvelopeMessages.secretLocality, ['mirror']],
-    ['extra GH_TOKEN on a build step (row 30)', (source) => source.replace('      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n', '      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n        env:\n          GH_TOKEN: ${{ github.token }}\n'), standaloneEnvelopeMessages.githubToken, ['mirror']],
-    ['secrets.GITHUB_TOKEN on a build step (row 30)', (source) => source.replace('      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n', '      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n        env:\n          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n'), standaloneEnvelopeMessages.secretLocality, ['mirror']],
-    ['index-syntax Cloudflare secret on a build step', (source) => source.replace("          SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'\n", "          SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'\n          CF: ${{ secrets['CLOUDFLARE_API_TOKEN'] }}\n"), standaloneEnvelopeMessages.secretLocality, ['mirror']],
+    ['Cloudflare secret on a non-Wrangler deploy step (row 28)', (source) => source.replace('        run: pnpm run check:public-analytics\n\n      - name: Re-assert owner approval', '        run: pnpm run check:public-analytics\n        env:\n          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}\n\n      - name: Re-assert owner approval'), standaloneEnvelopeMessages.secretLocality, []],
+    ['extra GH_TOKEN on a build step (row 30)', (source) => source.replace('      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n', '      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n        env:\n          GH_TOKEN: ${{ github.token }}\n'), standaloneEnvelopeMessages.githubToken, []],
+    ['secrets.GITHUB_TOKEN on a build step (row 30)', (source) => source.replace('      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n', '      - name: Install dependencies\n        run: pnpm install --frozen-lockfile\n        env:\n          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n'), standaloneEnvelopeMessages.secretLocality, []],
+    ['index-syntax Cloudflare secret on a build step', (source) => source.replace("          SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'\n", "          SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'\n          CF: ${{ secrets['CLOUDFLARE_API_TOKEN'] }}\n"), standaloneEnvelopeMessages.secretLocality, []],
     ['build job moved to a self-hosted runner', (source) => source.replace('    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    environment: docs-production\n    permissions:\n      contents: read\n', '    runs-on: self-hosted\n    timeout-minutes: 10\n    environment: docs-production\n    permissions:\n      contents: read\n'), standaloneEnvelopeMessages.jobControls('build'), []],
     ['deploy job given a container', (source) => source.replace('    needs: build\n', '    needs: build\n    container: node:22\n'), standaloneEnvelopeMessages.jobControls('deploy'), []],
     ['deploy job given job-level run defaults', (source) => source.replace('    needs: build\n', "    needs: build\n    defaults:\n      run:\n        shell: 'bash --noprofile --norc -eo pipefail {0}'\n"), standaloneEnvelopeMessages.jobControls('deploy'), []],
@@ -1991,7 +1893,7 @@ jobs:
     ['admission step given an env map', (source) => source.replace('      - name: Refuse an unarmed or mismatched standalone docs dispatch with an explicit diagnostic per condition\n        shell: bash\n', '      - name: Refuse an unarmed or mismatched standalone docs dispatch with an explicit diagnostic per condition\n        shell: bash\n        env:\n          BASH_ENV: /tmp/startup.sh\n'), standaloneEnvelopeMessages.stepEnv('admission', 0), []],
     ['workflow renamed', (source) => source.replace('name: Deploy Docs standalone (production, no annual Stage A)', 'name: Deploy Docs (production)'), standaloneEnvelopeMessages.name, ['no-annual-material']],
     ['extra dispatch input', (source) => source.replace('        type: string\n\nconcurrency:', '        type: string\n      other_sha:\n        required: false\n        type: string\n\nconcurrency:'), standaloneEnvelopeMessages.dispatch, ['no-annual-material']],
-    ['concurrency group detached', (source) => source.replace('  group: deploy-docs-production\n', '  group: deploy-docs-standalone\n'), standaloneEnvelopeMessages.concurrency, ['mirror']],
+    ['concurrency group detached', (source) => source.replace('  group: deploy-docs-production\n', '  group: deploy-docs-standalone\n'), standaloneEnvelopeMessages.concurrency, []],
     ['extra job', (source) => `${source}\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo extra\n`, standaloneEnvelopeMessages.jobs, ['manual-only']],
   ])('rejects a standalone envelope escape: %s', (_label, mutate, violation, stage1Rejections) => {
     const source = workflow('deploy-docs-standalone.yml')
@@ -2016,7 +1918,6 @@ jobs:
   })
 
   it.each([
-    ['deploy-web.yml', 'web'],
     ['deploy-server.yml', 'server'],
   ])('%s verifies the running image and rolls back failed replacements', (name, component) => {
     const source = workflow(name)
@@ -2028,10 +1929,8 @@ jobs:
     expect(source).toContain(`Automatic ${component} rollback failed`)
   })
 
-  it('standalone Web cutover restores the predecessor on a wrong served SHA (old Web scalar until standalone exists)', () => {
-    const directory = resolve(process.cwd(), '../../.github/workflows')
-    const sourceName = readdirSync(directory).includes('deploy-web-standalone.yml')
-      ? 'deploy-web-standalone.yml' : 'deploy-web.yml'
+  it('standalone Web cutover restores the predecessor on a wrong served SHA', () => {
+    const sourceName = 'deploy-web-standalone.yml'
     const parsed = parseWorkflow(workflow(sourceName))
     const mutations = (parsed.jobs.deploy.steps ?? []).filter(step => step.uses === pinnedSshAction && typeof step.with?.script === 'string')
     expect(mutations).toHaveLength(1)
@@ -2068,7 +1967,6 @@ jobs:
     expect(wrong.trace.some(call => call.operation === 'http-root' && call.returned === '200' &&
       call.imageId === ids.candidateConfigId && call.revision === ids.candidateSha && call.publicSha === ids.wrongSha)).toBe(true)
 
-    // Old-source witness: deploy-web.yml currently exits successfully on this scenario.
     // Standalone acceptance requires the real transaction to fail and verify restoration.
     expect(wrong.result.status, sourceName + ' must reject a wrong public deployment identity').not.toBe(0)
     expect(wrong.state).toMatchObject({ imageId: ids.previousConfigId, revision: ids.previousSha, publicSha: ids.previousSha })
@@ -2342,9 +2240,9 @@ jobs:
     // The check above only detects a breach; the exclusive window is what prevents the race.
     const section = deployRunbook.slice(heading, deployRunbook.indexOf('\n## ', heading))
     for (const requirement of [
-      'Clear `WEB_STANDALONE_DEPLOY_APPROVED_SHA`, `WEB_DEPLOY_APPROVED_SHA`, and `ANNUAL_PUBLIC_CUTOVER_APPROVED_SHA`',
+      'Clear `WEB_STANDALONE_DEPLOY_APPROVED_SHA` and read back its absence',
       'snapshotted when the run was queued',
-      '`deploy-web-standalone.yml`, `deploy-web.yml`, and `annual-only-public-cutover.yml`',
+      'in-progress run of `deploy-web-standalone.yml`',
       'confirm each has completed',
       'let it finish',
       'until this restoration has been verified',
@@ -2383,8 +2281,8 @@ jobs:
     }
   })
 
-  it('deploy-web.yml verifies the SSH server host key from protected custody before the mutation', () => {
-    expect(sshHostVerificationViolations(parseWorkflow(workflow('deploy-web.yml')))).toEqual([])
+  it('deploy-server.yml verifies the SSH server host key from protected custody before the mutation', () => {
+    expect(sshHostVerificationViolations(parseWorkflow(workflow('deploy-server.yml')))).toEqual([])
   })
 
   it.each<[string, (source: string) => string, string]>([
@@ -2399,18 +2297,15 @@ jobs:
     ['preflight allowed to fail', (source) => source.replace(`      - name: ${sshFingerprintPreflightName}\n`, `      - name: ${sshFingerprintPreflightName}\n        continue-on-error: true\n`), 'fingerprint custody preflight must be the exact reviewed fail-closed validation'],
     ['preflight removed', (source) => source.replace(`      - name: ${sshFingerprintPreflightName}\n`, '      - name: Renamed inert step\n'), 'fingerprint custody preflight must run immediately before final authorization'],
     ['preflight reordered between final authorization and SSH', (source) => moveStep(source, sshFingerprintPreflightName, 'Deploy via SSH'), 'final authorization must remain directly adjacent to the SSH mutation'],
-    ['preflight reordered ahead of the Stage A re-verification', (source) => moveStep(source, sshFingerprintPreflightName, 'Checkout exact approved commit for deployment'), 'fingerprint custody preflight must run immediately before final authorization'],
-    ['reusable secret declaration removed', (source) => source.replace('      VPS_SSH_FINGERPRINT: { required: true }\n', ''), 'reusable workflow must declare VPS_SSH_FINGERPRINT as a required secret'],
-    ['reusable secret made optional', (source) => source.replace('VPS_SSH_FINGERPRINT: { required: true }', 'VPS_SSH_FINGERPRINT: { required: false }'), 'reusable workflow must declare VPS_SSH_FINGERPRINT as a required secret'],
   ])('rejects an SSH host-verification bypass: %s', (_label, mutate, violation) => {
-    const source = workflow('deploy-web.yml')
+    const source = workflow('deploy-server.yml')
     const mutated = mutate(source)
     expect(mutated).not.toBe(source)
     expect(sshHostVerificationViolations(parseWorkflow(mutated))).toContain(violation)
   })
 
   it('the fingerprint custody preflight refuses missing or malformed values and admits one strict fingerprint', () => {
-    const steps = parseWorkflow(workflow('deploy-web.yml')).jobs.deploy.steps ?? []
+    const steps = parseWorkflow(workflow('deploy-server.yml')).jobs.deploy.steps ?? []
     const run = steps.find((step) => step.name === sshFingerprintPreflightName)?.run
     expect(run).toBeTypeOf('string')
     // A syntactically valid fingerprint of a synthetic value; it is not any real host key.
@@ -2432,42 +2327,12 @@ jobs:
     expect(`${accepted.stdout}${accepted.stderr}`).not.toContain(body.slice(0, 20))
   })
 
-  it('the reusable cutover caller maps exactly the secrets deploy-web.yml declares, including the host-key fingerprint', () => {
-    const declared = Object.keys(parseWorkflow(workflow('deploy-web.yml')).on?.workflow_call?.secrets ?? {})
-    const caller = parseWorkflow(workflow('annual-only-public-cutover.yml')).jobs['deploy-web']
-
-    expect(declared).toContain('VPS_SSH_FINGERPRINT')
-    expect(caller.uses).toBe('./.github/workflows/deploy-web.yml')
-    expect(caller.secrets).toEqual(Object.fromEntries(declared.map((name) => [name, `\${{ secrets.${name} }}`])))
-  })
-
-  it('no workflow, including the annual cutover caller, invokes the standalone docs workflow', () => {
+  it('no workflow invokes the standalone docs workflow', () => {
     const directory = resolve(process.cwd(), '../../.github/workflows')
     const callers = readdirSync(directory).filter((entry) => /\.ya?ml$/.test(entry))
       .flatMap((entry) => standaloneDocsCallers(entry, readFileSync(join(directory, entry), 'utf8')))
 
     expect(callers).toEqual([])
-    expectCutoverInvokesOnlyAnnualDocs(workflow('annual-only-public-cutover.yml'))
-  })
-
-  it('rejects an annual cutover caller redirected to the standalone docs workflow (matrix row 22)', () => {
-    const source = workflow('annual-only-public-cutover.yml')
-    const mutated = source.replace('    uses: ./.github/workflows/deploy-docs.yml\n', '    uses: ./.github/workflows/deploy-docs-standalone.yml\n')
-    expect(mutated).not.toBe(source)
-    expect(standaloneDocsCallers('annual-only-public-cutover.yml', mutated)).toEqual(['annual-only-public-cutover.yml:deploy-docs'])
-    expect(() => expectCutoverInvokesOnlyAnnualDocs(mutated)).toThrow()
-  })
-
-  it('binds any edit of the annual deploy-docs.yml to its unchanged digest and Stage A contract (matrix row 23)', () => {
-    const source = workflow('deploy-docs.yml')
-    const retimed = source.replace('    timeout-minutes: 10\n', '    timeout-minutes: 30\n')
-    const ungated = removeStep(source, 'Fetch and verify exact timestamp-free Stage A before docs publication')
-    for (const mutated of [retimed, ungated]) {
-      expect(mutated).not.toBe(source)
-      expect(sha256(JSON.stringify(parseWorkflow(mutated)))).not.toBe(workflowContracts['deploy-docs.yml'])
-    }
-    expectManualOnlyContract('deploy-docs.yml', source, 'docs-production', 'DOCS_DEPLOY_APPROVED_SHA', docsAuthorizationRunDigests)
-    expect(() => expectManualOnlyContract('deploy-docs.yml', ungated, 'docs-production', 'DOCS_DEPLOY_APPROVED_SHA', docsAuthorizationRunDigests)).toThrow()
   })
 
   it('the unmutated standalone workflow satisfies every Stage 1 semantic contract', () => {
@@ -2483,7 +2348,7 @@ jobs:
     ['5: annual approval variable', (source) => source.replaceAll('DOCS_STANDALONE_DEPLOY_APPROVED_SHA', 'DOCS_DEPLOY_APPROVED_SHA'), 'no-annual-material'],
     ['6: unprotected environment', (source) => source.replace('    environment: docs-production\n', '    environment: production\n'), 'manual-only'],
     ['7: checkout of a mutable ref', (source) => source.replace('          ref: ${{ inputs.expected_sha }}', '          ref: refs/heads/main'), 'manual-only'],
-    ['8: no-op final reauthorization', (source) => insertBeforeStep(removeStep(source, 'Re-assert owner approval immediately before deployment'), 'Deploy to production Worker', '      - name: Re-assert owner approval immediately before deployment\n        shell: bash\n        run: exit 0\n\n'), 'mirror'],
+    ['8: no-op final reauthorization', (source) => insertBeforeStep(removeStep(source, 'Re-assert owner approval immediately before deployment'), 'Deploy to production Worker', '      - name: Re-assert owner approval immediately before deployment\n        shell: bash\n        run: exit 0\n\n'), 'manual-only'],
     ['9: step between reauthorization and mutation', (source) => insertBeforeStep(source, 'Deploy to production Worker', '      - name: Inserted step\n        run: echo inserted\n\n'), 'no-annual-material'],
     ['10: mutation allowed to fail', (source) => source.replace('      - name: Deploy to production Worker\n', '      - name: Deploy to production Worker\n        continue-on-error: true\n'), 'no-annual-material'],
     ['11: rebuild in the deploy job', (source) => source.replace('        run: pnpm run check:public-analytics\n\n      - name: Re-assert owner approval', '        run: pnpm run check:public-analytics && pnpm run build\n\n      - name: Re-assert owner approval'), 'build-once'],
@@ -2492,11 +2357,7 @@ jobs:
     ['14: annual artifact name', (source) => source.replace('name: docs-standalone-production-${{ inputs.expected_sha }}', 'name: annual-only-pre-public-admission-${{ inputs.expected_sha }}'), 'no-annual-material'],
     ['15: annual HMAC secret env', (source) => source.replace("          SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'\n", "          SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'\n          ANNUAL_PRIVATE_ADMISSION_HMAC_KEY: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}\n"), 'no-annual-material'],
     ['16: App token step', (source) => insertBeforeStep(source, 'Test Android distribution documentation', '      - name: Mint token\n        uses: actions/create-github-app-token@0f859bf9e69e887678d5bbfbee594437cb440ffe\n        with:\n          owner: silent-suite\n\n'), 'no-annual-material'],
-    ['17: analytics check dropped before build', (source) => removeStep(source, 'Verify public analytics and relay contract before build'), 'mirror'],
-    ['18: billing copy guard dropped', (source) => removeStep(source, 'Enforce annual billing copy'), 'mirror'],
-    ['19: mutable action tag', (source) => source.replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v7'), 'mirror'],
     ['20: admission granted repository read', (source) => source.replace('    permissions: {}\n', '    permissions:\n      contents: read\n'), 'admission-preflight'],
-    ['21: build detached from admission', (source) => source.replace('    needs: admission\n', ''), 'mirror'],
   ])('rejects standalone docs admission drift, matrix row %s', (_label, mutate, rejector) => {
     const source = workflow('deploy-docs-standalone.yml')
     const mutated = mutate(source)
@@ -2514,7 +2375,7 @@ jobs:
 
   it('documents that Web dispatch is blocked until the host-key fingerprint is commissioned from trusted custody', () => {
     expect(deployRunbook).toContain('## SSH server verification for the Web mutation')
-    expect(deployRunbook).toContain('Web production dispatch, standalone or through the annual public cutover, is blocked until `VPS_SSH_FINGERPRINT` is commissioned')
+    expect(deployRunbook).toContain('Web production dispatch is blocked until `VPS_SSH_FINGERPRINT` is commissioned')
     expect(deployRunbook).toContain('Never derive the value from a fresh unauthenticated `ssh-keyscan`')
     expect(deployRunbook).toContain('do not remove, blank, or bypass the fingerprint to recover')
     expect(deployRunbook).toContain('A names-only secret inventory does not verify the value')

@@ -27,9 +27,6 @@ const PREVIEW_SECRETS = {
   PREVIEW_VPS_SSH_KEY: 'preview-web.yml#publish-and-deploy-preview@web-preview',
   PREVIEW_CLOUDFLARE_API_TOKEN: 'preview-docs.yml#deploy-preview@docs-preview',
 }
-// Reusable-workflow callers may map production secrets through; the callee's
-// own jobs bind the production environment, whose secrets take precedence.
-const REUSABLE_CALLEES = new Set(['./.github/workflows/deploy-web.yml', './.github/workflows/deploy-docs.yml'])
 
 function split(text) {
   const marker = text.indexOf('\njobs:\n')
@@ -63,8 +60,6 @@ function environment(job) {
   return match[2]
 }
 
-const reusableCallee = job => job.match(/^ {4}uses: (\S+)$/m)?.[1] ?? null
-
 test('no workflow hands over the whole secrets context', () => {
   for (const name of workflowNames()) {
     const text = read(name)
@@ -83,21 +78,10 @@ test('production deploy secrets are read only inside main-only production enviro
       if (secrets.length === 0) continue
       const env = environment(job)
       if (env !== null && PRODUCTION_ENVIRONMENTS.includes(env)) continue
-      if (env === null && REUSABLE_CALLEES.has(reusableCallee(job))) continue
       offenders.push(`${name}#${jobName}@${env ?? 'no environment'}: ${secrets.join(', ')}`)
     }
   }
   assert.deepEqual(offenders, [])
-})
-
-test('reusable production callees bind every secret-reading job to a production environment', () => {
-  for (const callee of REUSABLE_CALLEES) {
-    const { jobs } = split(read(callee.replace('./.github/workflows/', '')))
-    for (const [jobName, job] of jobs) {
-      if (referenced(job, PRODUCTION_SECRETS).length === 0) continue
-      assert.ok(PRODUCTION_ENVIRONMENTS.includes(environment(job)), `${callee}#${jobName} must bind a production environment`)
-    }
-  }
 })
 
 test('each preview secret is read only by its preview job inside its preview environment', () => {

@@ -33,8 +33,6 @@
     "@silentsuite/ui": "workspace:*",
     "@stripe/react-stripe-js": "^5.6.1",
     "@stripe/stripe-js": "^8.11.0",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.400.0",
     "next": "15.5.29",
@@ -46,7 +44,6 @@
     "react-hook-form": "^7.71.2",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "tailwind-merge": "^2.3.0",
     "temporal-polyfill": "^0.3.2",
     "zod": "4.6.6",
     "zustand": "^5.0.11"

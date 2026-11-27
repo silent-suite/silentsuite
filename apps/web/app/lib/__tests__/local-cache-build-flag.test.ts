@@ -12,7 +12,7 @@ import { getCacheCapabilityStatus } from '../data-cache'
  * disabled without depending on any workflow remembering to pass `false`.
  */
 
-type WorkflowStep = { name?: string; uses?: string; with?: Record<string, string> }
+type WorkflowStep = { name?: string; uses?: string; with?: Record<string, string>; env?: Record<string, string> }
 type ParsedWorkflow = { jobs: Record<string, { steps?: WorkflowStep[] }> }
 
 const FLAG = 'NEXT_PUBLIC_LOCAL_CACHE_ENABLED'
@@ -63,12 +63,18 @@ describe('local cache build flag', () => {
     for (const step of steps) expect(step.with?.push).not.toBe(true)
   })
 
-  it('leaves production web builds on the default-off value', () => {
-    const deployWeb = repoFile('.github/workflows/deploy-web.yml')
-    expect(deployWeb).not.toContain(FLAG)
-    const steps = buildArgSteps('deploy-web.yml')
-    expect(steps).toHaveLength(1)
-    expect(buildArgLines(steps[0]).some((line) => line.startsWith(`${FLAG}=`))).toBe(false)
+  it('keeps production web builds explicitly off', () => {
+    const document = parseDocument(repoFile('.github/workflows/deploy-web-standalone.yml'), { uniqueKeys: true })
+    if (document.errors.length) throw new Error(document.errors.map((error) => error.message).join('\n'))
+    const parsed = document.toJS() as ParsedWorkflow
+    const buildArgs = Object.values(parsed.jobs ?? {})
+      .flatMap((job) => job.steps ?? [])
+      .flatMap((step) => (step.env?.WEB_BUILD_ARGS === undefined ? [] : [step.env.WEB_BUILD_ARGS]))
+    expect(buildArgs.length).toBeGreaterThan(0)
+    for (const args of buildArgs) {
+      const lines = args.split('\n').map((line) => line.trim()).filter((line) => line.startsWith(`${FLAG}=`))
+      expect(lines).toEqual([`${FLAG}=false`])
+    }
   })
 
   it.each([
