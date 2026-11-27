@@ -1027,7 +1027,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         if (info.taskdav != null) {
             val progress = findViewById<View>(R.id.taskdav_refreshing) as ProgressBar
             progress.visibility = if (info.taskdav!!.refreshing) View.VISIBLE else View.GONE
-            val hasTaskProvider = hasSupportedTaskProvider()
 
             listTaskDAV = findViewById<View>(R.id.tasklists) as ListView
             listTaskDAV!!.isEnabled = !info.taskdav!!.refreshing
@@ -1037,9 +1036,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             adapter.addAll(info.taskdav!!.infos!!)
             listTaskDAV!!.adapter = adapter
             listTaskDAV!!.onItemClickListener = onItemClickListener
-
-            val opentasksWarning = findViewById<View>(R.id.taskdav_opentasks_warning)
-            opentasksWarning.visibility = if (hasTaskProvider) View.GONE else View.VISIBLE
         }
         renderNotesSurfaces(info)
         renderDashboard(info)
@@ -1143,8 +1139,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         else services
         val aggregate = aggregateAccountDashboard(headlineServices.map { it.model })
         val row = findViewById<View>(R.id.dashboard_status_row)
+        val reminderShown = taskReminder && !reminderHidden
         findViewById<View>(R.id.dashboard_task_reminder_dismiss).visibility =
-            if (taskReminder && !reminderHidden) View.VISIBLE else View.GONE
+            if (reminderShown) View.VISIBLE else View.GONE
+        // The headline carries the explanation while it shows the reminder, so the Tasks row keeps
+        // only its status instead of repeating the same sentence.
+        findViewById<View>(R.id.taskdav_status_detail).visibility = if (reminderShown) View.GONE else View.VISIBLE
         // An all-success headline would imply Tasks sync too, so the headline is omitted instead.
         if (headlineServices.size < services.size && aggregate.state == AccountDashboardState.SUCCESS) {
             row.visibility = View.GONE
@@ -1360,8 +1360,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun renderDashboardAction(action: AccountDashboardAction, setupTarget: Int?) {
+        // The task-app link is advice, not a fix, so it gets the quiet text button instead of the
+        // full-width primary one.
+        val taskAppLink = findViewById<View>(R.id.dashboard_task_app_action)
+        taskAppLink.visibility = if (action == AccountDashboardAction.INSTALL_TASK_APP) View.VISIBLE else View.GONE
+        taskAppLink.setOnClickListener { WebViewActivity.openUrl(this, Constants.androidTaskAppDocsUri) }
         val button = findViewById<com.google.android.material.button.MaterialButton>(R.id.dashboard_context_action)
-        button.visibility = if (action == AccountDashboardAction.NONE) View.GONE else View.VISIBLE
+        button.visibility = if (action == AccountDashboardAction.NONE || action == AccountDashboardAction.INSTALL_TASK_APP)
+            View.GONE else View.VISIBLE
         button.setText(when (action) {
             AccountDashboardAction.NONE -> R.string.account_synchronize_now
             AccountDashboardAction.SYNC_NOW -> R.string.account_synchronize_now
@@ -1388,7 +1394,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     val intent = Intent(this, PermissionsActivity::class.java)
                     permissionRemediationLauncherOverride?.invoke(intent) ?: startActivity(intent)
                 }
-                AccountDashboardAction.INSTALL_TASK_APP -> WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)
+                AccountDashboardAction.INSTALL_TASK_APP -> Unit
                 AccountDashboardAction.REVIEW_SETUP -> setupTarget?.let { target ->
                     findViewById<ScrollView>(R.id.parent).smoothScrollTo(0, findViewById<View>(target).top)
                 }
@@ -1407,9 +1413,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private fun permissionsReady(vararg permissions: String) = permissions.all {
         ContextCompat.checkSelfPermission(this, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
-
-    private fun hasSupportedTaskProvider() =
-            TaskProviderHandling.getWantedTaskSyncProvider(this) != null
 
 
     class AccountInfoViewModel : ViewModel(), AccountUpdateService.RefreshingStatusListener, ServiceConnection, SyncStatusObserver,

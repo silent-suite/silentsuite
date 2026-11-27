@@ -139,6 +139,16 @@
                                 android:minHeight="@dimen/touch_target_min"
                                 android:text="@string/account_synchronize_now"
                                 android:visibility="gone" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/dashboard_task_app_action"
+                                style="@style/Widget.AppTheme.Material3.Button.Text"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="end"
+                                android:layout_marginTop="@dimen/spacing_8"
+                                android:minHeight="@dimen/touch_target_min"
+                                android:text="@string/dashboard_install_task_app"
+                                android:visibility="gone" />
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
 
@@ -404,7 +414,6 @@
                     <com.google.android.material.card.MaterialCardView android:id="@+id/taskdav" style="@style/Widget.AppTheme.Dashboard.CollectionCard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8">
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
                             <com.google.android.material.appbar.MaterialToolbar android:id="@+id/taskdav_menu" style="@style/Widget.AppTheme.Dashboard.CollectionToolbar" app:navigationIcon="@drawable/ic_task_light" app:title="@string/settings_taskdav" />
-                            <TextView android:id="@+id/taskdav_opentasks_warning" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="@dimen/spacing_8" android:background="@color/semantic_surface_variant" android:padding="@dimen/spacing_16" android:text="@string/account_tasks_not_showing" android:textAppearance="@style/TextAppearance.Material3.BodyMedium" android:textColor="@color/semantic_on_surface" android:visibility="gone" />
                             <io.silentsuite.sync.ui.widget.MaximizedListView android:id="@+id/tasklists" android:layout_width="match_parent" android:layout_height="wrap_content" android:choiceMode="multipleChoice" android:descendantFocusability="beforeDescendants" />
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
