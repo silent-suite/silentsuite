@@ -21,6 +21,9 @@ Restart=on-failure
 TimeoutStartSec=300
 
 # No fresh /proc, /sys or /dev in the tree: unprivileged LXC/Incus refuse those mounts.
+# The /proc- and /sys-path protections (ProtectHostname, ProtectKernel*, ProtectControlGroups)
+# need those mounts too and guard nothing here; the syscall filter and empty capability set
+# below still block module loading and kernel tunables.
 MountAPIVFS=no
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -32,10 +35,6 @@ RestrictNamespaces=yes
 RestrictRealtime=yes
 DevicePolicy=closed
 ProtectClock=yes
-ProtectHostname=yes
-ProtectControlGroups=yes
-ProtectKernelModules=yes
-ProtectKernelTunables=yes
 LockPersonality=yes
 SystemCallArchitectures=native
 SystemCallFilter=~@clock @debug @module @mount @obsolete @reboot @setuid @swap @cpu-emulation @privileged

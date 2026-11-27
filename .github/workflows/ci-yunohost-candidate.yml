@@ -251,5 +251,8 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/package_check"
+          # package_check looks for a local alias named like this; the remote now publishes
+          # the image as yunohost/bookworm-stable/appci.
+          sudo incus image copy yunohost:yunohost/bookworm-stable/appci local: --alias yunohost-bookworm-stable-appci
           sg incus-admin -c "./package_check.sh $RUNNER_TEMP/silentsuite_ynh"
           test "$(git -C package_linter rev-parse HEAD)" = "$PACKAGE_LINTER_SHA"

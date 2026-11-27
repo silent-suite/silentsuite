@@ -4,6 +4,7 @@
 # PUBLISHED IMAGES
 #=================================================
 
+# shellcheck disable=SC2034  # read through ${!name} in _silentsuite_image_ref
 # Released v0.5.20-beta images, pinned per architecture. These digests are the
 # amd64Digest/arm64Digest values of the release asset umbrel-images.json.
 server_repo="ghcr.io/silent-suite/silentsuite-server"
@@ -54,7 +55,7 @@ set -eu
 cd "$HOME"
 for pair in "$@"; do
     name=${pair%%=*}
-    skopeo copy --quiet --retry-times 3 --preserve-digests "docker://${pair#*=}" "oci:oci-$name:img"
+    skopeo copy --quiet --retry-times 3 --src-no-creds --preserve-digests "docker://${pair#*=}" "oci:oci-$name:img"
     umoci raw unpack --rootless --image "oci-$name:img" "$name"
     rm -rf "oci-$name"
 done
