@@ -318,6 +318,22 @@ describe('subscription card clarity', () => {
     expect(within(card()).getByRole('button', { name: action })).toBeInTheDocument()
   })
 
+  it('says a past-due payment failed and what Subscribe does (SIGNUP-05)', async () => {
+    route({ status: 'past_due', capabilities: { ...capabilities, canStartPaidSubscription: true } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText("Your last payment didn't go through. Subscribe to start a new yearly plan.")).toBeInTheDocument()
+    expect(within(card()).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+  })
+
+  it('names no action for a past-due payment when Billing offers none', async () => {
+    route({ status: 'past_due' })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText("Your last payment didn't go through.")).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Subscribe' })).not.toBeInTheDocument()
+  })
+
   it('offers Subscribe, not Reactivate, to a pay-now account that never paid', async () => {
     route({
       status: 'none', trialPath: 'immediate', renewalDate: null, accountNotice: null, billingDate: null,

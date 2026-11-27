@@ -708,6 +708,13 @@ export default function SubscriptionPage() {
           <p className="text-sm text-[rgb(var(--muted))]">Your free trial ended on {formatDateStr(data.trial.endsAt)}.</p>
         )}
 
+        {/* A retryable payment has its own box below; otherwise say why the badge is red. */}
+        {!notice && data.status === 'past_due' && !capabilities.canRetryPayment && (
+          <p className="text-sm text-[rgb(var(--muted))]">
+            Your last payment didn&apos;t go through.{showPaidRecovery && ` ${paidRecoveryLabel} to start a new yearly plan.`}
+          </p>
+        )}
+
         {expiryRefreshFailed && (
           <div className="space-y-3">
             <p className="text-sm text-[rgb(var(--muted))]">We couldn&apos;t check your trial status.</p>
