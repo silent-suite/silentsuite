@@ -669,22 +669,16 @@ def _handle_account_login(environ):
 
 
 def _handle_account_refresh(environ):
-    """Start sync for an account a separate ``--login`` process just stored."""
-    data, error_response = _read_json_body(environ)
-    if error_response:
-        return error_response
-    username = data.get("username") if isinstance(data, dict) else None
-    username = username.strip() if isinstance(username, str) else ""
-    if not username:
-        return _json_response(400, {"error": "Account username is required"})
+    """Start sync for accounts a separate ``--login`` process just stored.
 
+    The request names no account. The bridge re-reads its configured accounts
+    and starts a worker for each one that has none; a running worker picks up
+    re-stored credentials on its next sync.
+    """
     try:
-        from ..accounts import list_accounts
-        from ..radicale.storage import refresh_sync_thread
+        from ..accounts import start_missing_sync_threads
 
-        if username not in list_accounts():
-            return _json_response(404, {"error": "Account is not configured"})
-        refresh_sync_thread(username)
+        start_missing_sync_threads()
     except Exception as exc:
         logger.warning(
             "Account sync refresh after CLI sign-in failed (%s)",
@@ -2558,7 +2552,7 @@ class Web(BaseWeb):
                 return _csrf_error()
             return _handle_account_login(environ)
 
-        # Start sync for an account stored by a separate --login process
+        # Start sync for accounts stored by a separate --login process
         if path == "/.web/api/accounts/refresh":
             if not _has_valid_csrf(environ):
                 return _csrf_error()

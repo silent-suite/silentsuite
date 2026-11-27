@@ -307,6 +307,38 @@ def test_deferred_cleanup_is_cancelled_by_same_account_reauthentication(monkeypa
     assert not cleared.wait(0.1)
 
 
+@pytest.mark.parametrize("marked, expect_cleared", [(True, True), (False, False)])
+def test_deferred_cleanup_rechecks_the_durable_marker(
+    tmp_path, monkeypatch, marked, expect_cleared
+):
+    # A sign-in from another process (``--login``) clears the marker on disk
+    # but cannot bump this process's epoch.
+    username = "alice@example.com"
+    creds_path = str(tmp_path / "creds.json")
+    creds = Credentials(creds_path)
+    if marked:
+        creds.mark_cache_cleanup(username)
+    creds.save()
+    cleared = threading.Event()
+    done = threading.Event()
+
+    @contextmanager
+    def available_maintenance(user, timeout=0):
+        try:
+            yield True
+        finally:
+            done.set()
+
+    monkeypatch.setattr(accounts, "account_maintenance", available_maintenance)
+    monkeypatch.setattr(accounts, "clear_cached_user", lambda user: cleared.set() or True)
+    accounts._pending_cache_cleanups.clear()
+
+    accounts._schedule_deferred_cache_cleanup(username, creds_path=creds_path)
+
+    assert done.wait(1)
+    assert cleared.is_set() is expect_cleared
+
+
 def test_deferred_cleanup_retries_transient_failure(monkeypatch):
     cleaned = threading.Event()
     attempts = 0

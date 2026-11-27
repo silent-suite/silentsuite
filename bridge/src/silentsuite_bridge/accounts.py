@@ -14,7 +14,7 @@ from .local_cache import clear_cached_user, list_cached_users
 from .privacy_logging import bounded_exception_class
 from .radicale.creds import CREDENTIALS_LOCK, Credentials
 from .radicale.etesync_cache import account_maintenance, forget_etesync_user
-from .radicale.storage import stop_sync_thread
+from .radicale.storage import get_sync_thread, refresh_sync_thread, stop_sync_thread
 
 _account_lock = threading.RLock()
 _pending_cache_cleanups = set()
@@ -30,6 +30,14 @@ def _clear_cache_cleanup_marker(username, creds_path):
         if username in creds.list_cache_cleanups():
             creds.clear_cache_cleanup(username)
             creds.save()
+
+
+def _cache_cleanup_still_wanted(username, creds_path):
+    """Recheck the durable marker; a sign-in from another process clears it."""
+    if not creds_path:
+        return True
+    with CREDENTIALS_LOCK:
+        return username in Credentials(creds_path).list_cache_cleanups()
 
 
 def _schedule_deferred_cache_cleanup(username, *, creds_path=None):
@@ -53,6 +61,8 @@ def _schedule_deferred_cache_cleanup(username, *, creds_path=None):
                             continue
                         with _account_lock:
                             if _account_epochs.get(username, 0) != epoch:
+                                return
+                            if not _cache_cleanup_still_wanted(username, creds_path):
                                 return
                             clear_cached_user(username)
                             _clear_cache_cleanup_marker(username, creds_path)
@@ -177,6 +187,24 @@ def list_accounts(*, credentials: Credentials | None = None) -> list[str]:
     with _account_lock:
         creds = credentials or Credentials()
         return creds.list_users()
+
+
+def start_missing_sync_threads(*, credentials: Credentials | None = None) -> list[str]:
+    """Start sync for each configured account that has no running worker.
+
+    Holds the account lock from reading the configured accounts until the
+    workers exist, so a logout cannot land in between and leave a worker for
+    a signed-out account. Returns the accounts whose worker was started.
+    """
+    with _account_lock:
+        started = []
+        for username in list_accounts(credentials=credentials):
+            thread = get_sync_thread(username)
+            if thread is not None and thread.is_alive():
+                continue
+            refresh_sync_thread(username)
+            started.append(username)
+        return started
 
 
 def list_signed_out_accounts(*, credentials: Credentials | None = None) -> list[str]:

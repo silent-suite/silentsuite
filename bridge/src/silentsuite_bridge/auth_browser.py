@@ -882,10 +882,11 @@ def _loopback_opener():
     return urllib.request.build_opener(*handlers)
 
 
-def start_sync_in_running_bridge(username, opener=None):
-    """Ask a bridge already running on the dashboard listener to sync ``username``.
+def start_sync_in_running_bridge(opener=None):
+    """Ask a bridge already running on the dashboard listener to sync new accounts.
 
-    Uses the dashboard's own CSRF-protected account endpoint. Returns
+    Uses the dashboard's own CSRF-protected account endpoint. The request names
+    no account: the bridge re-reads its configured accounts. Returns
     ``"started"``, ``"not_running"`` (nothing listening), ``"failed"`` (a
     listener answered but did not start the sync) or ``"unknown"`` (no
     loopback dashboard listener is configured, so a bridge cannot be asked).
@@ -903,7 +904,7 @@ def start_sync_in_running_bridge(username, opener=None):
             return "failed"
         request = urllib.request.Request(
             base + "/.web/api/accounts/refresh",
-            data=json.dumps({"username": username}).encode(),
+            data=b"{}",
             headers={
                 "Content-Type": "application/json",
                 "X-SilentSuite-CSRF": json.loads(match.group(1)),
@@ -981,7 +982,7 @@ def browser_login(running_bridge=False):
 
     email = server.authenticated_email
     if email:
-        outcome = "in_process" if running_bridge else start_sync_in_running_bridge(email)
+        outcome = "in_process" if running_bridge else start_sync_in_running_bridge()
         if outcome == "in_process":
             print(f"\n  Login successful! The bridge is already running.")
         elif outcome == "started":

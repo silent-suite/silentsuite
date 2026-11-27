@@ -1,8 +1,9 @@
 """`--login` while a bridge is already running (BRIDGE-03).
 
 The CLI login stores the account in a separate process; the running bridge
-must be told to start syncing it through the dashboard's CSRF-protected
-account endpoint, and the terminal must print the right next step.
+is asked, through the dashboard's CSRF-protected account endpoint, to re-read
+its configured accounts and start syncing any that has no worker. The request
+names no account. The terminal must print the right next step.
 """
 
 import contextlib
@@ -20,7 +21,6 @@ import pytest
 import silentsuite_bridge.auth_browser as auth_browser
 import silentsuite_bridge.web as web_module
 from silentsuite_bridge import accounts, config
-from silentsuite_bridge.radicale import storage
 from silentsuite_bridge.radicale.creds import Credentials
 from silentsuite_bridge.web import Web, _dashboard_csrf_token
 
@@ -61,58 +61,100 @@ def _refresh(body, csrf_token=_dashboard_csrf_token):
 # ---------------------------------------------------------------------------
 
 
-def test_refresh_endpoint_requires_csrf(monkeypatch):
-    calls = []
-    monkeypatch.setattr(storage, "refresh_sync_thread", calls.append)
+@pytest.fixture
+def workers(monkeypatch):
+    """Fake sync workers: ``running`` accounts have a live worker."""
+    state = {"running": set(), "started": []}
 
-    status, payload = _refresh(json.dumps({"username": "bob@example.com"}).encode(), csrf_token=None)
+    class _Thread:
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr(
+        accounts,
+        "get_sync_thread",
+        lambda user: _Thread() if user in state["running"] else None,
+    )
+    monkeypatch.setattr(accounts, "refresh_sync_thread", state["started"].append)
+    return state
+
+
+def test_refresh_endpoint_requires_csrf(monkeypatch, workers):
+    monkeypatch.setattr(accounts, "list_accounts", lambda **_kw: ["bob@example.com"])
+
+    status, payload = _refresh(b"{}", csrf_token=None)
 
     assert status == 403
     assert payload["error"] == "Invalid dashboard CSRF token"
-    assert calls == []
+    assert workers["started"] == []
 
 
-def test_refresh_endpoint_requires_username(monkeypatch):
-    calls = []
-    monkeypatch.setattr(storage, "refresh_sync_thread", calls.append)
+def test_refresh_endpoint_starts_accounts_without_a_worker(monkeypatch, workers):
+    monkeypatch.setattr(
+        accounts, "list_accounts", lambda **_kw: ["alice@example.com", "bob@example.com"]
+    )
+    workers["running"].add("alice@example.com")
 
-    status, payload = _refresh(json.dumps({"username": "  "}).encode())
-
-    assert status == 400
-    assert calls == []
-
-
-def test_refresh_endpoint_ignores_unconfigured_account(monkeypatch):
-    calls = []
-    monkeypatch.setattr(accounts, "list_accounts", lambda **_kw: ["alice@example.com"])
-    monkeypatch.setattr(storage, "refresh_sync_thread", calls.append)
-
-    status, payload = _refresh(json.dumps({"username": "bob@example.com"}).encode())
-
-    assert status == 404
-    assert calls == []
-
-
-def test_refresh_endpoint_starts_sync_for_configured_account(monkeypatch):
-    calls = []
-    monkeypatch.setattr(accounts, "list_accounts", lambda **_kw: ["bob@example.com"])
-    monkeypatch.setattr(storage, "refresh_sync_thread", calls.append)
-
-    status, payload = _refresh(json.dumps({"username": " bob@example.com "}).encode())
+    status, payload = _refresh(b"{}")
 
     assert status == 200
     assert payload == {"ok": True}
-    assert calls == ["bob@example.com"]
+    assert workers["started"] == ["bob@example.com"]
 
 
-def test_refresh_endpoint_reports_failure_without_details(monkeypatch):
+def test_refresh_endpoint_ignores_a_posted_account_name(monkeypatch, workers):
+    monkeypatch.setattr(accounts, "list_accounts", lambda **_kw: ["alice@example.com"])
+
+    status, payload = _refresh(json.dumps({"username": "bob@example.com"}).encode())
+
+    assert status == 200
+    assert payload == {"ok": True}
+    assert workers["started"] == ["alice@example.com"]
+
+
+def test_refresh_endpoint_with_every_account_running_starts_nothing(monkeypatch, workers):
+    monkeypatch.setattr(accounts, "list_accounts", lambda **_kw: ["alice@example.com"])
+    workers["running"].add("alice@example.com")
+
+    status, payload = _refresh(b"")
+
+    assert status == 200
+    assert payload == {"ok": True}
+    assert workers["started"] == []
+
+
+def test_refresh_holds_account_lock_until_worker_exists(monkeypatch):
+    # Logout takes the same lock, so it cannot run between reading the
+    # configured accounts and creating the worker.
+    lock_free_during_start = []
+
+    def try_lock():
+        acquired = accounts._account_lock.acquire(blocking=False)
+        if acquired:
+            accounts._account_lock.release()
+        lock_free_during_start.append(acquired)
+
+    def start(_user):
+        probe = threading.Thread(target=try_lock)
+        probe.start()
+        probe.join(5)
+
+    monkeypatch.setattr(accounts, "list_accounts", lambda **_kw: ["bob@example.com"])
+    monkeypatch.setattr(accounts, "get_sync_thread", lambda _user: None)
+    monkeypatch.setattr(accounts, "refresh_sync_thread", start)
+
+    assert accounts.start_missing_sync_threads() == ["bob@example.com"]
+    assert lock_free_during_start == [False]
+
+
+def test_refresh_endpoint_reports_failure_without_details(monkeypatch, workers):
     def fail(_username):
         raise RuntimeError("bob@example.com secret detail")
 
     monkeypatch.setattr(accounts, "list_accounts", lambda **_kw: ["bob@example.com"])
-    monkeypatch.setattr(storage, "refresh_sync_thread", fail)
+    monkeypatch.setattr(accounts, "refresh_sync_thread", fail)
 
-    status, payload = _refresh(json.dumps({"username": "bob@example.com"}).encode())
+    status, payload = _refresh(b"{}")
 
     assert status == 500
     assert payload["ok"] is False
@@ -171,46 +213,46 @@ def loopback_dashboard(monkeypatch, tmp_path):
     monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, username: "fp")
 
 
-def test_cli_login_starts_sync_in_running_bridge(loopback_dashboard, monkeypatch):
+def test_cli_login_starts_sync_in_running_bridge(loopback_dashboard, workers):
     creds = Credentials()
     creds.set_etebase("bob@example.com", "bob-session", "https://server.test")
     creds.save()
-    calls = []
-    monkeypatch.setattr(storage, "refresh_sync_thread", calls.append)
     opener = _BridgeOpener()
 
-    outcome = auth_browser.start_sync_in_running_bridge("bob@example.com", opener=opener)
+    outcome = auth_browser.start_sync_in_running_bridge(opener=opener)
 
     assert outcome == "started"
-    assert calls == ["bob@example.com"]
+    assert workers["started"] == ["bob@example.com"]
     get, post = opener.requests
     assert get.full_url == f"http://127.0.0.1:{PORT}/.web/"
     assert post.full_url == f"http://127.0.0.1:{PORT}/.web/api/accounts/refresh"
     assert post.get_header("X-silentsuite-csrf") == _dashboard_csrf_token
+    assert post.data == b"{}"
 
 
-def test_cli_login_reports_failure_when_bridge_does_not_know_account(loopback_dashboard, monkeypatch):
-    calls = []
-    monkeypatch.setattr(storage, "refresh_sync_thread", calls.append)
+def test_cli_login_reports_failure_when_bridge_cannot_start_sync(loopback_dashboard, monkeypatch):
+    def fail(_username):
+        raise RuntimeError("worker failed")
 
-    outcome = auth_browser.start_sync_in_running_bridge("bob@example.com", opener=_BridgeOpener())
+    monkeypatch.setattr(accounts, "list_accounts", lambda **_kw: ["bob@example.com"])
+    monkeypatch.setattr(accounts, "get_sync_thread", lambda _user: None)
+    monkeypatch.setattr(accounts, "refresh_sync_thread", fail)
 
-    assert outcome == "failed"
-    assert calls == []
+    assert auth_browser.start_sync_in_running_bridge(opener=_BridgeOpener()) == "failed"
 
 
 def test_cli_login_detects_no_running_bridge(loopback_dashboard):
     opener = MagicMock()
     opener.open.side_effect = urllib.error.URLError(ConnectionRefusedError(111, "refused"))
 
-    assert auth_browser.start_sync_in_running_bridge("bob@example.com", opener=opener) == "not_running"
+    assert auth_browser.start_sync_in_running_bridge(opener=opener) == "not_running"
 
 
 def test_cli_login_treats_other_listener_as_failed(loopback_dashboard):
     opener = MagicMock()
     opener.open.return_value = _Response(b"<html>something else</html>")
 
-    assert auth_browser.start_sync_in_running_bridge("bob@example.com", opener=opener) == "failed"
+    assert auth_browser.start_sync_in_running_bridge(opener=opener) == "failed"
     assert opener.open.call_count == 1
 
 
@@ -218,7 +260,7 @@ def test_cli_login_without_loopback_dashboard_cannot_ask(monkeypatch):
     monkeypatch.setattr(config, "SERVER_HOSTS", "0.0.0.0:37358")
     opener = MagicMock()
 
-    assert auth_browser.start_sync_in_running_bridge("bob@example.com", opener=opener) == "unknown"
+    assert auth_browser.start_sync_in_running_bridge(opener=opener) == "unknown"
     opener.open.assert_not_called()
 
 
@@ -294,8 +336,8 @@ def _completed_login(outcome):
     event.wait.side_effect = complete_auth
     asked = []
 
-    def fake_start(username):
-        asked.append(username)
+    def fake_start():
+        asked.append(True)
         return outcome
 
     with (
@@ -327,7 +369,7 @@ def test_cli_login_prints_next_step(monkeypatch, capsys, outcome, expected, star
         assert auth_browser.browser_login() == "alice@example.com"
     out = capsys.readouterr().out
 
-    assert asked == ["alice@example.com"]
+    assert asked == [True]
     assert expected in out
     assert "./silentsuite-bridge" not in out
     assert "daemon" not in out
