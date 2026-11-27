@@ -45,6 +45,7 @@ class PostLoginSetupActivity : BaseActivity() {
     private var accountCreationId: String? = null
     private var missingCreationId = false
     private var seenRetryVersion = 0
+    private val unsyncedNotes = UnsyncedNotesEntry(this)
 
     /**
      * ActivityResultRegistry retains the platform-result association across recreation. Denial
@@ -229,14 +230,17 @@ class PostLoginSetupActivity : BaseActivity() {
         resumeSetupWork()
     }
 
-    /** Unsynced Notes in the overflow, as on the sign-in screen, for an account whose setup cannot finish too. */
+    /**
+     * Unsynced Notes in the overflow, as on the sign-in screen, for an account whose setup cannot finish too, hidden
+     * only while there is certainly nothing on this device to show there ([UnsyncedNotesEntry]).
+     */
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        UnsyncedNotesEntry.addTo(menu)
+        unsyncedNotes.addTo(menu)
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean =
-        UnsyncedNotesEntry.opens(this, item) || super.onOptionsItemSelected(item)
+        unsyncedNotes.opens(item) || super.onOptionsItemSelected(item)
 
     private fun submit(decision: PostLoginSetupOrchestrator.UserDecision) {
         model.submitUserDecision(decision)
