@@ -746,6 +746,40 @@ describe('EventDialog details fit narrow screens', () => {
   })
 })
 
+// WEB-18: opening an existing event put the cursor in its title, so a stray keystroke edited it.
+// A new event still starts in the title; an existing one starts on the dialog itself.
+
+describe('EventDialog initial focus', () => {
+  beforeEach(() => {
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  it('focuses the dialog, not the title, when an existing event opens', async () => {
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent()} onClose={mocks.onClose} />)
+
+    const dialog = screen.getByRole('dialog', { name: 'Edit event' })
+    await waitFor(() => expect(dialog).toHaveFocus())
+    expect(screen.getByLabelText('Event title')).not.toHaveFocus()
+    expect(screen.getByLabelText('Event title')).toHaveValue('Existing event')
+  })
+
+  it('focuses the title when a new event opens', async () => {
+    renderWithIntl(
+      <EventDialog
+        mode="create"
+        startDate={new Date('2026-06-01T14:00:00Z')}
+        endDate={new Date('2026-06-01T14:30:00Z')}
+        onClose={mocks.onClose}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByLabelText('Event title')).toHaveFocus())
+  })
+})
+
 describe('EventDialog in a calendar shared read-only', () => {
   const sharedReadOnly = { id: 'cal-shared', name: 'Shared', color: '#3b82f6', visible: true, accessLevel: 0 }
 

@@ -572,15 +572,20 @@ export function EventDialog({
   useFocusTrap(dialogRef)
 
   // ---------------------------------------------------------------------------
-  // Auto-focus title input on mount
+  // Initial focus: the title for a new event; the dialog itself for an
+  // existing one, so a stray keystroke can't edit its title.
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    // Short delay to ensure the dialog animation has started
+    // Short delay to ensure the dialog animation has started. It also runs
+    // after the focus trap's own first-input focus, so it decides the result.
     const timer = setTimeout(() => {
-      titleRef.current?.focus()
+      if (isEdit) dialogRef.current?.focus()
+      else titleRef.current?.focus()
     }, 50)
     return () => clearTimeout(timer)
+    // Initial focus only: mode does not change while the dialog is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -1035,7 +1040,8 @@ export function EventDialog({
           role="dialog"
           aria-label={isManagedEvent ? 'Birthday' : isEdit ? 'Edit event' : 'New event'}
           aria-modal="true"
-          className="flex h-full w-full flex-col overflow-hidden bg-[rgb(var(--background))] text-[rgb(var(--foreground))] shadow-2xl shadow-black/25 pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[88vh] sm:w-full sm:max-w-2xl sm:rounded-3xl sm:border sm:border-[rgb(var(--border))] dark:shadow-black/60"
+          tabIndex={-1}
+          className="flex h-full w-full flex-col overflow-hidden focus:outline-none bg-[rgb(var(--background))] text-[rgb(var(--foreground))] shadow-2xl shadow-black/25 pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[88vh] sm:w-full sm:max-w-2xl sm:rounded-3xl sm:border sm:border-[rgb(var(--border))] dark:shadow-black/60"
         >
           {/* Mobile drag handle / swipe indicator */}
           <div className="flex justify-center bg-[rgb(var(--background))] pt-2 sm:hidden" aria-hidden="true">
