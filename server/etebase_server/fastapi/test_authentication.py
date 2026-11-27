@@ -153,6 +153,23 @@ class TestLogin:
         assert response.status_code == 401
         assert decode_response(response)["code"] == "login_bad_signature"
 
+    def test_login_with_wrong_length_signature_returns_401(self, auth_app, user_factory, signing_key):
+        # nacl raises ValueError for a signature that is not 64 bytes; that
+        # must be a 401 like the login-email route, not a 500.
+        client = TestClient(auth_app, raise_server_exceptions=False)
+        user = user_factory(username="test_user_short_sig")
+        _, challenge = login_challenge(client, user.username)
+        body = build_signed_response(
+            username=user.username, challenge_bytes=challenge["challenge"], signing_key=signing_key
+        )
+        body["signature"] = body["signature"][:10]
+
+        response = msgpack_post(client, f"{AUTH_PREFIX}/login/", body)
+
+        assert response.status_code == 401
+        assert decode_response(response)["code"] == "invalid_signature"
+        assert not AuthToken.objects.filter(user=user).exists()
+
     def test_login_with_wrong_action_is_rejected(
         self, auth_client, user_factory, signing_key
     ):
@@ -577,6 +594,32 @@ class TestChangePassword:
 
         assert response.status_code == 400
         assert decode_response(response)["code"] == "invalid_challenge"
+
+    def test_change_password_with_wrong_length_signature_returns_401(self, auth_app, user_factory, signing_key):
+        client = TestClient(auth_app, raise_server_exceptions=False)
+        user_factory(username="test_user_alice")
+        token = self._auth_token(client, signing_key)
+        _, challenge = login_challenge(client, "test_user_alice")
+        body = build_signed_response(
+            username="test_user_alice",
+            challenge_bytes=challenge["challenge"],
+            signing_key=signing_key,
+            action="changePassword",
+            extra={"loginPubkey": b"\x01" * 32, "encryptedContent": b"\x02" * 64},
+        )
+        body["signature"] = body["signature"][:10]
+
+        response = msgpack_post(
+            client,
+            f"{AUTH_PREFIX}/change_password/",
+            body,
+            headers={"Authorization": f"Token {token}"},
+        )
+
+        assert response.status_code == 401
+        assert decode_response(response)["code"] == "invalid_signature"
+        info = models.UserInfo.objects.get(owner__username="test_user_alice")
+        assert bytes(info.loginPubkey) == bytes(signing_key.verify_key)
 
     def test_change_password_succeeds_with_correct_signature(
         self, auth_client, user_factory, signing_key
