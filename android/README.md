@@ -5,9 +5,9 @@
 
 Secure, end-to-end encrypted, and privacy respecting sync for your contacts, calendars and tasks (Android client).
 
-The next release requires **Android 10 (API 29) or newer**. Android 9 and older
-devices remain on their last compatible release, v0.5.15-beta; they cannot install
-subsequent app updates. Existing installations are not disabled.
+Since v0.5.16-beta the app requires **Android 10 (API 29) or newer**. Android 9
+and older devices can stay on v0.5.15-beta, the last release that supports them,
+but cannot install later updates. Existing installations are not disabled.
 
 ![GitHub tag](https://img.shields.io/github/tag/silent-suite/silentsuite.svg)
 

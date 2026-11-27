@@ -8,10 +8,10 @@ Once set up, your SilentSuite data syncs directly into Android's system calendar
 
 ## Install
 
-The next Android release requires **Android 10 (API 29) or newer**. Devices running
-Android 9 or older stay on their last compatible release, **v0.5.15-beta**, and
-cannot install subsequent app updates. This does not disable an existing
-installation or promise ongoing maintenance of the older release.
+Since v0.5.16-beta the app requires **Android 10 (API 29) or newer**. Devices
+running Android 9 or older can stay on **v0.5.15-beta**, the last release that
+supports them, but cannot install later updates. This does not disable an existing
+installation, and the older release is not promised further fixes.
 
 Choose the install channel you want to keep using for updates. Google Play is
 the simplest option for most people. F-Droid, Obtainium, Zapstore, and direct
