@@ -3,11 +3,8 @@
 # Produces a single-file executable that bundles all dependencies including
 # the etebase native library (Rust-compiled .so/.dylib/.pyd).
 #
-# Usage:
-#   pyinstaller bridge/silentsuite-bridge.spec
-#
-# Or via the helper:
-#   cd bridge && python build.py
+# Usage (as in CI):
+#   cd bridge && pyinstaller silentsuite-bridge.spec --clean --noconfirm --distpath dist/ --workpath build/
 
 import os
 import sys
