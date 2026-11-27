@@ -1,7 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { contrastRatio, DARK_TEXT, LIGHT_TEXT, readableTextColor } from '../readable-text-color'
+import { CHIP_SURFACES, contrastRatio, DARK_TEXT, LIGHT_TEXT, readableTextColor } from '../readable-text-color'
+
+/** Independent alpha blend of #rrggbbaa over an opaque #rrggbb, for checking the picks. */
+function blend(color: string, surface: string): string {
+  const channels = (hex: string) => [1, 3, 5, 7].map((index) => Number.parseInt(hex.slice(index, index + 2), 16))
+  const [r, g, b, a] = channels(color)
+  const [sr, sg, sb] = channels(surface)
+  const alpha = (a ?? 255) / 255
+  return `#${[[r!, sr!], [g!, sg!], [b!, sb!]].map(([c, s]) => Math.round(c * alpha + s * (1 - alpha)).toString(16).padStart(2, '0')).join('')}`
+}
 
 describe('readableTextColor', () => {
   it('uses navy text on the default emerald and other light chips', () => {
@@ -23,17 +32,28 @@ describe('readableTextColor', () => {
     expect(readableTextColor('teal')).toBe(LIGHT_TEXT)
   })
 
-  it('keeps white text on a translucent chip over the dark surface (review fix: WEB-07)', () => {
-    const dark = tokens('.dark')
-    expect(readableTextColor('#ffffff00')).toBe(LIGHT_TEXT)
-    expect(readableTextColor('#fff0')).toBe(LIGHT_TEXT)
-    expect(readableTextColor('#ffffff80')).toBe(LIGHT_TEXT)
-    // A transparent chip shows the surface behind it, where white text stays readable.
-    for (const bg of ['background', 'surface']) {
-      expect(contrastRatio(readableTextColor('#ffffff00'), dark[bg]!), `text on ${bg}`).toBeGreaterThanOrEqual(4.5)
+  it('judges a translucent chip by its composite over each theme surface (review fix 2: WEB-07)', () => {
+    // #ffffffcc over the dark page is a light grey (about #cecfd1): navy text, not white.
+    expect(readableTextColor('#ffffffcc', CHIP_SURFACES.dark)).toBe(DARK_TEXT)
+    // A transparent chip is the page itself: white on the dark page, navy on the light one.
+    expect(readableTextColor('#ffffff00', CHIP_SURFACES.dark)).toBe(LIGHT_TEXT)
+    expect(readableTextColor('#fff0', CHIP_SURFACES.dark)).toBe(LIGHT_TEXT)
+    expect(readableTextColor('#ffffff00', CHIP_SURFACES.light)).toBe(DARK_TEXT)
+    for (const [color, surface] of [['#ffffffcc', CHIP_SURFACES.dark], ['#ffffff00', CHIP_SURFACES.dark], ['#ffffff00', CHIP_SURFACES.light], ['#7c3aed80', CHIP_SURFACES.light]] as const) {
+      const text = readableTextColor(color, surface)
+      const other = text === DARK_TEXT ? LIGHT_TEXT : DARK_TEXT
+      expect(contrastRatio(text, blend(color, surface))!, `${color} over ${surface}`).toBeGreaterThan(contrastRatio(other, blend(color, surface))!)
     }
-    // A nearly opaque colour still decides by itself.
-    expect(readableTextColor('#ffffffee')).toBe(DARK_TEXT)
+    // An opaque colour decides by itself, whatever the theme.
+    for (const surface of [CHIP_SURFACES.light, CHIP_SURFACES.dark]) {
+      expect(readableTextColor('#047857', surface)).toBe(LIGHT_TEXT)
+      expect(readableTextColor('#10b981ff', surface)).toBe(DARK_TEXT)
+    }
+  })
+
+  it('keeps its chip surfaces in step with the --background tokens', () => {
+    expect(CHIP_SURFACES.light).toBe(tokens(':root').background)
+    expect(CHIP_SURFACES.dark).toBe(tokens('.dark').background)
   })
 
   it('matches WCAG reference ratios', () => {

@@ -4,8 +4,8 @@
 export const LIGHT_TEXT = '#ffffff'
 export const DARK_TEXT = '#0a1018'
 
-// Below this alpha the chip mostly shows the surface behind it, which this static choice can't see.
-const OPAQUE_ENOUGH = 0.9
+/** The calendar grid's page colour (--background in globals.css), which a translucent chip shows through. */
+export const CHIP_SURFACES = { light: '#fcfdff', dark: '#0a1018' } as const
 
 function expandHex(color: string): string | null {
   const match = /^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(color.trim())
@@ -41,15 +41,25 @@ export function contrastRatio(foreground: string, background: string): number | 
   return (light! + 0.05) / (dark! + 0.05)
 }
 
+/** The opaque colour a translucent `color` shows over the opaque `surface`, as #rrggbb. */
+function composite(color: string, surface: string): string | null {
+  const fg = parseHex(color)
+  const bg = parseHex(surface)
+  if (!fg || !bg) return null
+  const alpha = alphaOf(color)
+  return `#${fg.map((channel, index) => Math.round(channel * alpha + bg[index]! * (1 - alpha)).toString(16).padStart(2, '0')).join('')}`
+}
+
 /**
- * Unparseable colours keep white text, and so do translucent ones (alpha below 0.9): the chip then
- * shows mostly the theme surface behind it, so its own colour can't decide (a synced #ffffff00
- * would otherwise get navy text on a transparent chip over a navy page).
+ * Text colour for a chip painted `background` over `surface`: a translucent colour is judged by
+ * what it shows over that surface (a synced #ffffff00 is the page itself). Unparseable colours keep
+ * white text.
  */
-export function readableTextColor(background: string): typeof LIGHT_TEXT | typeof DARK_TEXT {
-  if (alphaOf(background) < OPAQUE_ENOUGH) return LIGHT_TEXT
-  const light = contrastRatio(LIGHT_TEXT, background)
-  const dark = contrastRatio(DARK_TEXT, background)
+export function readableTextColor(background: string, surface: string = CHIP_SURFACES.light): typeof LIGHT_TEXT | typeof DARK_TEXT {
+  const fill = composite(background, surface)
+  if (!fill) return LIGHT_TEXT
+  const light = contrastRatio(LIGHT_TEXT, fill)
+  const dark = contrastRatio(DARK_TEXT, fill)
   if (light === null || dark === null) return LIGHT_TEXT
   return dark > light ? DARK_TEXT : LIGHT_TEXT
 }

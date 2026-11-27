@@ -35,7 +35,7 @@ import {
   toScheduleXDayBoundariesInternal,
 } from '../lib/calendar-day-boundaries'
 
-import { readableTextColor } from '@/app/lib/readable-text-color'
+import { CHIP_SURFACES, readableTextColor } from '@/app/lib/readable-text-color'
 import '@schedule-x/theme-default/dist/index.css'
 
 // Temporal polyfill — patches globalThis.Temporal and registers types
@@ -352,9 +352,12 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         const cls = `sx-cal-color-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
         const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#10b981'
         // Schedule-X nests text spans inside event chips; keep descendants readable on custom colors.
-        const textColor = readableTextColor(safeColor)
+        // A translucent colour shows the page through it, so each theme judges its own composite.
+        const textColor = readableTextColor(safeColor, CHIP_SURFACES.light)
+        const darkTextColor = readableTextColor(safeColor, CHIP_SURFACES.dark)
         return `.${cls} { background-color: ${safeColor} !important; color: ${textColor} !important; }
-.${cls} * { color: ${textColor} !important; }`
+.${cls} * { color: ${textColor} !important; }
+.dark .${cls}, .dark .${cls} * { color: ${darkTextColor} !important; }`
       })
       .join('\n')
     // Keep the shared style node in place across multiple CalendarGrid instances
