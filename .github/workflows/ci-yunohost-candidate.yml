@@ -228,6 +228,9 @@ jobs:
           # (lib/tests_coordination.sh). Nothing from this CI is published: remove that call.
           sed -i 's/^\([[:space:]]*\)RUN_INSIDE_LXC .*log_share(.*$/\1: # log upload removed by SilentSuite CI/' "$pc/lib/tests_coordination.sh"
           bash -n "$pc/lib/tests_coordination.sh"
+          # The summary script imports imgkit (not packaged for Ubuntu) only to export a PNG,
+          # which it skips without wkhtmltoimage. An empty module lets it write its JSON.
+          printf '# Stand-in: PNG export is unused here (no wkhtmltoimage).\n' > "$pc/lib/imgkit.py"
           if grep -rn "log_share(" "$pc/lib" "$pc/package_check.sh"; then exit 1; fi
           # package_check always runs `git fetch origin && git reset --hard origin/main` in
           # ./package_linter (lib/common.sh fetch_or_upgrade_package_linter). Point origin at
@@ -272,7 +275,12 @@ jobs:
           # the lint job above checks everything else.
           python3 - results_0.json <<'PY'
           import json, sys
-          tests = json.load(open(sys.argv[1]))["tests"]
+          text = open(sys.argv[1]).read()
+          try:
+              tests = json.loads(text)["tests"]
+          except ValueError:
+              print(text[:2000])
+              sys.exit(1)
           for t in tests:
               print(f"{t['test_type']} {t['test_arg'] or ''}: {t['main_result']}")
           required = {"TEST_INSTALL", "TEST_UPGRADE", "TEST_BACKUP_RESTORE"}

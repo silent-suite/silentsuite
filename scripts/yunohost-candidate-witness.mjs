@@ -175,7 +175,7 @@ async function verifyAcks(file, acks) {
     const item = await itemManager.fetch(uid).catch(() => undefined)
     if (!item) fail('every acknowledged write survived (one is missing)')
     if (item.isMissingContent) await itemManager.downloadContent(item)
-    if (sha256(Buffer.from(item.getContent())) !== digest) fail('every acknowledged write survived (content differs)')
+    if (sha256(Buffer.from(await item.getContent())) !== digest) fail('every acknowledged write survived (content differs)')
   }
   pass(`every acknowledged write survived (${lines.length})`)
 }
