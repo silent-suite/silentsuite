@@ -199,8 +199,20 @@ PY
 ct yunohost app setting "$app" owner_password >>"$work/markers"
 ct yunohost app setting "$app" registration_token >>"$work/markers"
 sudo incus file push "$work/markers" ynh/root/markers >/dev/null
-hits=$(ct sh -c 'journalctl -o cat > /root/journal.txt; grep -rlF -f /root/markers /var/log/yunohost /var/log/nginx /root/journal.txt 2>/dev/null | wc -l; rm -f /root/markers /root/journal.txt')
-[ "$hits" = 0 ] || fail "log markers: $hits log file(s) contain a secret or identifier"
+# Report which file and which kind of value matched, never the value itself.
+hits=$(ct sh -c '
+    journalctl -o cat > /root/journal.txt
+    n=0; kind=1
+    for k in auth-token collection-uid item-uid owner-password registration-token; do
+        m=$(sed -n "${kind}p" /root/markers)
+        for f in $(grep -rlF -e "$m" /var/log/yunohost /var/log/nginx /root/journal.txt 2>/dev/null); do
+            echo "HIT $k in $f" >&2; n=$((n + 1))
+        done
+        kind=$((kind + 1))
+    done
+    rm -f /root/markers /root/journal.txt
+    echo "$n"')
+[ "$hits" = 0 ] || fail "log markers: $hits match(es) in container logs"
 hits=$(grep -lF -f "$work/markers" "$work"/*.log | wc -l)
 [ "$hits" = 0 ] || fail "log markers: $hits installer output file(s) contain a secret or identifier"
 pass "no secrets or identifiers in installer output, operation logs, nginx logs or the journal"
