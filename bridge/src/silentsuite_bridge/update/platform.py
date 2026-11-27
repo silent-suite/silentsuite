@@ -1,8 +1,7 @@
 """Canonical platform-to-asset mapping.
 
-One authoritative source used by the updater and consumed by
-bridge/build.py. The five build assets plus their exact .sha256
-sidecar naming are defined here.
+One authoritative source used by the updater. The five build assets
+plus their exact .sha256 sidecar naming are defined here.
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ class PlatformMapping:
     def supported(os_name: str, arch: str) -> bool:
         return PlatformMapping.asset_name(os_name, arch) is not None
 
-    # build.py compatibility helpers
+    # Labels for the platform this process runs on
 
     @staticmethod
     def get_os_label() -> str:
@@ -74,16 +73,3 @@ class PlatformMapping:
         if val is None:
             raise RuntimeError(f"Unsupported arch: {m}")
         return val
-
-    @staticmethod
-    def get_asset_name() -> str:
-        os_label = PlatformMapping.get_os_label()
-        arch_label = PlatformMapping.get_arch_label()
-        suffix = ".exe" if os_label == "windows" else ""
-        return f"silentsuite-bridge-{os_label}-{arch_label}{suffix}"
-
-    @staticmethod
-    def get_exe_suffix() -> str:
-        import platform
-
-        return ".exe" if platform.system().lower() == "windows" else ""
