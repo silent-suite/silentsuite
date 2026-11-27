@@ -587,32 +587,43 @@ export default function SharingSettingsPage() {
                   {MANAGED_BIRTHDAYS_MESSAGE}
                 </p>
               ) : card.accessLevel === 1 ? (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <input
-                    value={inviteUsernames[card.uid] ?? ''}
-                    onChange={(event) => {
-                      // Read the value now; the updater can run after React has restored the controlled DOM value.
-                      const value = event.target.value
-                      setInviteUsernames((current) => ({ ...current, [card.uid]: value }))
-                    }}
-                    placeholder="friend@example.com"
-                    className="max-md:min-h-[44px] min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))]"
-                  />
-                  <select
-                    value={inviteAccessLevels[card.uid] ?? 'readOnly'}
-                    onChange={(event) => {
-                      const value = event.target.value as CollectionAccessLevel
-                      setInviteAccessLevels((current) => ({ ...current, [card.uid]: value }))
-                    }}
-                    className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
-                  >
-                    {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                  <button type="button" onClick={() => handleInvite(card)} className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))]">
-                    Invite
-                  </button>
+                <div className="space-y-1">
+                  <label htmlFor={`invite-recipient-${card.uid}`} className="block text-xs font-medium text-[rgb(var(--foreground))]">
+                    Invite by username or email
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      id={`invite-recipient-${card.uid}`}
+                      value={inviteUsernames[card.uid] ?? ''}
+                      onChange={(event) => {
+                        // Read the value now; the updater can run after React has restored the controlled DOM value.
+                        const value = event.target.value
+                        setInviteUsernames((current) => ({ ...current, [card.uid]: value }))
+                      }}
+                      placeholder="e.g. friend@example.com"
+                      className="max-md:min-h-[44px] min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))]"
+                    />
+                    <select
+                      value={inviteAccessLevels[card.uid] ?? 'readOnly'}
+                      onChange={(event) => {
+                        const value = event.target.value as CollectionAccessLevel
+                        setInviteAccessLevels((current) => ({ ...current, [card.uid]: value }))
+                      }}
+                      className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
+                    >
+                      {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => handleInvite(card)}
+                      disabled={!inviteUsernames[card.uid]?.trim()}
+                      className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white enabled:hover:bg-[rgb(var(--primary-hover))] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Invite
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <p className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-xs text-[rgb(var(--muted))]">
