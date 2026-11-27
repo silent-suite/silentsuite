@@ -6,6 +6,7 @@ import { ReadOnlyBanner, DegradedModeBanner } from '../read-only-overlay'
 let mockSubscriptionStatus: string | null = 'cancelled'
 // Not declared on the store yet; the mocked state carries it so the banner can read it.
 let mockHostedAccess: unknown = null
+let mockEndedHistory: unknown = null
 let mockRetryBillingConnection = vi.fn().mockResolvedValue(true)
 
 vi.mock('@/app/stores/use-auth-store', () => ({
@@ -13,6 +14,7 @@ vi.mock('@/app/stores/use-auth-store', () => ({
     selector({
       subscriptionStatus: mockSubscriptionStatus,
       hostedAccess: mockHostedAccess,
+      endedHistory: mockEndedHistory,
       retryBillingConnection: mockRetryBillingConnection,
     }),
 }))
@@ -41,26 +43,39 @@ describe('ReadOnlyBanner', () => {
   beforeEach(() => {
     mockSubscriptionStatus = 'cancelled'
     mockHostedAccess = null
+    mockEndedHistory = null
+  })
+
+  // SIGNUP-04: Billing's read names what ended, whatever the status alone would say.
+  it.each([
+    ['trial', 'expired', 'Your free trial ended. Your data is safe and read-only.'],
+    ['subscription', 'expired', 'Your subscription ended. Your data is safe and read-only.'],
+    ['unpaid', 'none', "You haven't finished paying. Your data is safe and read-only."],
+  ])('words an ended %s from Billing', (endedHistory, status, text) => {
+    mockEndedHistory = endedHistory
+    mockSubscriptionStatus = status
+    render(<ReadOnlyBanner />)
+    expect(screen.getByText(text)).toBeInTheDocument()
   })
 
   it('renders non-blocking banner with subscription ended message', () => {
     render(<ReadOnlyBanner />)
-    expect(screen.getByText(/Your subscription has ended\./)).toBeInTheDocument()
+    expect(screen.getByText(/Your subscription ended\./)).toBeInTheDocument()
     expect(screen.getByText(/Your data is safe and read-only\./)).toBeInTheDocument()
   })
 
   it('renders trial ended message for none status', () => {
     mockSubscriptionStatus = 'none'
     render(<ReadOnlyBanner />)
-    expect(screen.getByText(/Your trial has ended\./)).toBeInTheDocument()
+    expect(screen.getByText(/Your free trial ended\./)).toBeInTheDocument()
   })
 
   it('[RED] renders the existing trial ended message for trialing with hostedAccess trial_ended', () => {
     mockSubscriptionStatus = 'trialing'
     mockHostedAccess = 'trial_ended'
     render(<ReadOnlyBanner />)
-    expect(screen.getByText(/Your trial has ended\. Your data is safe and read-only\./)).toBeInTheDocument()
-    expect(screen.queryByText(/Your subscription has ended\./)).not.toBeInTheDocument()
+    expect(screen.getByText(/Your free trial ended\. Your data is safe and read-only\./)).toBeInTheDocument()
+    expect(screen.queryByText(/Your subscription ended\./)).not.toBeInTheDocument()
   })
 
   // Whether the banner renders at all is decided by isReadOnly in the shell
@@ -74,20 +89,20 @@ describe('ReadOnlyBanner', () => {
     mockSubscriptionStatus = 'trialing'
     mockHostedAccess = hostedAccess
     render(<ReadOnlyBanner />)
-    expect(screen.getByText(/Your subscription has ended\./)).toBeInTheDocument()
-    expect(screen.queryByText(/Your trial has ended\./)).not.toBeInTheDocument()
+    expect(screen.getByText(/Your subscription ended\./)).toBeInTheDocument()
+    expect(screen.queryByText(/Your free trial ended\./)).not.toBeInTheDocument()
   })
 
   it('[CTRL] keeps the existing copy for none and cancelled when hostedAccess is trial_ended', () => {
     mockHostedAccess = 'trial_ended'
     mockSubscriptionStatus = 'none'
     const { unmount } = render(<ReadOnlyBanner />)
-    expect(screen.getByText(/Your trial has ended\./)).toBeInTheDocument()
+    expect(screen.getByText(/Your free trial ended\./)).toBeInTheDocument()
     unmount()
 
     mockSubscriptionStatus = 'cancelled'
     render(<ReadOnlyBanner />)
-    expect(screen.getByText(/Your subscription has ended\./)).toBeInTheDocument()
+    expect(screen.getByText(/Your subscription ended\./)).toBeInTheDocument()
   })
 
   it('renders choose a plan and export data links', () => {

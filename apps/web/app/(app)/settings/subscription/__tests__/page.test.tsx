@@ -352,7 +352,8 @@ describe('SubscriptionPage billing recovery CTAs', () => {
 
     render(<SubscriptionPage />)
 
-    expect(await screen.findByRole('button', { name: /^subscribe$/i })).toBeInTheDocument()
+    // A prepaid year that ran out was paid for, so it reactivates (SIGNUP-04).
+    expect(await screen.findByRole('button', { name: /^reactivate$/i })).toBeInTheDocument()
   })
 
   it('presents cancellation as a labelled modal, traps keyboard focus, and restores the opener on Escape', async () => {

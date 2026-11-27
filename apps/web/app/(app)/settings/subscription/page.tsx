@@ -7,7 +7,7 @@ import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { formatDate as formatDateUtil } from '@/app/lib/date'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
-import { parseAccountNotice, parseBillingDate, type BillingDate } from '@/app/lib/account-notice'
+import { classifyEndedHistory, ENDED_TITLES, parseAccountNotice, parseBillingDate, type BillingDate } from '@/app/lib/account-notice'
 import { fetchAuthenticatedAccountOffer } from '@/app/lib/billing-v2'
 import { createAuthenticatedPaymentFetch } from '@/app/lib/authenticated-payment-fetch'
 import { annualOfferClassLabel, formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
@@ -653,13 +653,14 @@ export default function SubscriptionPage() {
   const planName = purchaseAction ? liveOffer?.planName ?? null : data.planLabel
   const showBillingRow = !purchaseAction && !!data.plan && !data.planLabel.toLowerCase().includes(data.billingInterval)
   const endedNotice = notice?.kind === 'trial_ended' || notice?.kind === 'access_ended'
+  const endedHistory = classifyEndedHistory(data)
   // Only Billing's notice (seven-day countdown or a verified end) replaces the raw status badge.
   const headline = countdown
     ? { title: `Free trial: ${formatDaysLeft(countdown.daysLeft)}`, detail: "No card on file, so you won't be charged." }
     : notice?.kind === 'trial_ended'
-      ? { title: 'Your trial has ended.', detail: null }
+      ? { title: ENDED_TITLES.trial, detail: null }
       : notice?.kind === 'access_ended'
-        ? { title: 'Your subscription has ended.', detail: null }
+        ? { title: ENDED_TITLES[endedHistory ?? 'subscription'], detail: null }
         : null
 
   // Billing can keep status trialing after the trial ran out; don't show that as "Trialing".
@@ -673,9 +674,10 @@ export default function SubscriptionPage() {
     && !capabilities.trialExpired
     && !capabilities.canRetryPayment
     && !capabilities.canStartPaidSubscription
+  // Reactivate only for an ended subscription; an ended trial or an unfinished payment subscribes.
   const paidRecoveryLabel = capabilities.canRetryPayment
     ? 'Retry payment'
-    : data.status === 'cancelled'
+    : endedHistory === 'subscription'
       ? 'Reactivate'
       : 'Subscribe'
   const accessUntilFormatted = data.renewalDate ? formatDateStr(data.renewalDate) : 'the end of your current period'

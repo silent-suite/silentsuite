@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 import { flushSync } from 'react-dom'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
-import { parseAccountNotice, type AccountNotice } from '@/app/lib/account-notice'
+import { classifyEndedHistory, parseAccountNotice, type AccountNotice, type EndedHistory } from '@/app/lib/account-notice'
 import { logger } from '@/app/lib/logger'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/constants'
@@ -144,8 +144,8 @@ function tupleForIdentity(previous: User | null, nextId: string | undefined) {
   return previous?.id === nextId ? {} : { subscriptionStatus: null, hostedAccess: null, ...clearedAccountNotice }
 }
 
-/** The informational notice and its expiry claim belong to one account generation. */
-const clearedAccountNotice = { accountNotice: null, accountNoticeCheckedAt: null, trialExpiryRefreshClaim: null }
+/** The informational notice, its expiry claim and the ended wording belong to one account generation. */
+const clearedAccountNotice = { accountNotice: null, accountNoticeCheckedAt: null, trialExpiryRefreshClaim: null, endedHistory: null }
 
 /**
  * One expiry refresh for an account generation and trial-end instant. `readSequence` is the
@@ -182,6 +182,8 @@ interface AuthState {
   accountNoticeCheckedAt: number | null
   /** One expiry refresh per account generation and trial-end instant, shared by every countdown. */
   trialExpiryRefreshClaim: TrialExpiryRefreshClaim | null
+  /** Wording only, from the same read as subscriptionStatus: which history the read-only banner names. */
+  endedHistory: EndedHistory | null
   isDegraded: () => boolean
   isReadOnly: () => boolean
   canWrite: () => boolean
@@ -1447,6 +1449,7 @@ async function readSubscription(
         hostedAccess: parseHostedAccess(data.hostedAccess),
         accountNotice: parseAccountNotice(data.accountNotice),
         accountNoticeCheckedAt: Date.now(),
+        endedHistory: classifyEndedHistory(data),
         ...settleExpiryClaim(get().trialExpiryRefreshClaim, originalUser?.id, epoch, sequence, data),
       })
       return 'published'
@@ -2541,6 +2544,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         hostedAccess: parseHostedAccess(subData.hostedAccess),
         accountNotice: parseAccountNotice(subData.accountNotice),
         accountNoticeCheckedAt: Date.now(),
+        endedHistory: classifyEndedHistory(subData),
         // After every ownership, reset and latest-read check above: this retry's own verified
         // account, current boundary and read sequence. Another account never matches the claim.
         ...settleExpiryClaim(get().trialExpiryRefreshClaim, refreshData.id, owner.epoch, sequence, subData),

@@ -211,7 +211,7 @@ describe('subscription card clarity', () => {
     render(<SubscriptionPage />)
     await screen.findByText('Plan')
     const section = card()
-    expect(within(section).getByText('Your trial has ended.')).toBeInTheDocument()
+    expect(within(section).getByText('Your free trial ended.')).toBeInTheDocument()
     expect(screen.queryByText('Trialing')).not.toBeInTheDocument()
     expect(screen.queryByText('Next billing')).not.toBeInTheDocument()
     expect(within(section).getByText('Ended on')).toBeInTheDocument()
@@ -259,8 +259,48 @@ describe('subscription card clarity', () => {
     })
     render(<SubscriptionPage />)
     await screen.findByText('Plan')
-    expect(within(card()).getByText('Your subscription has ended.')).toBeInTheDocument()
+    expect(within(card()).getByText('Your subscription ended.')).toBeInTheDocument()
+    expect(within(card()).getByRole('button', { name: 'Reactivate' })).toBeInTheDocument()
+  })
+
+  // SIGNUP-04: the ended wording and action follow the history Billing's fields show.
+  it.each([
+    ['a seven-day trial that ran out', {
+      status: 'expired', trialPath: '7day', renewalDate: null,
+      trial: { active: false, endsAt: past(20), daysRemaining: null },
+    }, 'Your free trial ended.', 'Subscribe'],
+    ['a card trial cancelled before its first charge', {
+      status: 'cancelled', trialPath: '30day', renewalDate: past(20),
+      trial: { active: false, endsAt: past(20), daysRemaining: null },
+    }, 'Your free trial ended.', 'Subscribe'],
+    ['a paid year after a trial', {
+      status: 'expired', trialPath: '30day', renewalDate: past(3),
+      trial: { active: false, endsAt: past(400), daysRemaining: null },
+    }, 'Your subscription ended.', 'Reactivate'],
+    ['a pay-now subscription', {
+      status: 'cancelled', trialPath: 'immediate', renewalDate: past(3),
+      trial: { active: false, endsAt: null, daysRemaining: null },
+    }, 'Your subscription ended.', 'Reactivate'],
+  ])('words %s from its history', async (_label, subscription, title, action) => {
+    route({
+      ...subscription, accountNotice: { kind: 'access_ended', endedAt: null }, billingDate: { kind: 'ended', at: null },
+      capabilities: { ...capabilities, canReactivate: true, canStartPaidSubscription: true },
+    })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText(title)).toBeInTheDocument()
+    expect(within(card()).getByRole('button', { name: action })).toBeInTheDocument()
+  })
+
+  it('offers Subscribe, not Reactivate, to a pay-now account that never paid', async () => {
+    route({
+      status: 'none', trialPath: 'immediate', renewalDate: null, accountNotice: null, billingDate: null,
+      capabilities: { ...capabilities, canReactivate: true, canStartPaidSubscription: true },
+    })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
     expect(within(card()).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reactivate' })).not.toBeInTheDocument()
   })
 
   it('puts the seven-day countdown and the add-card action inside the card', async () => {

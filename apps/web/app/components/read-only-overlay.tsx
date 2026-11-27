@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
+import { ENDED_TITLES } from '@/app/lib/account-notice'
 
 /**
  * Non-blocking banner shown when subscription has ended.
@@ -13,11 +14,14 @@ import { useSyncStore } from '@/app/stores/use-sync-store'
 export function ReadOnlyBanner() {
   const subscriptionStatus = useAuthStore((s) => s.subscriptionStatus)
   const hostedAccess = useAuthStore((s) => s.hostedAccess)
+  const endedHistory = useAuthStore((s) => s.endedHistory)
 
-  const title =
-    subscriptionStatus === 'none' || (subscriptionStatus === 'trialing' && hostedAccess === 'trial_ended')
-      ? 'Your trial has ended.'
-      : 'Your subscription has ended.'
+  // Billing's read names what ended; without one, the status alone decides as before.
+  const history = endedHistory
+    ?? (subscriptionStatus === 'none' || (subscriptionStatus === 'trialing' && hostedAccess === 'trial_ended')
+      ? 'trial'
+      : 'subscription')
+  const title = ENDED_TITLES[history]
 
   return (
     <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200 md:mx-4">
