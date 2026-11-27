@@ -4,9 +4,8 @@
 // human co-authors are preserved. Dependency-free; identical in both repositories.
 //
 //   guard.mjs commit-msg <message-file>             (local commit-msg hook)
-//   guard.mjs pre-push --base <branch>... -- <remote> <url>   (local pre-push hook; refs on stdin;
-//     with several bases each pushed ref needs one target, see targetBase)
-//   guard.mjs range --base <rev>... --head <rev>    (CI: every commit in head --not each base)
+//   guard.mjs pre-push --base <branch> -- <remote> <url>   (local pre-push hook; refs on stdin)
+//   guard.mjs range --base <rev> --head <rev>        (CI: every commit in head --not base)
 //
 // Exit 0 clean, 1 violations, 2 usage/unresolvable input (fail closed). Output names
 // commit ids and reasons only, never message content.
@@ -102,15 +101,11 @@ function parseRawCommit(raw) {
   return commit
 }
 
-// Every commit reachable from head and not from EACH base, checked per base and combined
-// (merges and their imported ancestors included; no truncation). Bases never shield each
-// other: a commit on dev but not main is still checked when main is also a base.
-// Unresolvable refs throw (fail closed).
-export function checkRange(bases, head) {
-  if (!bases.length) throw new Error('at least one base is required')
+// Every commit reachable from head and not from base (merges and their imported
+// ancestors included; no truncation). Unresolvable refs throw (fail closed).
+export function checkRange(base, head) {
   const tip = resolveCommit(head)
-  const resolved = bases.map(resolveCommit)
-  const list = [...new Set(resolved.flatMap(base => git(['rev-list', tip, `^${base}`]).split('\n').filter(Boolean)))]
+  const list = git(['rev-list', tip, `^${resolveCommit(base)}`]).split('\n').filter(Boolean)
   if (!list.length) return []
   const batch = git(['cat-file', '--batch'], { input: `${list.join('\n')}\n`, raw: true })
   const violations = []
@@ -126,38 +121,11 @@ export function checkRange(bases, head) {
   return violations
 }
 
-function parseBases(args) {
-  const bases = []
-  let i = 0
-  for (; i < args.length && args[i] !== '--'; i += 2) {
-    if (args[i] !== '--base' || !/^[A-Za-z0-9._/-]+$/.test(args[i + 1] ?? '') || args[i + 1].startsWith('-')) throw new Error('invalid --base')
-    bases.push(args[i + 1])
-  }
-  if (!bases.length) throw new Error('missing --base')
-  return { bases, rest: args.slice(i + 1) }
-}
-
-// One target base per pushed ref, never guessed: the only configured base; otherwise an
-// exact protected destination (refs/heads/<base>) and/or the local branch declaration
-// `git config branch.<name>.commitMetadataBase <base>`. Absent, invalid or conflicting
-// targets fail closed.
-function targetBase(bases, localRef, remoteRef) {
-  if (bases.length === 1) return bases[0]
-  const targets = new Set(bases.filter(base => remoteRef === `refs/heads/${base}`))
-  const branch = localRef.startsWith('refs/heads/') ? localRef.slice('refs/heads/'.length) : ''
-  if (branch) {
-    // -z: every value, including an empty one, ends with NUL; only that terminator is dropped.
-    const declared = spawnSync('git', ['config', '--get-all', '-z', `branch.${branch}.commitMetadataBase`], { encoding: 'utf8' })
-    if ((declared.status !== 0 && declared.status !== 1) || (declared.status === 0 && !declared.stdout.endsWith('\0'))) {
-      throw new Error(`${localRef}: unreadable commitMetadataBase declaration`)
-    }
-    const values = declared.status === 0 ? declared.stdout.slice(0, -1).split('\0') : []
-    if (values.length > 1 || values.some(value => !bases.includes(value))) throw new Error(`${localRef}: invalid commitMetadataBase declaration`)
-    values.forEach(value => targets.add(value))
-  }
-  if (targets.size > 1) throw new Error(`${localRef}: conflicting target for ${remoteRef}`)
-  if (!targets.size) throw new Error(`${localRef}: undeclared PR target; run: git config branch.${branch || '<branch>'}.commitMetadataBase <${bases.join('|')}>`)
-  return [...targets][0]
+// Exactly one --base, optionally followed by `--` and the remaining arguments.
+function parseBase(args) {
+  if (args[0] !== '--base' || !/^[A-Za-z0-9._/-]+$/.test(args[1] ?? '') || args[1].startsWith('-')) throw new Error('invalid --base')
+  if (args.length > 2 && args[2] !== '--') throw new Error('exactly one --base is supported')
+  return { base: args[1], rest: args.slice(3) }
 }
 
 function report(violations, hint) {
@@ -177,7 +145,7 @@ export function main(argv, stdin = () => readFileSync(0, 'utf8')) {
       return report(reasons.map(reason => ({ commit: 'new commit', reason })), 'Remove automated attribution and use a human identity.')
     }
     if (mode === 'pre-push') {
-      const { bases, rest } = parseBases(args)
+      const { base, rest } = parseBase(args)
       const remote = rest[0]
       if (!remote || !/^[A-Za-z0-9._-]+$/.test(remote) || remote.startsWith('-')) throw new Error('pre-push requires a named remote')
       const violations = []
@@ -185,16 +153,16 @@ export function main(argv, stdin = () => readFileSync(0, 'utf8')) {
         const [localRef, localSha, remoteRef] = line.split(' ')
         if (!localRef || !remoteRef || !/^[0-9a-f]{40,64}$/.test(localSha ?? '')) throw new Error('malformed pre-push input')
         if (/^0+$/.test(localSha)) continue // deletion: nothing new is published
-        violations.push(...checkRange([`refs/remotes/${remote}/${targetBase(bases, localRef, remoteRef)}`], localSha))
+        violations.push(...checkRange(`refs/remotes/${remote}/${base}`, localSha))
       }
       const unique = [...new Map(violations.map(v => [`${v.commit} ${v.reason}`, v])).values()]
       return report(unique, 'History is not rewritten automatically; fix the branch before pushing.')
     }
     if (mode === 'range') {
       const headIndex = args.indexOf('--head')
-      if (headIndex === -1 || args.length !== headIndex + 2) throw new Error('usage: range --base <rev>... --head <rev>')
-      const { bases } = parseBases([...args.slice(0, headIndex), '--'])
-      const violations = checkRange(bases, args[headIndex + 1])
+      if (headIndex === -1 || args.length !== headIndex + 2) throw new Error('usage: range --base <rev> --head <rev>')
+      const { base } = parseBase([...args.slice(0, headIndex), '--'])
+      const violations = checkRange(base, args[headIndex + 1])
       if (!violations.length) console.log('commit-metadata: no automated attribution in new commits')
       return report(violations, 'Every newly reachable commit must be free of automated attribution.')
     }
