@@ -1,0 +1,170 @@
+name: CI CasaOS Package
+
+# Checks and boots the CasaOS/ZimaOS app-store package from the published images it pins.
+# No registry publication, release, store submission or deployment. No secrets.
+on:
+  pull_request:
+    paths:
+      - "self-host/casaos/**"
+      - "scripts/casaos-package-*"
+      - "scripts/umbrel-candidate-probe.py"
+      - ".github/workflows/ci-casaos-package.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casaos-package-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  PACKAGE: self-host/casaos/SilentSuite
+  APP_ID: io.silentsuite.silentsuite
+  # The upstream store builder at the exact commit IceWhaleTech/CasaOS-AppStore's
+  # build-store-v2 action pins (checked 2026-11-27).
+  STORE_BUILDER_SHA: c9bb47fad5b32d7928a07978fad68801f52e910f
+
+jobs:
+  package:
+    name: CasaOS package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PLATFORM: ${{ matrix.platform }}
+      ARCH: ${{ matrix.arch }}
+
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Checkout the store builder at its pinned commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: IceWhaleTech/build-appstore-action
+          ref: ${{ env.STORE_BUILDER_SHA }}
+          path: .casaos-store-builder
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install hash-locked Python dependencies
+        run: |
+          test "$(git -C .casaos-store-builder rev-parse HEAD)" = "$STORE_BUILDER_SHA"
+          cat > "$RUNNER_TEMP/casaos-requirements.txt" <<'REQUIREMENTS'
+          PyYAML==6.0.3 \
+              --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
+              --hash=sha256:9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28
+          ruamel.yaml==0.19.1 \
+              --hash=sha256:27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93
+          pillow==13.0.0 \
+              --hash=sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca \
+              --hash=sha256:8bf295fe459343bc6093c8e5e0df60bfa189e0fcb775a22e2c2488fdeccc6c0d
+          REQUIREMENTS
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: \
+            -r "$RUNNER_TEMP/casaos-requirements.txt"
+
+      - name: Compose validates the way the store validator runs it
+        run: |
+          set -euo pipefail
+          # The store runs `docker compose config -q` with no environment.
+          env -i PATH="$PATH" HOME="$HOME" docker compose -f "$PACKAGE/docker-compose.yml" config -q
+          # ZimaOS interpolates twice: two passes must leave every program byte-identical.
+          env -i PATH="$PATH" HOME="$HOME" AppID=silentsuite \
+            docker compose -f "$PACKAGE/docker-compose.yml" config > "$RUNNER_TEMP/pass1.yml"
+          env -i PATH="$PATH" HOME="$HOME" AppID=silentsuite \
+            docker compose -f "$RUNNER_TEMP/pass1.yml" config > "$RUNNER_TEMP/pass2.yml"
+          python - "$PACKAGE/docker-compose.yml" "$RUNNER_TEMP/pass2.yml" <<'PY'
+          import sys, yaml
+          source, twice = (yaml.safe_load(open(path, encoding="utf-8")) for path in sys.argv[1:])
+          for name, service in source["services"].items():
+              assert twice["services"][name]["entrypoint"] == service["entrypoint"], name
+              for volume in service.get("volumes", []):
+                  assert volume.startswith("/DATA/AppData/$AppID/"), volume
+          print("PASS programs survive two interpolation passes")
+          PY
+
+      - name: Every pinned image index serves amd64 and arm64
+        run: |
+          set -euo pipefail
+          # The store builder skips its architecture check for digest-pinned images.
+          python - "$PACKAGE/docker-compose.yml" > "$RUNNER_TEMP/images.txt" <<'PY'
+          import sys, yaml
+          services = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["services"]
+          print("\n".join(sorted({service["image"] for service in services.values()})))
+          PY
+          while IFS= read -r image; do
+            docker buildx imagetools inspect --raw "$image" | python -c '
+          import json, sys
+          index = json.load(sys.stdin)
+          found = {(m["platform"]["os"], m["platform"]["architecture"]) for m in index.get("manifests", []) if "platform" in m}
+          missing = {("linux", "amd64"), ("linux", "arm64")} - found
+          assert not missing, missing
+          '
+            echo "PASS both architectures: ${image%%@*}"
+          done < "$RUNNER_TEMP/images.txt"
+
+      - name: Store builder accepts the package
+        run: |
+          set -euo pipefail
+          store="$RUNNER_TEMP/store"
+          mkdir -p "$store/Apps"
+          cp -R "$PACKAGE" "$store/Apps/SilentSuite"
+          printf '%s\n' '{"version": 2, "store_id": "silentsuite-ci", "name": {"en_US": "SilentSuite CI"}}' > "$store/store-config.json"
+          printf '%s\n' '["en_US"]' > "$store/supported-languages.json"
+          (cd "$store" && env -i PATH="$PATH" HOME="$RUNNER_TEMP" python -I \
+            "$GITHUB_WORKSPACE/.casaos-store-builder/scripts/build_appstore.py" \
+            --source . --output "$RUNNER_TEMP/dist" \
+            --base-url https://cdn.jsdelivr.net/gh/IceWhaleTech/CasaOS-AppStore@gh-pages \
+            --report-json "$RUNNER_TEMP/build-report.json")
+          python - "$RUNNER_TEMP/build-report.json" "$RUNNER_TEMP/dist/apps/$APP_ID" "$ARCH" <<'PY'
+          import json, sys, yaml
+          report, built, arch = sys.argv[1:]
+          summary = json.load(open(report, encoding="utf-8"))["summary"]
+          assert summary["apps_built"] == 1 and summary["errors_total"] == 0, summary
+          default = yaml.safe_load(open(f"{built}/docker-compose.yml", encoding="utf-8"))
+          native = yaml.safe_load(open(f"{built}/docker-compose.{arch}.yml", encoding="utf-8"))
+          for name, service in default["services"].items():
+              other = dict(native["services"][name])
+              other["image"] = service["image"]
+              assert other == service, f"{name}: per-architecture output differs beyond the image"
+          print(f"PASS store builder output (default and {arch})")
+          PY
+
+      - name: Legacy CasaOS offers the release as an update
+        run: |
+          set -euo pipefail
+          new="$PACKAGE/docker-compose.yml"
+          old="$RUNNER_TEMP/previous-release.yml"
+          sed \
+            -e 's|silentsuite-web-selfhost:v0.5.22-beta@sha256:[0-9a-f]*|silentsuite-web-selfhost:v0.5.20-beta@sha256:5156f5d9b67db5c7a6dcdf51c603b104e4c3ec6e2789ad2a6552431fd66e8088|' \
+            -e 's|silentsuite-server:v0.5.22-beta@sha256:[0-9a-f]*|silentsuite-server:v0.5.20-beta@sha256:6a5ab47d21feeed4fc05379258e8c2686e1fa67138dbd6570900eea732b0c7bb|' \
+            "$new" > "$old"
+          ! cmp -s "$old" "$new"
+          python -I scripts/casaos-package-update-check.py "$old" "$new" update
+          python -I scripts/casaos-package-update-check.py "$new" "$new" none
+
+      - name: Boot drills on the store builder's ${{ matrix.arch }} output
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" RUNNER_TEMP="$RUNNER_TEMP" \
+            bash scripts/casaos-package-smoke.sh \
+              "$RUNNER_TEMP/dist/apps/$APP_ID/docker-compose.$ARCH.yml" --platform "$PLATFORM"
