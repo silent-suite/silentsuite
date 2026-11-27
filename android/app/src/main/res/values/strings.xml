@@ -497,7 +497,7 @@
         <item>Once a day</item>
     </string-array>
     <string name="settings_sync_wifi_only">Sync over Wi-Fi only</string>
-    <string name="settings_sync_wifi_only_on">Syncs only on Wi-Fi or Ethernet</string>
+    <string name="settings_sync_wifi_only_on">Syncs only on Wi-Fi</string>
     <string name="settings_sync_wifi_only_off">Syncs on any connection</string>
     <string name="settings_sync_wifi_only_ssid">Saved Wi-Fi network</string>
     <string name="settings_sync_wifi_only_ssid_blocked">Sync over Wi-Fi only pauses automatic sync while %s is saved: Android hides Wi-Fi network names from apps without location access, which SilentSuite does not ask for.</string>

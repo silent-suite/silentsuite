@@ -11,8 +11,7 @@ package io.silentsuite.sync.notes
 object NotesNetworkPolicy {
     /**
      * NONE: the platform reports no active network (it can do so under some VPNs while the device is
-     * online), or one that is not connected. WIFI: a connected Wi-Fi or Ethernet network, both
-     * unmetered as a rule. OTHER: any other connected network, such as mobile data.
+     * online), or one that is not connected. OTHER: a connected network that is not Wi-Fi.
      */
     enum class Connection { NONE, WIFI, OTHER }
 
@@ -46,7 +45,7 @@ object NotesNetworkPolicy {
         val run: Boolean get() = blockers.isEmpty()
     }
 
-    /** The account switch's own mapping (onConnectedWifi): connected and of type Wi-Fi or Ethernet is Wi-Fi. */
+    /** The account switch's own mapping (onConnectedWifi): connected and of type Wi-Fi is Wi-Fi. */
     fun connectionOf(present: Boolean, connected: Boolean, wifi: Boolean): Connection = when {
         !present || !connected -> Connection.NONE
         wifi -> Connection.WIFI

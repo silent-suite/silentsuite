@@ -258,12 +258,10 @@ class NotesNetworkPolicyTest {
         val source = File("src/main/java/io/silentsuite/sync/syncadapter/SyncAdapterService.kt").readText()
         val checks = listOf(
             "if (network == null) {",
-            // Ethernet counts as Wi-Fi, as in connectionOf's wifi argument (NotesNetwork.reading).
-            "val wifiLike = network.type == ConnectivityManager.TYPE_WIFI || network.type == ConnectivityManager.TYPE_ETHERNET",
-            "if (!wifiLike || !network.isConnected) {",
+            "if (network.type != ConnectivityManager.TYPE_WIFI || !network.isConnected) {",
         )
         for (text in checks) assertEquals("$message: $text", 1, source.split(text).size - 1)
-        for (i in 1 until checks.size) assertTrue(message, source.indexOf(checks[i - 1]) < source.indexOf(checks[i]))
+        assertTrue(message, source.indexOf(checks[0]) < source.indexOf(checks[1]))
     }
 
     @Test fun `every row of the notebook list's network line, with changes waiting and with none`() {
