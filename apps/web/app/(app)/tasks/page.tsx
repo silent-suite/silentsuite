@@ -2,11 +2,12 @@
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List, Folder, Tag, MapPin, Link, BarChart3, CircleDot } from 'lucide-react'
+import { X, ChevronDown, Calendar, Flag, WifiOff, TriangleAlert, Plus, AlignLeft, Pencil, List, Folder, Tag, MapPin, Link, BarChart3, CircleDot } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useTaskStore, type TaskSaveError } from '@/app/stores/use-task-store'
 import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -15,7 +16,7 @@ import { canWriteCollection, defaultWritableListId, findItemCollection } from '@
 
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
-import { TasksEmptyState } from '@/app/components/empty-state'
+import { EmptyState, TasksEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
 import type { Task, TaskStatus, Priority } from '@silentsuite/core'
@@ -999,6 +1000,9 @@ export default function TasksPage() {
   const canWrite = canWriteAccount && hasWritableList
   const tasks = useTaskStore((s) => s.tasks)
   const isLoading = useDomainInitializing('tasks') && tasks.length === 0
+  // Zero tasks means "no tasks yet" only once the tasks domain has loaded; after a failed or
+  // unfinished load (for example offline with nothing cached) the account may still have tasks.
+  const tasksLoaded = useEtebaseStore((s) => s.domainLoadState.tasks === 'loaded')
   const isOnline = useSyncStore((s) => s.isOnline)
   const taskLists = useTaskListStore((s) => s.lists)
   const [showDialog, setShowDialog] = useState(false)
@@ -1025,6 +1029,7 @@ export default function TasksPage() {
   }, [visibleTasks, taskQuery])
   const sortedTasks = useMemo(() => sortTasks(searchedTasks), [searchedTasks])
   const isEmpty = tasks.length === 0 && !isLoading
+  const loadFailed = isEmpty && !tasksLoaded
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -1078,6 +1083,13 @@ export default function TasksPage() {
       {/* Content */}
       {isLoading ? (
         <TaskSkeleton />
+      ) : loadFailed ? (
+        <EmptyState
+          icon={isOnline ? TriangleAlert : WifiOff}
+          title={t('tasksLoadFailedTitle')}
+          description={isOnline ? t('tasksLoadFailedDescription') : t('tasksLoadFailedOffline')}
+          action={isOnline ? { label: t('tasksLoadFailedRetry'), onClick: () => window.location.reload() } : undefined}
+        />
       ) : isEmpty ? (
         <TasksEmptyState />
       ) : taskQuery.trim() && sortedTasks.length === 0 ? (

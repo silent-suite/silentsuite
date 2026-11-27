@@ -4,6 +4,7 @@ import { Lock, WifiOff, RefreshCw, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { useSyncStore } from '@/app/stores/use-sync-store'
 
 /**
  * Non-blocking banner shown when subscription has ended.
@@ -46,9 +47,12 @@ export function ReadOnlyBanner() {
 /**
  * Non-blocking banner shown when billing API is unreachable.
  * User retains full read + write access (degraded mode).
+ * Hidden while the browser is offline: billing is then unreachable because the
+ * device has no connection, not because the billing service is down.
  */
 export function DegradedModeBanner() {
   const retryBillingConnection = useAuthStore((s) => s.retryBillingConnection)
+  const isOnline = useSyncStore((s) => s.isOnline)
   const [isRetrying, setIsRetrying] = useState(false)
 
   const handleRetry = async () => {
@@ -59,6 +63,8 @@ export function DegradedModeBanner() {
       setIsRetrying(false)
     }
   }
+
+  if (!isOnline) return null
 
   return (
     <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-800 dark:text-blue-200 md:mx-4">

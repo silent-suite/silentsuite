@@ -56,7 +56,11 @@
     "manageAddressBooks": "Gestisci rubriche",
     "manageTaskLists": "Gestisci elenchi attività",
     "manageNotebooks": "Gestisci blocchi appunti",
-    "contactCount": "{count, plural, one {# contatto} other {# contatti}}"
+    "contactCount": "{count, plural, one {# contatto} other {# contatti}}",
+    "tasksLoadFailedTitle": "Impossibile caricare le attività",
+    "tasksLoadFailedOffline": "Sei offline. Le tue attività compariranno qui quando tornerai online.",
+    "tasksLoadFailedDescription": "Si è verificato un problema durante il caricamento. Le tue attività sono al sicuro.",
+    "tasksLoadFailedRetry": "Riprova"
   },
   "Notes": {
     "title": "Note",

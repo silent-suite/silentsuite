@@ -17,6 +17,11 @@ vi.mock('@/app/stores/use-auth-store', () => ({
     }),
 }))
 
+let mockIsOnline = true
+vi.mock('@/app/stores/use-sync-store', () => ({
+  useSyncStore: (selector: (s: Record<string, unknown>) => unknown) => selector({ isOnline: mockIsOnline }),
+}))
+
 // Mock next/link
 vi.mock('next/link', () => ({
   default: ({ children, href, ...props }: { children: React.ReactNode; href: string; className?: string }) => (
@@ -119,6 +124,14 @@ describe('ReadOnlyBanner', () => {
 describe('DegradedModeBanner', () => {
   beforeEach(() => {
     mockRetryBillingConnection = vi.fn().mockResolvedValue(true)
+    mockIsOnline = true
+  })
+
+  it('does not blame billing while the browser is offline (WEB-01)', () => {
+    mockIsOnline = false
+    const { container } = render(<DegradedModeBanner />)
+    expect(container).toBeEmptyDOMElement()
+    expect(screen.queryByText(/Billing service temporarily unavailable/)).not.toBeInTheDocument()
   })
 
   it('renders degraded mode banner with correct message', () => {

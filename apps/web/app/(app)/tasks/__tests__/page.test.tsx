@@ -90,6 +90,42 @@ describe('TasksPage mobile reachability', () => {
     expect(hasSkeleton()).toBe(false)
   })
 
+  // WEB-01: zero tasks after a failed or unfinished load is not the first-run empty state.
+  it('shows a load-failed state, not "No tasks yet", when the tasks domain did not load', () => {
+    act(() => useEtebaseStore.setState((state) => ({ isInitialized: true, domainLoadState: { ...state.domainLoadState, tasks: 'failed' } })))
+    const view = renderWithIntl(<TasksPage />)
+    expect(screen.getByText(messages.Collections.tasksLoadFailedTitle)).toBeInTheDocument()
+    expect(screen.getByText(messages.Collections.tasksLoadFailedDescription)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: messages.Collections.tasksLoadFailedRetry })).toBeInTheDocument()
+    expect(screen.queryByText('No tasks yet')).not.toBeInTheDocument()
+
+    // Offline: say why, and offer no retry that cannot work.
+    storeMock.syncState.isOnline = false
+    onTestFinished(() => { storeMock.syncState.isOnline = true })
+    view.rerender(<TasksPage />)
+    expect(screen.getByText(messages.Collections.tasksLoadFailedOffline)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: messages.Collections.tasksLoadFailedRetry })).not.toBeInTheDocument()
+    expect(screen.queryByText('No tasks yet')).not.toBeInTheDocument()
+
+    // A failed init that left the domain unknown is not "loaded" either.
+    act(() => useEtebaseStore.setState((state) => ({ domainLoadState: { ...state.domainLoadState, tasks: 'unknown' } })))
+    view.rerender(<TasksPage />)
+    expect(screen.getByText(messages.Collections.tasksLoadFailedTitle)).toBeInTheDocument()
+
+    // Cached tasks still show even when the load failed.
+    storeMock.taskState.tasks = [{ id: 'cached', uid: 'cached', title: 'Cached task', listId: 'work' } as Task]
+    view.rerender(<TasksPage />)
+    expect(screen.getByText('Cached task')).toBeInTheDocument()
+    expect(screen.queryByText(messages.Collections.tasksLoadFailedTitle)).not.toBeInTheDocument()
+  })
+
+  it('keeps "No tasks yet" for a loaded, truly empty tasks domain', () => {
+    act(() => useEtebaseStore.setState((state) => ({ isInitialized: true, domainLoadState: { ...state.domainLoadState, tasks: 'loaded' } })))
+    renderWithIntl(<TasksPage />)
+    expect(screen.getByText('No tasks yet')).toBeInTheDocument()
+    expect(screen.queryByText(messages.Collections.tasksLoadFailedTitle)).not.toBeInTheDocument()
+  })
+
   it('exposes the primary create action on all widths', () => {
     renderWithIntl(<TasksPage />)
     const createButton = screen.getByRole('button', { name: 'New task' })
