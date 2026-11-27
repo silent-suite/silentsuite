@@ -19,7 +19,7 @@ Your password is used to derive your encryption keys locally on your device. It 
 
 After creating your account, you can use SilentSuite immediately in the web app. Add calendar events, contacts, and tasks right from your browser, and turn on experimental [Notes](./notes.md#turn-on-notes) under **Settings → Experimental** if you want them. You can also [install the web app](./apps/web.md) on your computer or phone.
 
-To sync with other apps and devices, see the [Apps & Integrations](./apps/index.md) page for supported Android and desktop setup guides. iOS is not supported yet; a native app is [planned](./apps/ios.md).
+To sync with other apps and devices, see the [Apps & Integrations](./apps/index.md) page for supported Android and desktop setup guides. On Android, install SilentSuite from Google Play, the [official F-Droid package](https://f-droid.org/packages/io.silentsuite.android), Obtainium, Zapstore or GitHub Releases, and keep updating through the channel you installed from. In **Settings → Mobile**, the QR code opens the [Android installation guide](https://docs.silentsuite.io/user-guide/apps/android), while the separate APK link opens the latest GitHub Release. iOS is not supported yet; a native app is [planned](./apps/ios.md).
 
 ## 3. Add Your Data
 

@@ -41,6 +41,14 @@ Yes. Both happen entirely in your browser: `.ics` and `.vcf` files are parsed an
 
 ## Apps & Devices
 
+### How do I install the Android app?
+
+Use the same channel for install and updates:
+
+- **Google Play:** recommended if you installed from Play and want Play-managed updates.
+- **F-Droid:** the [official F-Droid package](https://f-droid.org/packages/io.silentsuite.android). Release timing can differ from GitHub Releases.
+- **Obtainium / Zapstore / GitHub Releases:** independent channels for open app-store installation, GitHub-managed updates, or direct APK downloads. In *Settings → Mobile*, the QR code opens the [Android installation guide](https://docs.silentsuite.io/user-guide/apps/android), while the separate APK link opens the latest GitHub Release.
+
 ### How does the desktop Bridge work?
 
 It runs a small CalDAV/CardDAV server bound to `localhost:37358`. Supported desktop clients such as Thunderbird, Calendar on macOS and Evolution connect to that local address. The Bridge encrypts and decrypts against your silentsuite.io or self-hosted account, so plaintext stays on your computer. Install commands are in **Settings → Desktop** in the web app; see [SilentSuite Bridge](./apps/dav-bridge.md).
