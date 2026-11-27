@@ -24,6 +24,9 @@ vi.mock('@/app/stores/use-sync-store', () => ({
   useSyncStore: (selector: (s: Record<string, unknown>) => unknown) => selector({ isOnline: mockIsOnline }),
 }))
 
+let mockPathname = '/calendar'
+vi.mock('next/navigation', () => ({ usePathname: () => mockPathname }))
+
 // Mock next/link
 vi.mock('next/link', () => ({
   default: ({ children, href, ...props }: { children: React.ReactNode; href: string; className?: string }) => (
@@ -36,7 +39,6 @@ vi.mock('lucide-react', () => ({
   Lock: () => <svg data-testid="lock-icon" />,
   WifiOff: () => <svg data-testid="wifi-off-icon" />,
   RefreshCw: ({ className }: { className?: string }) => <svg data-testid="refresh-icon" className={className} />,
-  ExternalLink: () => <svg data-testid="external-link-icon" />,
 }))
 
 describe('ReadOnlyBanner', () => {
@@ -44,6 +46,7 @@ describe('ReadOnlyBanner', () => {
     mockSubscriptionStatus = 'cancelled'
     mockHostedAccess = null
     mockEndedHistory = null
+    mockPathname = '/calendar'
   })
 
   // SIGNUP-04: Billing's read names what ended, whatever the status alone would say.
@@ -105,13 +108,48 @@ describe('ReadOnlyBanner', () => {
     expect(screen.getByText(/Your subscription ended\./)).toBeInTheDocument()
   })
 
-  it('renders choose a plan and export data links', () => {
+  it('renders the plan and export data links', () => {
     render(<ReadOnlyBanner />)
-    const planLink = screen.getByText('Choose a plan')
-    expect(planLink.closest('a')).toHaveAttribute('href', '/settings/subscription')
+    const planLink = screen.getByRole('link', { name: 'Reactivate' })
+    expect(planLink).toHaveAttribute('href', '/settings/subscription')
 
     const exportLink = screen.getByText('Export data')
     expect(exportLink.closest('a')).toHaveAttribute('href', '/settings/export')
+  })
+
+  // SIGNUP-08: the button names the same action as the subscription page it opens.
+  it.each([
+    ['trial', 'Subscribe'],
+    ['subscription', 'Reactivate'],
+    ['unpaid', 'Subscribe'],
+  ])('labels the plan link for an ended %s', (endedHistory, label) => {
+    mockEndedHistory = endedHistory
+    render(<ReadOnlyBanner />)
+    expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', '/settings/subscription')
+    expect(screen.queryByText('Choose a plan')).not.toBeInTheDocument()
+  })
+
+  it('shows no external-link icon on the in-app plan link (SIGNUP-08)', () => {
+    render(<ReadOnlyBanner />)
+    expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument()
+  })
+
+  it('stays hidden on the subscription page, whose card says the same (SIGNUP-08)', () => {
+    mockPathname = '/settings/subscription'
+    const { container } = render(<ReadOnlyBanner />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('shows on other settings pages (SIGNUP-08)', () => {
+    mockPathname = '/settings/export'
+    render(<ReadOnlyBanner />)
+    expect(screen.getByText(/Your subscription ended\./)).toBeInTheDocument()
+  })
+
+  it('stacks the text above the actions below the sm breakpoint (SIGNUP-08)', () => {
+    const { container } = render(<ReadOnlyBanner />)
+    expect(container.firstElementChild).toHaveClass('flex-col', 'sm:flex-row')
+    expect(container.firstElementChild).not.toHaveClass('flex-wrap')
   })
 
   it('is a banner (not a full-screen overlay)', () => {
@@ -127,7 +165,7 @@ describe('ReadOnlyBanner', () => {
   it('uses contrasting foregrounds in both light and dark modes', () => {
     const { container } = render(<ReadOnlyBanner />)
     expect(container.firstElementChild).toHaveClass('text-amber-800', 'dark:text-amber-200')
-    expect(screen.getByText('Choose a plan').closest('a')).toHaveClass(
+    expect(screen.getByRole('link', { name: 'Reactivate' })).toHaveClass(
       'bg-amber-700',
       'hover:bg-amber-800',
       'dark:bg-amber-400',

@@ -1,11 +1,19 @@
 'use client'
 
-import { Lock, WifiOff, RefreshCw, ExternalLink } from 'lucide-react'
+import { Lock, WifiOff, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
-import { ENDED_TITLES } from '@/app/lib/account-notice'
+import { ENDED_TITLES, type EndedHistory } from '@/app/lib/account-notice'
+
+// Same words as the recovery button on /settings/subscription, where this link goes.
+const PLAN_ACTION_LABELS: Record<EndedHistory, string> = {
+  trial: 'Subscribe',
+  subscription: 'Reactivate',
+  unpaid: 'Subscribe',
+}
 
 /**
  * Non-blocking banner shown when subscription has ended.
@@ -15,6 +23,7 @@ export function ReadOnlyBanner() {
   const subscriptionStatus = useAuthStore((s) => s.subscriptionStatus)
   const hostedAccess = useAuthStore((s) => s.hostedAccess)
   const endedHistory = useAuthStore((s) => s.endedHistory)
+  const pathname = usePathname()
 
   // Billing's read names what ended; without one, the status alone decides as before.
   const history = endedHistory
@@ -23,19 +32,23 @@ export function ReadOnlyBanner() {
       : 'subscription')
   const title = ENDED_TITLES[history]
 
+  // The subscription page's own card already says this and offers the same action.
+  if (pathname === '/settings/subscription') return null
+
   return (
-    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200 md:mx-4">
-      <Lock className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-      <span className="flex-1">
-        {title} Your data is safe and read-only.
-      </span>
-      <div className="flex items-center gap-3">
+    <div className="mx-3 mt-2 flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200 sm:flex-row sm:items-center md:mx-4">
+      <div className="flex min-w-0 flex-1 items-start gap-2">
+        <Lock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <span>
+          {title} Your data is safe and read-only.
+        </span>
+      </div>
+      <div className="flex shrink-0 items-center gap-3">
         <Link
           href="/settings/subscription"
           className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
         >
-          Choose a plan
-          <ExternalLink className="h-3.5 w-3.5" />
+          {PLAN_ACTION_LABELS[history]}
         </Link>
         <Link
           href="/settings/export"
