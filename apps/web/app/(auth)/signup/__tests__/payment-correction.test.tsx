@@ -35,7 +35,8 @@ it.each(['cancel', 'current'] as const)('retires refreshed signup checkpoints af
     fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
   }
   await screen.findByRole('heading', { name: 'Verify email to choose a payment method' })
-  expect(screen.getByText(/no longer has valid email verification and signed signup terms/)).toBeVisible()
+  expect(screen.getByText('Payment cancelled. Please verify your email again to continue.')).toBeVisible()
+  expect(screen.queryByText(/expired/i)).not.toBeInTheDocument()
   expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBeUndefined()
   expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).toBeNull()
   expect(sessionStorage.getItem('silentsuiteSignup:payment-journey')).toBe('retired')

@@ -1865,6 +1865,32 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().error).toBe('Invalid email or password. Please try again.')
   })
 
+  it.each([
+    ['a wrong password', 'Wrong password for user.'],
+    ['an unknown user', 'User not found'],
+  ])('login shows the same credentials message for %s (Etebase UnauthorizedError)', async (_case, message) => {
+    const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+    const err = new Error(message)
+    err.name = 'UnauthorizedError'
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(err)
+
+    await useAuthStore.getState().login('test@example.com', 'wrong-password')
+
+    expect(useAuthStore.getState().error).toBe('Invalid email or password. Please try again.')
+  })
+
+  it.each(['Wrong password for user.', 'User not found'])(
+    'login maps the Etebase credentials text %j even without the error class',
+    async (message) => {
+      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error(message))
+
+      await useAuthStore.getState().login('test@example.com', 'wrong-password')
+
+      expect(useAuthStore.getState().error).toBe('Invalid email or password. Please try again.')
+    },
+  )
+
   it('login gives calm retry guidance when Etebase throttles sign-in', async () => {
     const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
     vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('Too many attempts'))

@@ -409,7 +409,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
     </div>
   }
 
-  if (released) return <div className="space-y-4"><h1 className="text-xl font-semibold">Verify email to choose a payment method</h1><p>Payment cancelled. This browser no longer has valid email verification and signed signup terms. Verify your email again to load payment choices.</p><a href="/signup" className="underline">Verify email again</a></div>
+  if (released) return <div className="space-y-4"><h1 className="text-xl font-semibold">Verify email to choose a payment method</h1><p>Payment cancelled. Please verify your email again to continue.</p><a href="/signup" className="underline">Verify email again</a></div>
 
   if (state === 'vault') {
     return (
@@ -426,7 +426,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
         {showReturnFallback && returnTo && (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
             <p className="font-medium">Browser did not reopen the Android app automatically.</p>
-            <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+            <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary-text))] underline">
               Tap here to return to Android
             </a>
           </div>
@@ -526,7 +526,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
             {showReturnFallback && returnTo && (
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
                 <p className="font-medium">Browser did not reopen the Android app automatically.</p>
-                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary-text))] underline">
                   Tap here to return to Android
                 </a>
               </div>

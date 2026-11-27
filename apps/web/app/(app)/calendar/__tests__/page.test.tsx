@@ -164,6 +164,20 @@ describe('CalendarPage calendar visibility', () => {
     expect(document.querySelector('.skeleton-shimmer')).toBeInTheDocument()
   })
 
+  it('hides the New event button while the account is read-only', () => {
+    storeMock.authState.canWrite.mockReturnValue(false)
+    renderWithIntl(<CalendarPage />)
+
+    expect(screen.getByTestId('desktop-grid')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New event' })).not.toBeInTheDocument()
+  })
+
+  it('shows the New event button when the account can write', () => {
+    renderWithIntl(<CalendarPage />)
+
+    expect(screen.getByRole('button', { name: 'New event' })).toBeEnabled()
+  })
+
   it('resets account-local calendar body state across idle before the next account is ready', () => {
     const rendered = renderWithIntl(<CalendarPage />)
     fireEvent.click(screen.getByRole('button', { name: manageCalendars }))

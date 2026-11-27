@@ -232,6 +232,9 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
     expect(authState.prepareSignupDraft).not.toHaveBeenCalled()
     expect(screen.getByRole('link', { name: 'Verify email again' })).toHaveAttribute('href', '/signup')
+    // The release can follow an expired offer as well, so the copy names no cause.
+    expect(screen.getByText('Payment cancelled. Please verify your email again to continue.')).toBeVisible()
+    expect(screen.queryByText(/expired/i)).not.toBeInTheDocument()
   })
 
   it('a released reconcile for another request key is rejected and does not call onReleased', async () => {

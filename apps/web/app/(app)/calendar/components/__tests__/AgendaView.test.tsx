@@ -1,11 +1,18 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgendaView } from '../AgendaView'
 import type { CalendarEvent } from '@silentsuite/core'
 import type { CalendarList } from '@/app/stores/use-calendar-list-store'
 
+const auth = vi.hoisted(() => ({ canWrite: true }))
+const prefs = vi.hoisted(() => ({ defaultTimezone: 'UTC' }))
+
+vi.mock('@/app/stores/use-auth-store', () => ({
+  useAuthStore: (selector: (state: { canWrite: () => boolean }) => unknown) => selector({ canWrite: () => auth.canWrite }),
+}))
+
 vi.mock('@/app/stores/use-preferences-store', () => ({
-  usePreferencesStore: (selector: (state: { defaultTimezone: string }) => unknown) => selector({ defaultTimezone: 'UTC' }),
+  usePreferencesStore: (selector: (state: { defaultTimezone: string }) => unknown) => selector({ defaultTimezone: prefs.defaultTimezone }),
 }))
 
 function makeEvent(
@@ -117,5 +124,76 @@ describe('AgendaView upcoming mode', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: /Daily standup/ })[0])
     expect(onEventClick).toHaveBeenCalledWith('daily-standup', new Date('2026-06-02T09:00:00Z'))
+  })
+
+  it('labels an event-zone badge with the event-zone time, not the display-zone time', () => {
+    // 09:00-09:30 Europe/Berlin (CET, winter) is 08:00-08:30 UTC; the account displays UTC.
+    render(
+      <AgendaView
+        mode="upcoming"
+        currentDate={new Date('2026-12-01T06:00:00Z')}
+        events={[
+          makeEvent('berlin', 'Berlin sync', new Date('2026-12-01T08:00:00Z'), new Date('2026-12-01T08:30:00Z'), {
+            timezone: 'Europe/Berlin',
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('8:00 AM – 8:30 AM')).toBeInTheDocument()
+    expect(screen.getByText('9:00 AM – 9:30 AM GMT+1')).toBeInTheDocument()
+  })
+})
+
+describe('AgendaView floating events in another display zone (review fix: WEB-05)', () => {
+  const originalTz = process.env.TZ
+  afterEach(() => {
+    process.env.TZ = originalTz
+    prefs.defaultTimezone = 'UTC'
+  })
+
+  it('keeps a floating 00:15 event on its own day with a UTC browser and a Berlin display', () => {
+    process.env.TZ = 'UTC'
+    prefs.defaultTimezone = 'Europe/Berlin'
+    // Floating values keep their wall clock as browser-local fields.
+    render(
+      <AgendaView
+        currentDate={new Date(2026, 10, 27, 12)}
+        events={[
+          makeEvent('early', 'Early floating', new Date(2026, 10, 27, 0, 15), new Date(2026, 10, 27, 0, 45), { floating: true }),
+          makeEvent('late', 'Late floating', new Date(2026, 10, 26, 23, 30), new Date(2026, 10, 26, 23, 50), { floating: true }),
+          makeEvent('series', 'Floating series', new Date(2026, 10, 20, 0, 10), new Date(2026, 10, 20, 0, 20), {
+            floating: true,
+            recurrenceRule: 'FREQ=DAILY;COUNT=30',
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('Early floating')).toBeInTheDocument()
+    expect(screen.getByText('12:15 AM – 12:45 AM')).toBeInTheDocument()
+    expect(screen.getByText('Floating series')).toBeInTheDocument()
+    expect(screen.getByText('12:10 AM – 12:20 AM')).toBeInTheDocument()
+    expect(screen.queryByText('Late floating')).not.toBeInTheDocument()
+  })
+})
+
+describe('AgendaView empty state', () => {
+  it('points writers at the + button', () => {
+    auth.canWrite = true
+    render(<AgendaView currentDate={new Date('2026-06-01T12:00:00Z')} events={[]} />)
+
+    expect(screen.getByText('No events today')).toBeInTheDocument()
+    expect(screen.getByText(/Tap the \+ button/)).toBeInTheDocument()
+  })
+
+  it('drops the + button hint while the account is read-only', () => {
+    auth.canWrite = false
+    render(<AgendaView currentDate={new Date('2026-06-01T12:00:00Z')} events={[]} />)
+
+    expect(screen.getByText('No events today')).toBeInTheDocument()
+    expect(screen.getByText('Your schedule is clear.')).toBeInTheDocument()
+    expect(screen.queryByText(/Tap the \+ button/)).not.toBeInTheDocument()
+    auth.canWrite = true
   })
 })

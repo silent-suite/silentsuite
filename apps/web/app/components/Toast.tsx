@@ -22,7 +22,7 @@ const variantIcons: Record<ToastMessage['variant'], typeof AlertCircle> = {
 const iconStyles: Record<ToastMessage['variant'], string> = {
   error: 'text-rose-400',
   warning: 'text-amber-400',
-  success: 'text-emerald-400',
+  success: 'text-emerald-300',
 }
 
 function ToastItem({ toast }: { toast: ToastMessage }) {

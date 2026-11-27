@@ -57,7 +57,7 @@ function PasswordStrength({ password }: { password: string }) {
         {checks.map((check) => (
           <li
             key={check.label}
-            className={`flex items-center gap-1.5 text-xs ${check.met ? 'text-[rgb(var(--primary))]' : 'text-[rgb(var(--muted))]'}`}
+            className={`flex items-center gap-1.5 text-xs ${check.met ? 'text-[rgb(var(--primary-text))]' : 'text-[rgb(var(--muted))]'}`}
           >
             {check.met ? <Check className="h-3 w-3" /> : <div className="h-3 w-3 rounded-full border border-[rgb(var(--border))]" />}
             {check.label}
@@ -150,7 +150,7 @@ export function StepCreatePaidAccount({
               type={showPassword ? "text" : "password"}
               autoComplete={accountReady ? 'current-password' : 'new-password'}
               aria-invalid={!!errors.password}
-              aria-describedby={errors.password ? 'paid-signup-password-error' : undefined}
+              aria-describedby={errors.password ? 'paid-signup-password-hint paid-signup-password-error' : 'paid-signup-password-hint'}
               {...register('password')}
               className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))] pr-12"
             />
@@ -165,6 +165,9 @@ export function StepCreatePaidAccount({
               {showPassword ? <Eye aria-hidden="true" className="h-4 w-4" /> : <EyeOff aria-hidden="true" className="h-4 w-4" />}
             </button>
           </div>
+          <p id="paid-signup-password-hint" className="text-xs text-[rgb(var(--muted))]">
+            We can&apos;t reset this password. If you lose it, your data can&apos;t be recovered. Store it in a password manager.
+          </p>
           {errors.password && <p id="paid-signup-password-error" role="alert" className="text-xs text-red-400">{errors.password.message}</p>}
           <PasswordStrength password={password} />
         </div>

@@ -99,7 +99,7 @@ export function ThemeToggle() {
               <Icon className="h-4 w-4" />
               <span className="flex-1 text-left">{label}</span>
               {theme === value && (
-                <Check className="h-4 w-4 text-[rgb(var(--primary))]" />
+                <Check className="h-4 w-4 text-[rgb(var(--primary-text))]" />
               )}
             </button>
           ))}

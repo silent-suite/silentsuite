@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 import { flushSync } from 'react-dom'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
-import { parseAccountNotice, type AccountNotice } from '@/app/lib/account-notice'
+import { classifyEndedHistory, parseAccountNotice, type AccountNotice, type EndedHistory } from '@/app/lib/account-notice'
 import { logger } from '@/app/lib/logger'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/constants'
@@ -145,8 +145,8 @@ function tupleForIdentity(previous: User | null, nextId: string | undefined) {
   return previous?.id === nextId ? {} : { subscriptionStatus: null, hostedAccess: null, ...clearedAccountNotice }
 }
 
-/** The informational notice and its expiry claim belong to one account generation. */
-const clearedAccountNotice = { accountNotice: null, accountNoticeCheckedAt: null, trialExpiryRefreshClaim: null }
+/** The informational notice, its expiry claim and the ended wording belong to one account generation. */
+const clearedAccountNotice = { accountNotice: null, accountNoticeCheckedAt: null, trialExpiryRefreshClaim: null, endedHistory: null }
 
 /**
  * One expiry refresh for an account generation and trial-end instant. `readSequence` is the
@@ -183,6 +183,8 @@ interface AuthState {
   accountNoticeCheckedAt: number | null
   /** One expiry refresh per account generation and trial-end instant, shared by every countdown. */
   trialExpiryRefreshClaim: TrialExpiryRefreshClaim | null
+  /** Wording only, from the same read as subscriptionStatus: which history the read-only banner names. */
+  endedHistory: EndedHistory | null
   isDegraded: () => boolean
   isReadOnly: () => boolean
   canWrite: () => boolean
@@ -508,7 +510,7 @@ const AUTH_RATE_LIMIT_MESSAGE =
 const AUTH_TEMPORARY_UNAVAILABLE_MESSAGE =
   'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.'
 
-const AUTH_REFRESH_RETRY_MESSAGE =
+export const AUTH_REFRESH_RETRY_MESSAGE =
   'Your session could not be confirmed. Please retry restoring your session. Your encrypted data is safe.'
 
 function refreshRetryDelayMs(value: string | null): number {
@@ -953,10 +955,21 @@ function clearHostedValidationMarkers() {
   }
 }
 
+/**
+ * Etebase rejects an unknown user ("User not found") and a wrong password
+ * ("Wrong password for user.") with the same UnauthorizedError (HTTP 401).
+ * Both get one message, so the form never says which accounts exist.
+ */
+function isWrongCredentials(err: Error, raw: string): boolean {
+  return err.name === 'UnauthorizedError'
+    || raw.includes('unauthorized') || raw.includes('401')
+    || raw.includes('wrong password') || raw.includes('user not found')
+}
+
 function authErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'Login failed'
   const raw = err.message.toLowerCase()
-  if (raw.includes('unauthorized') || raw.includes('401')) return 'Invalid email or password. Please try again.'
+  if (isWrongCredentials(err, raw)) return 'Invalid email or password. Please try again.'
   if (raw.includes('not found') || raw.includes('404')) return 'No account found with this email. Please sign up first.'
   if (raw.includes('429') || raw.includes('too many') || raw.includes('rate limit') || raw.includes('throttl')) {
     return AUTH_RATE_LIMIT_MESSAGE
@@ -1500,6 +1513,7 @@ async function readSubscription(
         hostedAccess: parseHostedAccess(data.hostedAccess),
         accountNotice: parseAccountNotice(data.accountNotice),
         accountNoticeCheckedAt: Date.now(),
+        endedHistory: classifyEndedHistory(data),
         ...settleExpiryClaim(get().trialExpiryRefreshClaim, originalUser?.id, epoch, sequence, data),
       })
       return 'published'
@@ -2599,6 +2613,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         hostedAccess: parseHostedAccess(subData.hostedAccess),
         accountNotice: parseAccountNotice(subData.accountNotice),
         accountNoticeCheckedAt: Date.now(),
+        endedHistory: classifyEndedHistory(subData),
         // After every ownership, reset and latest-read check above: this retry's own verified
         // account, current boundary and read sequence. Another account never matches the claim.
         ...settleExpiryClaim(get().trialExpiryRefreshClaim, refreshData.id, owner.epoch, sequence, subData),

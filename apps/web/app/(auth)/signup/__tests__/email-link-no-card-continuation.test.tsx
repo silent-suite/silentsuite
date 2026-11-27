@@ -164,7 +164,7 @@ describe('email-link seven-day no-card continuation', () => {
 
   it('requires the password acknowledgement before no-card creation, then does not ask twice', async () => {
     await reachPlanScreen()
-    fireEvent.click(screen.getByRole('button', { name: /7 day free trial/i }))
+    fireEvent.click(screen.getByRole('button', { name: /7-day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     const complete = await screen.findByRole('button', { name: /continue to your workspace/i })
     expect(complete).toBeDisabled()
@@ -250,7 +250,7 @@ describe('email-link seven-day no-card continuation', () => {
     }))
     if (back === 'app') fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
     else await traverseHistory('back')
-    await screen.findByRole('heading', { name: /choose your plan/i })
+    await screen.findByRole('heading', { name: /choose your free trial/i })
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/cancel'))).toHaveLength(1)
     act(() => window.dispatchEvent(new PopStateEvent('popstate', { state: oldCheckpoint })))
     expect(screen.queryByRole('button', { name: /continue to your workspace/i })).not.toBeInTheDocument()
@@ -284,7 +284,7 @@ describe('email-link seven-day no-card continuation', () => {
       return prior(input, init)
     }))
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-    await screen.findByRole('heading', { name: /choose your plan/i })
+    await screen.findByRole('heading', { name: /choose your free trial/i })
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
     expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
     expect(screen.getByText(/original password remains unchanged/i)).toBeVisible()
@@ -385,7 +385,7 @@ describe('email-link seven-day no-card continuation', () => {
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByText(/Go back and start a new cryptocurrency invoice/)).not.toBeInTheDocument()
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
-    expect(screen.queryByRole('heading', { name: /choose your plan/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /choose your free trial/i })).not.toBeInTheDocument()
     // Dismissing resumes the same payable panel.
     fireEvent.click(screen.getByRole('button', { name: 'Stay' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -611,7 +611,8 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     const bitcoin = await screen.findByRole('button', { name: /^pay .* with bitcoin, lightning and monero for/i })
     expect(bitcoin).toHaveTextContent('Bitcoin, Lightning and Monero')
-    expect(bitcoin).toHaveTextContent('Payment has to be made with account creation, but we offer a 30-day, no-questions-asked money-back guarantee.')
+    expect(bitcoin).toHaveTextContent('Pay now, no free trial. You get a 30-day, no-questions-asked money-back guarantee.')
+    expect(bitcoin).toHaveAccessibleName(/paid now with no free trial and a 30-day money-back guarantee/)
     expect(bitcoin).toHaveTextContent('€36.00 for one year, paid now. No automatic renewal.')
     const card = screen.getByRole('button', { name: /^pay by card for/i })
     expect(card).toHaveTextContent('Pay by Card (Powered by Stripe)')
@@ -747,7 +748,7 @@ describe('email-link seven-day no-card continuation', () => {
       }))
       // The unattempted claim is released; then Back from the plans keeps the original password.
       fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-      await screen.findByRole('heading', { name: /choose your plan/i })
+      await screen.findByRole('heading', { name: /choose your free trial/i })
       fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
       expect(await screen.findByRole('alert')).toHaveTextContent('Your original password remains unchanged')
       expect(screen.queryByRole('heading', { name: 'Choose your password' })).not.toBeInTheDocument()
@@ -861,11 +862,14 @@ describe('email-link seven-day no-card continuation', () => {
     const next = screen.getByRole('button', { name: /continue to trial options/i })
     await waitFor(() => expect(next).toBeEnabled())
     fireEvent.click(next)
-    await screen.findByRole('heading', { name: /choose your plan/i })
+    await screen.findByRole('heading', { name: /choose your free trial/i })
     expect(screen.queryByText('Annual access only. Exact price and renewal terms are confirmed by Billing before checkout.')).not.toBeInTheDocument()
-    // The first choice screen carries no price, annual wording or charge-timing promise.
+    // The first choice screen carries no price or annual wording; each card only says whether it needs a card.
     expect(screen.queryByText(/before day 30|no charge until|billed annually|annual plan|€36|€48|\/year/i)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /30-day free trial/i })).toHaveTextContent('Full access to all features')
+    // Each trial card says up front whether it needs a card.
+    expect(screen.getByRole('button', { name: /30-day free trial/i })).toHaveTextContent('Card required. No charge for 30 days.')
+    expect(screen.getByRole('button', { name: /7-day free trial/i })).toHaveTextContent('No card needed.')
   }
 
   /** Tick the password-loss acknowledgement and return its enabled action. */
@@ -879,7 +883,7 @@ describe('email-link seven-day no-card continuation', () => {
 
   /** 7-day + Continue reserves the trial and lands on the acknowledgement without any review screen. */
   async function chooseFreeTrial() {
-    fireEvent.click(await screen.findByRole('button', { name: /7 day free trial/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /7-day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     const action = await acknowledgePasswordKey()
     expect(screen.queryByText(/Start your free trial|Free until|Create account and start free trial/)).not.toBeInTheDocument()
@@ -964,7 +968,7 @@ describe('email-link seven-day no-card continuation', () => {
       return prior(input, init)
     }))
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-    await screen.findByRole('heading', { name: /choose your plan/i })
+    await screen.findByRole('heading', { name: /choose your free trial/i })
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/cancel'))).toHaveLength(1)
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
     expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
@@ -1056,7 +1060,7 @@ describe('email-link seven-day no-card continuation', () => {
         return new Response(JSON.stringify({ contractVersion: 2, requestId,
           checkoutIntentJti: 'a2c4f872-01b7-4176-8325-522486b20cae', state: 'released' }))
       }
-      if (String(input).endsWith('/request')) {
+      if (String(input).endsWith('/signup-email-verifications/v2')) {
         expect(JSON.parse(String(init?.body)).requestId).toBe(requestId)
         return new Response('{}', { status: 202 })
       }
@@ -1070,7 +1074,7 @@ describe('email-link seven-day no-card continuation', () => {
       return originalFetch(input, init)
     }))
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Verify ownership again' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Verify email again' }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('same signup'))
     const saved = JSON.parse(localStorage.getItem('silentsuite-signup-email-proof')!)
     expect(Object.keys(saved)).toEqual([requestId])
@@ -1089,7 +1093,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(next)
     await chooseFreeTrial()
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-    await screen.findByRole('button', { name: /7 day free trial/i })
+    await screen.findByRole('button', { name: /7-day free trial/i })
     expect(cancellationPayloads).toHaveLength(2)
     expect(cancellationPayloads[1]).toEqual({ ...cancellationPayloads[0], emailOwnershipToken: renewedProof })
     expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
@@ -1114,7 +1118,7 @@ describe('email-link seven-day no-card continuation', () => {
       expect(screen.queryByRole('button', { name: 'Cancel this selection and choose again' })).not.toBeInTheDocument()
     } else if (failure === 400) {
       vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 202 })))
-      fireEvent.click(screen.getByRole('button', { name: 'Verify ownership again' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Verify email again' }))
       await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('same signup'))
       expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).requestId).toBe(requestId)
       expect(screen.getByRole('button', { name: 'Retry cancellation' })).toBeInTheDocument()
@@ -1168,7 +1172,7 @@ describe('email-link seven-day no-card continuation', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent(provider === 'none'
         ? 'Cancellation is not confirmed'
         : 'Payment creation is not yet confirmed')
-      expect(screen.queryByRole('button', { name: /7 day free trial/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /7-day free trial/i })).not.toBeInTheDocument()
       expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/activate'))).toHaveLength(1)
     } finally { clock.mockRestore() }
   })
@@ -1226,11 +1230,11 @@ describe('email-link seven-day no-card continuation', () => {
     const next = screen.getByRole('button', { name: /continue to trial options/i })
     await waitFor(() => expect(next).toBeEnabled())
     fireEvent.click(next)
-    await screen.findByRole('heading', { name: /choose your plan/i })
+    await screen.findByRole('heading', { name: /choose your free trial/i })
     await traverseHistory('back')
     await screen.findByRole('heading', { name: 'Choose your password' })
     await traverseHistory('forward')
-    await screen.findByRole('heading', { name: /choose your plan/i })
+    await screen.findByRole('heading', { name: /choose your free trial/i })
     expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: /back/i }))
     expect(await screen.findByRole('heading', { name: 'Choose your password' })).toBeInTheDocument()
@@ -1422,8 +1426,8 @@ describe('email-link seven-day no-card continuation', () => {
     const continuation = screen.getByRole('button', { name: /continue to trial options/i })
     await waitFor(() => expect(continuation).toBeEnabled())
     fireEvent.click(continuation)
-    expect(await screen.findByRole('heading', { name: /choose your plan/i })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /7 day free trial/i }))
+    expect(await screen.findByRole('heading', { name: /choose your free trial/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /7-day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     fireEvent.click(await acknowledgePasswordKey())
 
@@ -1462,8 +1466,8 @@ describe('email-link seven-day no-card continuation', () => {
     const continuation = screen.getByRole('button', { name: /continue to trial options/i })
     await waitFor(() => expect(continuation).toBeEnabled())
     fireEvent.click(continuation)
-    expect(await screen.findByRole('heading', { name: /choose your plan/i })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /7 day free trial/i }))
+    expect(await screen.findByRole('heading', { name: /choose your free trial/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /7-day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     fireEvent.click(await acknowledgePasswordKey())
 
@@ -1665,7 +1669,7 @@ describe('email-link seven-day no-card continuation', () => {
     const continuation = await screen.findByRole('button', { name: /continue to trial options/i })
     await waitFor(() => expect(continuation).toBeEnabled())
     fireEvent.click(continuation)
-    fireEvent.click(await screen.findByRole('button', { name: /7 day free trial/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /7-day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
 
     expect(await screen.findByText(/annual terms changed/i)).toBeInTheDocument()
@@ -1675,7 +1679,7 @@ describe('email-link seven-day no-card continuation', () => {
     expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
     expect(authState.provisionAnnualNoCard).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByRole('button', { name: /7 day free trial/i }))
+    fireEvent.click(screen.getByRole('button', { name: /7-day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     fireEvent.click(await acknowledgePasswordKey())
     await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
@@ -1732,7 +1736,7 @@ describe('email-link seven-day no-card continuation', () => {
     const continuation = screen.getByRole('button', { name: /continue to trial options/i })
     await waitFor(() => expect(continuation).toBeEnabled())
     fireEvent.click(continuation)
-    await screen.findByRole('heading', { name: /choose your plan/i })
+    await screen.findByRole('heading', { name: /choose your free trial/i })
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     fireEvent.click(await screen.findByRole('button', { name: paymentAction }))
 
@@ -1757,5 +1761,73 @@ describe('email-link seven-day no-card continuation', () => {
   it('HISTORY_ISOLATION_PROBE commits an ordinary render after the preceding traversal probe', () => {
     render(<p>HISTORY_ISOLATION_PROBE render committed</p>)
     expect(screen.getByText('HISTORY_ISOLATION_PROBE render committed')).toBeInTheDocument()
+  })
+
+  describe('check your email screen (SIGNUP-12)', () => {
+    async function submitEmail(fetchMock: ReturnType<typeof vi.fn>) {
+      vi.stubGlobal('fetch', fetchMock)
+      render(<SignupPage />)
+      fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: 'first@example.test' } })
+      const next = screen.getByRole('button', { name: /^continue$/i })
+      await waitFor(() => expect(next).toBeEnabled())
+      fireEvent.click(next)
+      await screen.findByText(/Check your email and open/)
+    }
+    const sentRequests = (fetchMock: ReturnType<typeof vi.fn>) => fetchMock.mock.calls
+      .filter(([input]) => String(input).endsWith('/auth/signup-email-verifications/v2'))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as { email: string; requestId: string })
+
+    it('names the address, gives the spam and expiry hint, and resends after the cooldown', async () => {
+      const fetchMock = vi.fn(async () => new Response('{}', { status: 202 }))
+      const start = Date.now()
+      const now = vi.spyOn(Date, 'now').mockReturnValue(start)
+      try {
+        await submitEmail(fetchMock)
+        const panel = screen.getByRole('region', { name: 'Email verification' })
+        expect(panel).toHaveTextContent('We sent a link to first@example.test.')
+        expect(panel).toHaveTextContent('Not there? Check your spam folder. The link expires in 15 minutes.')
+        const resend = screen.getByRole('button', { name: 'Resend email in 3:00' })
+        expect(resend).toBeDisabled()
+        fireEvent.click(resend)
+        expect(sentRequests(fetchMock)).toHaveLength(1)
+
+        now.mockReturnValue(start + 3 * 60_000)
+        const ready = await screen.findByRole('button', { name: 'Resend email' }, { timeout: 2000 })
+        expect(ready).toBeEnabled()
+        fireEvent.click(ready)
+        await waitFor(() => expect(sentRequests(fetchMock)).toHaveLength(2))
+        const [first, second] = sentRequests(fetchMock)
+        expect(second.email).toBe('first@example.test')
+        expect(second.requestId).not.toBe(first.requestId)
+        expect(await screen.findByRole('button', { name: 'Resend email in 3:00' })).toBeDisabled()
+        expect(screen.getByRole('region', { name: 'Email verification' })).toHaveTextContent('We sent a link to first@example.test.')
+        // The replacement link supersedes the first one in this browser.
+        expect(Object.keys(JSON.parse(localStorage.getItem('silentsuite-signup-email-proof')!))).toEqual([second.requestId])
+      } finally {
+        now.mockRestore()
+      }
+    })
+
+    it('waits as long as billing asks after a refused resend', async () => {
+      let sends = 0
+      const fetchMock = vi.fn(async () => {
+        sends += 1
+        return sends === 1
+          ? new Response('{}', { status: 202 })
+          : new Response(JSON.stringify(COARSE_429), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '600' } })
+      })
+      const start = Date.now()
+      const now = vi.spyOn(Date, 'now').mockReturnValue(start)
+      try {
+        await submitEmail(fetchMock)
+        now.mockReturnValue(start + 3 * 60_000)
+        fireEvent.click(await screen.findByRole('button', { name: 'Resend email' }, { timeout: 2000 }))
+        expect(await screen.findByText(/A new verification email could not be confirmed/)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Resend email in 10:00' })).toBeDisabled()
+        expect(sentRequests(fetchMock)).toHaveLength(2)
+      } finally {
+        now.mockRestore()
+      }
+    })
   })
 })

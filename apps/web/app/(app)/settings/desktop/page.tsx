@@ -21,7 +21,7 @@ export default function DesktopSettingsPage() {
       {/* Installer status */}
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-3">
         <div className="flex items-center gap-3">
-          <Monitor className="h-5 w-5 text-[rgb(var(--primary))]" />
+          <Monitor className="h-5 w-5 text-[rgb(var(--primary-text))]" />
           <div>
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">
               Installers are published through releases
@@ -43,7 +43,7 @@ export default function DesktopSettingsPage() {
             href={RELEASES_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2.5 text-sm font-medium text-white hover:bg-[rgb(var(--primary-hover))] transition-colors"
+            className="flex items-center justify-center gap-2 rounded-lg bg-[rgb(var(--primary-strong))] px-4 py-2.5 text-sm font-medium text-white hover:bg-[rgb(var(--primary-strong-hover))] transition-colors"
           >
             <ExternalLink className="h-4 w-4" />
             View latest release on GitHub
@@ -62,7 +62,7 @@ export default function DesktopSettingsPage() {
       {/* Privacy note */}
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
         <div className="flex items-start gap-3">
-          <ShieldCheck className="h-5 w-5 text-[rgb(var(--primary))] mt-0.5 flex-shrink-0" />
+          <ShieldCheck className="h-5 w-5 text-[rgb(var(--primary-text))] mt-0.5 flex-shrink-0" />
           <div className="space-y-1">
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">
               Stays end-to-end encrypted

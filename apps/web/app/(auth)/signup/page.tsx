@@ -55,6 +55,13 @@ const CRYPTO_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED 
 const BTCPAY_CHECKOUT_ORIGIN = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ORIGIN ?? 'https://btcpay.silentsuite.io'
 const EMAIL_PROOF_CONTEXT_KEY = 'silentsuite-signup-email-proof'
 const EMAIL_VERIFIED_MARKER_KEY = 'silentsuite-signup-email-verified'
+/** Billing keeps a signup email link valid for 15 minutes. */
+const EMAIL_LINK_LIFETIME_MINUTES = 15
+/**
+ * Billing accepts 5 signup verification emails per 15 minutes per client
+ * address. One send every 3 minutes stays inside that budget.
+ */
+const EMAIL_RESEND_COOLDOWN_MS = 3 * 60_000
 
 const methodOrder = (id: string) => ((({ 'BTC-CHAIN': 0, BTC: 0, 'BTC-LN': 1, 'XMR-CHAIN': 2 }) as Record<string, number>)[id] ?? 3)
 
@@ -280,7 +287,7 @@ function PasswordStrength({ password }: { password: string }) {
           <li
             key={check.label}
             className={`flex items-center gap-1.5 text-xs ${
-              check.met ? 'text-[rgb(var(--primary))]' : 'text-[rgb(var(--muted))]'
+              check.met ? 'text-[rgb(var(--primary-text))]' : 'text-[rgb(var(--muted))]'
             }`}
           >
             {check.met ? (
@@ -335,7 +342,9 @@ function StepCreateAccount({
     // Remove this cast once @hookform/resolvers ships native zod v4 support.
     // Tracking: https://github.com/react-hook-form/resolvers/issues
     resolver: zodResolver(needsPassword ? signupSchema : z.object({ email: signupEmailSchema.shape.email })) as any,
-    mode: 'onChange',
+    // SIGNUP-17: show a field error only after the user leaves the field, then update it live.
+    // isValid (the Continue button) still updates on every change.
+    mode: 'onTouched',
     defaultValues: initialData ?? undefined,
   })
 
@@ -487,7 +496,7 @@ function StepCreateAccount({
               type="checkbox"
               checked={rememberDevice}
               onChange={(e) => onRememberDeviceChange(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--focus-ring))] focus:ring-offset-0"
+              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary-text))] focus:ring-[rgb(var(--focus-ring))] focus:ring-offset-0"
             />
             <span className="text-xs text-[rgb(var(--muted))] leading-relaxed">Keep me signed in on this device</span>
           </label>
@@ -550,7 +559,7 @@ function StepCreateAccount({
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Choose your plan (2-card selection + inline payment sub-step)
+// Step 2: Choose your free trial (2-card selection + inline payment sub-step)
 // ---------------------------------------------------------------------------
 
 type PlanView = 'cards' | 'method' | 'confirm' | 'payment' | 'crypto'
@@ -996,7 +1005,7 @@ function StepChoosePlan({
               type="button"
               onClick={handleSelectBitcoin}
               disabled={provisioning}
-              aria-label={`Pay ${formatAnnualOfferAmount(annualOfferDetails)} with Bitcoin, Lightning and Monero for ${annualOfferPlanLabel(annualOfferDetails)}, paid now with a 30-day money-back guarantee`}
+              aria-label={`Pay ${formatAnnualOfferAmount(annualOfferDetails)} with Bitcoin, Lightning and Monero for ${annualOfferPlanLabel(annualOfferDetails)}, paid now with no free trial and a 30-day money-back guarantee`}
               className="group w-full rounded-xl border-2 border-slate-700/50 bg-[rgb(var(--surface))] p-4 text-left transition-all hover:border-amber-500/70 hover:bg-amber-500/5 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <div className="flex items-start gap-3">
@@ -1006,7 +1015,7 @@ function StepChoosePlan({
                 <div className="flex-1">
                   <h3 className="font-semibold text-[rgb(var(--foreground))]">Bitcoin, Lightning and Monero</h3>
                   <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                    Payment has to be made with account creation, but we offer a 30-day, no-questions-asked money-back guarantee.
+                    Pay now, no free trial. You get a 30-day, no-questions-asked money-back guarantee.
                   </p>
                   <p className="mt-1 text-sm text-[rgb(var(--muted))]">
                     {formatAnnualOfferAmount(annualOfferDetails)} for one year, paid now. No automatic renewal.
@@ -1115,17 +1124,17 @@ function StepChoosePlan({
   return (
     <div ref={contentRef} className="space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-left-4 duration-300 motion-reduce:animate-none">
       <div className="space-y-2 text-center">
-        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
+        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Choose your free trial</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
           {annualOfferPlanLabel(annualOfferDetails)}
         </p>
       </div>
 
       <div className="space-y-3 sm:space-y-4">
-        {/* Card A: 7 Day Free Trial — no card */}
+        {/* Card A: 7-day free trial — no card */}
         <button
           onClick={() => setSelectedTrial('7day')}
-          aria-label="7 Day Free Trial — full access, no credit card required"
+          aria-label="7-day free trial — no card needed, full access to all features"
           className={`group w-full rounded-xl border-2 p-4 sm:p-5 text-left transition-all ${
             selectedTrial === '7day'
               ? 'border-emerald-500 bg-emerald-500/5'
@@ -1137,27 +1146,23 @@ function StepChoosePlan({
               <Gift className="h-5 w-5 text-[rgb(var(--muted))]" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-[rgb(var(--foreground))]">7 Day Free Trial</h3>
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">7-day free trial</h3>
+              <p className="mt-1 text-sm text-[rgb(var(--foreground))]">No card needed.</p>
               <ul className="mt-2 space-y-1.5">
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                   Full access to all features
-                </li>
-                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  No credit card required
                 </li>
               </ul>
             </div>
           </div>
         </button>
 
-        {/* Card B: 30-day free trial. Heading, badge and feature bullet are the
-            pre-annual-rollout copy (82019158^, introduced by #123 8bff947d);
-            price and payment-method terms are stated on the next screen. */}
+        {/* Card B: 30-day free trial. It states that a card is needed before the
+            choice; price and payment-method terms are stated on the next screen. */}
         <button
           onClick={() => setSelectedTrial('30day')}
-          aria-label="30-day free trial — full access to all features"
+          aria-label="30-day free trial — card required, no charge for 30 days, full access to all features"
           className={`group w-full rounded-xl border-2 p-4 sm:p-6 text-left transition-all ${
             selectedTrial === '30day'
               ? 'border-emerald-500 bg-emerald-500/5'
@@ -1175,7 +1180,8 @@ function StepChoosePlan({
                   Recommended
                 </span>
               </div>
-              <ul className="mt-3 space-y-1.5">
+              <p className="mt-1 text-sm text-[rgb(var(--foreground))]">Card required. No charge for 30 days.</p>
+              <ul className="mt-2 space-y-1.5">
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                   Full access to all features
@@ -1384,7 +1390,7 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
               <div
                 className={`flex h-8 w-8 items-center justify-center rounded-full border-2 text-sm font-semibold transition-colors ${
                   i < currentIndex
-                    ? 'border-emerald-500 bg-emerald-500 text-white'
+                    ? 'border-emerald-700 bg-emerald-700 text-white'
                     : i === currentIndex
                       ? 'border-emerald-500 text-emerald-500'
                       : 'border-[rgb(var(--border))] text-[rgb(var(--muted))]'
@@ -1418,14 +1424,15 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
       </div>
 
       {/* Mobile: horizontal stepper on top */}
-      <div className="flex w-full md:hidden items-center justify-center gap-1 sm:gap-2 mb-4 sm:mb-6">
+      <div className="flex w-full md:hidden flex-col items-center mb-4 sm:mb-6">
+      <div className="flex items-center justify-center gap-1 sm:gap-2">
         {steps.map((step, i) => (
           <div key={step.key} className="flex items-center gap-1.5">
             <div className="flex items-center gap-1">
               <div
                 className={`flex h-6 w-6 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors ${
                   i < currentIndex
-                    ? 'border-emerald-500 bg-emerald-500 text-white'
+                    ? 'border-emerald-700 bg-emerald-700 text-white'
                     : i === currentIndex
                       ? 'border-emerald-500 text-emerald-500'
                       : 'border-[rgb(var(--border))] text-[rgb(var(--muted))]'
@@ -1456,6 +1463,13 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
             )}
           </div>
         ))}
+      </div>
+      {/* Phones hide the per-step labels above, so name the current step here. */}
+      {currentIndex >= 0 && (
+        <p data-testid="signup-mobile-step-label" className="sm:hidden mt-2 text-xs text-[rgb(var(--muted))]">
+          Step {steps[currentIndex].number} of {steps.length}: {steps[currentIndex].label}
+        </p>
+      )}
       </div>
     </>
   )
@@ -1547,6 +1561,25 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const [emailProofBusy, setEmailProofBusy] = useState(false)
   const [requestingEmailProof, setRequestingEmailProof] = useState(false)
   const resendBusyRef = useRef(false)
+  // The request the waiting screen names and can resend. Non-secret.
+  const [sentEmailContext, setSentEmailContext] = useState<EmailProofContext | null>(null)
+  const sentEmailContextRef = useRef(sentEmailContext)
+  sentEmailContextRef.current = sentEmailContext
+  const [resendAvailableAt, setResendAvailableAt] = useState(0)
+  const [resendNow, setResendNow] = useState(() => Date.now())
+  const resendWaitMs = Math.max(0, resendAvailableAt - resendNow)
+  // Ticks once a second only while a cooldown runs; expiry sends nothing.
+  useEffect(() => {
+    if (resendWaitMs <= 0) return
+    const timer = window.setTimeout(() => setResendNow(Date.now()), Math.min(1000, resendWaitMs))
+    return () => window.clearTimeout(timer)
+  }, [resendWaitMs])
+  const resendWaitSeconds = Math.ceil(resendWaitMs / 1000)
+  const startResendCooldown = useCallback((ms: number) => {
+    const now = Date.now()
+    setResendNow(now)
+    setResendAvailableAt((current) => Math.max(current, now + ms))
+  }, [])
   const mountedRef = useRef(false)
   const ownerAbortRef = useRef<AbortController | null>(null)
   // Navigation away or an endpoint change cancels a pending installation-owner request.
@@ -1696,7 +1729,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   }, [prepareSignupDraft, emailProofAttempt])
 
   const requestNewVerificationEmail = useCallback(async () => {
-    const previous = emailContinuationRef.current?.context
+    const previous = emailContinuationRef.current?.context ?? sentEmailContextRef.current
     if (!previous || resendBusyRef.current) return
     resendBusyRef.current = true
     setRequestingEmailProof(true)
@@ -1704,6 +1737,8 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     setEmailProofBusy(true)
     const context = { ...previous, requestId: crypto.randomUUID(), expiresAt: Date.now() + 15 * 60_000 }
     sentRequestRef.current = context.requestId
+    setSentEmailContext(context)
+    startResendCooldown(EMAIL_RESEND_COOLDOWN_MS)
     setEmailConfirmedElsewhere(false)
     try {
       // Persist the non-secret lineage before sending: a lost acknowledgement
@@ -1720,8 +1755,11 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
       setEmailProofError(null)
       setEmailProofUnavailable(false)
       setAwaitingEmailProof(true)
-    } catch {
-      if (mountedRef.current && sentRequestRef.current === context.requestId) setEmailProofError('A new verification email could not be confirmed. Check your inbox, or try requesting another link shortly.')
+    } catch (error) {
+      if (mountedRef.current && sentRequestRef.current === context.requestId) {
+        setEmailProofError('A new verification email could not be confirmed. Check your inbox, or try requesting another link shortly.')
+        if (error instanceof BillingResponseError && error.billingStatus === 429 && error.retryAfterMs !== null) startResendCooldown(error.retryAfterMs)
+      }
     } finally {
       resendBusyRef.current = false
       if (mountedRef.current && sentRequestRef.current === context.requestId) {
@@ -1730,7 +1768,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
         setEmailProofBusy(false)
       }
     }
-  }, [])
+  }, [startResendCooldown])
 
   const handleAccountComplete = useCallback(async (data: SignupFormData, ownerPassword?: string) => {
     emailContinuationRef.current = null
@@ -1799,6 +1837,8 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     // This full-navigation continuation intentionally contains no password, and
     // is browser-profile scoped so the emailed link works from a new tab.
     sentRequestRef.current = requestId
+    setSentEmailContext(context)
+    startResendCooldown(EMAIL_RESEND_COOLDOWN_MS)
     setEmailConfirmedElsewhere(false)
     setSendingEmail(true)
     try {
@@ -1814,7 +1854,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     } finally {
       if (mountedRef.current && sentRequestRef.current === requestId) setSendingEmail(false)
     }
-  }, [createEtebaseAccount, prepareSignupDraft, rememberDevice, returnTo, serverUrl])
+  }, [createEtebaseAccount, prepareSignupDraft, rememberDevice, returnTo, serverUrl, startResendCooldown])
 
   const handleSelfHostChoice = useCallback(async () => {
     try {
@@ -2187,7 +2227,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
         setProvisionError('Setup or payment has already started. Your selection was not cancelled. Continue or recover the existing setup; do not start another payment.')
       } else if (error instanceof BillingResponseError && error.billingStatus === 400) {
         setSelectionCancellation('verify')
-        setProvisionError('Cancellation could not be verified. Your selection is retained. Verify ownership again using the same signup request, then retry.')
+        setProvisionError('Cancellation could not be checked. Your selection is kept. Verify your email again, then retry.')
       } else {
         setSelectionCancellation('unknown')
         setProvisionError('Cancellation is not confirmed. Your selection is retained. Retry cancellation to check this exact selection before choosing again.')
@@ -2231,6 +2271,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const handleEmailBack = () => {
     clearEmailProofContext(sentRequestRef.current)
     sentRequestRef.current = null
+    setSentEmailContext(null)
     clearEmailProofContext(emailContinuationRef.current?.context.requestId ?? null)
     setRequestingEmailProof(false)
     setEmailProofBusy(false)
@@ -2338,7 +2379,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   if (paymentRecoveryRequested || (!paymentReceiptReceived && (initialPaymentRecovery || navigation.recovery === 'payment'))) return <PendingPaymentPage onReleased={handleRecoveredPaymentRelease} />
   if (paymentNeedsVerification) return <div className="space-y-4">
     <h1 className="text-xl font-semibold">Verify email to choose a payment method</h1>
-    <p>Payment cancelled. This browser no longer has valid email verification and signed signup terms. Verify your email again to load payment choices.</p>
+    <p>Payment cancelled. Please verify your email again to continue.</p>
     <Button onClick={() => { setPaymentNeedsVerification(false); setStep('account') }}>Verify email again</Button>
   </div>
   // A refusal after an earlier account write with an unknown outcome: the account
@@ -2365,7 +2406,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     return <div className="mx-auto w-full max-w-md space-y-4">
       <SignupRecoveryWarning />
       <h1 className="text-xl font-semibold">Continue your signup safely</h1>
-      <p role="status">Your password and verification proof were not saved. Refreshing has not repeated account creation or started another payment.</p>
+      <p role="status">Your password and email verification were not saved. Refreshing did not create a second account or start another payment.</p>
       {navigation.recovery === 'review' ? <>
         <p>Verify your email again to continue. If you already chose a trial, it may remain reserved briefly; we will not replace a pending payment.</p>
         <Button onClick={() => navigation.clear()}>Verify email again</Button>
@@ -2393,7 +2434,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
           {selectionCancellation === 'confirm' && <Button variant="outline" disabled={provisioning} onClick={() => {
             if (!operationRef.current) setSelectionCancellation(null)
           }}>Keep current selection</Button>}
-          {selectionCancellation === 'verify' && <Button variant="outline" disabled={provisioning} onClick={handleVerifySelectionOwnership}>Verify ownership again</Button>}
+          {selectionCancellation === 'verify' && <Button variant="outline" disabled={provisioning} onClick={handleVerifySelectionOwnership}>Verify email again</Button>}
           {selectionCancellation !== 'confirm' && <Button onClick={() => { setSelectionCancellation(null); setPlanView('confirm') }}>Continue current selection</Button>}
         </section>}
         {step === 'plan' && !selectionCancellation && planView !== 'confirm' && pendingAnnualClaim && <Button variant="outline" disabled={provisioning} className="mb-4 w-full" onClick={() => { setProvisionError(null); setPlanView('confirm') }}>Return to current selection</Button>}
@@ -2432,11 +2473,18 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
               onRememberDeviceChange={setRememberDevice}
             />}
             {(sendingEmail || awaitingEmailProof) && <section aria-label="Email verification" className="flex flex-col items-center justify-center gap-5 py-8 text-center">
+              {!sendingEmail && !emailConfirmedElsewhere && sentEmailContext && <p className="text-sm">We sent a link to <strong className="break-all">{sentEmailContext.email}</strong>.</p>}
               <p role="status" className="text-sm text-[rgb(var(--muted))]">{sendingEmail
                 ? 'Sending verification email...'
                 : emailConfirmedElsewhere
                   ? 'Email confirmed. Continue in the other tab. This tab is safe to close.'
                   : 'Check your email and open the verification link in this browser. Then choose your password.'}</p>
+              {!sendingEmail && !emailConfirmedElsewhere && sentEmailContext && <>
+                <p className="text-sm text-[rgb(var(--muted))]">Not there? Check your spam folder. The link expires in {EMAIL_LINK_LIFETIME_MINUTES} minutes.</p>
+                <Button variant="outline" disabled={emailProofBusy || resendWaitSeconds > 0} onClick={requestNewVerificationEmail}>
+                  {resendWaitSeconds > 0 ? `Resend email in ${Math.floor(resendWaitSeconds / 60)}:${String(resendWaitSeconds % 60).padStart(2, '0')}` : 'Resend email'}
+                </Button>
+              </>}
               <Button variant="outline" onClick={handleEmailBack}>Back</Button>
             </section>}
           </>
@@ -2528,7 +2576,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
             {showReturnFallback && returnTo && (
               <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
                 <p className="font-medium">Browser did not reopen the Android app automatically.</p>
-                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary-text))] underline">
                   Tap here to return to Android
                 </a>
               </div>

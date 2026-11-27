@@ -97,7 +97,7 @@ export function ChangeLoginEmail() {
         />
       </div>
       {result && (
-        <p role={pending ? 'status' : 'alert'} className={`text-xs ${pending ? 'text-[rgb(var(--primary))]' : 'text-red-400'}`}>
+        <p role={pending ? 'status' : 'alert'} className={`text-xs ${pending ? 'text-[rgb(var(--primary-text))]' : 'text-red-400'}`}>
           {MESSAGES[result]}
         </p>
       )}
@@ -106,7 +106,7 @@ export function ChangeLoginEmail() {
         <button
           type="submit"
           disabled={busy}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 max-md:min-h-[44px]"
+          className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 max-md:min-h-[44px]"
         >
           {busy ? 'Sending...' : 'Send confirmation link'}
         </button>
