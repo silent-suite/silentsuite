@@ -653,6 +653,10 @@ export default function SubscriptionPage() {
         ? { title: 'Your subscription has ended.', detail: null }
         : null
 
+  // Billing can keep status trialing after the trial ran out; don't show that as "Trialing".
+  const trialEndsAtMs = data.trial.endsAt ? Date.parse(data.trial.endsAt) : NaN
+  const trialEnded = data.status === 'trialing'
+    && (capabilities.trialExpired || (!data.trial.active && trialEndsAtMs <= Date.now()))
   const isCancelled = data.status === 'cancelled' || data.status === 'expired'
   const hasLiveSubscriptionActions = (data.status === 'active' || data.status === 'trialing')
     && !data.cancelAtPeriodEnd
@@ -682,12 +686,16 @@ export default function SubscriptionPage() {
           <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Subscription</h2>
           {!notice && (
             <span
-              className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[data.status] ?? STATUS_STYLES.none}`}
+              className={`rounded-full px-2 py-0.5 text-xs font-medium ${trialEnded ? STATUS_STYLES.expired : STATUS_STYLES[data.status] ?? STATUS_STYLES.none}`}
             >
-              {STATUS_LABELS[data.status] ?? data.status}
+              {trialEnded ? 'Trial ended' : STATUS_LABELS[data.status] ?? data.status}
             </span>
           )}
         </div>
+
+        {!notice && trialEnded && data.trial.endsAt && Number.isFinite(trialEndsAtMs) && (
+          <p className="text-sm text-[rgb(var(--muted))]">Your free trial ended on {formatDateStr(data.trial.endsAt)}.</p>
+        )}
 
         {expiryRefreshFailed && (
           <div className="space-y-3">

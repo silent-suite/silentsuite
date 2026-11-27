@@ -233,6 +233,24 @@ describe('subscription card clarity', () => {
     expect(screen.queryByText(day(endedTrialAt))).not.toBeInTheDocument()
   })
 
+  it('shows an ended trial without a Billing notice as ended, not Trialing (SIGNUP-01)', async () => {
+    route({ ...endedTrial, accountNotice: undefined, billingDate: null, hostedAccess: 'unknown' })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Trial ended')).toBeInTheDocument()
+    expect(within(card()).getByText(`Your free trial ended on ${day(endedTrialAt)}.`)).toBeInTheDocument()
+    expect(screen.queryByText('Trialing')).not.toBeInTheDocument()
+    expect(screen.queryByText('Your data is safe and read-only.')).not.toBeInTheDocument()
+  })
+
+  it('treats a past trial end date as ended even without trialExpired', async () => {
+    route({ ...endedTrial, accountNotice: undefined, billingDate: null, capabilities: { ...capabilities, canStartPaidSubscription: true } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Trial ended')).toBeInTheDocument()
+    expect(screen.queryByText('Trialing')).not.toBeInTheDocument()
+  })
+
   it('says plainly when paid access has ended', async () => {
     const endedAt = past(3)
     route({
