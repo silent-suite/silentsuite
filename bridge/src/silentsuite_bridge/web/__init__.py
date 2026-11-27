@@ -818,7 +818,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         .container { max-width: 680px; margin: 0 auto; }
         h1 { font-size: 28px; color: #fff; margin-bottom: 4px; }
-        .version { color: #666; font-size: 13px; margin-bottom: 32px; }
+        .version { color: #888; font-size: 13px; margin-bottom: 32px; }
 
         .status-card {
             background: #1a1a1a;
@@ -885,7 +885,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         .url-box label {
             font-size: 12px;
-            color: #666;
+            color: #888;
             display: block;
             margin-bottom: 2px;
         }
@@ -928,7 +928,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             margin-bottom: 8px;
         }
         .fingerprint-box label {
-            color: #666;
+            color: #888;
             display: block;
             font-size: 12px;
             margin-bottom: 4px;
@@ -946,15 +946,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             white-space: pre-wrap;
             word-break: break-word;
         }
-        .fingerprint-row code.hidden { color: #777; font-family: inherit; }
+        .fingerprint-row code.hidden { color: #888; font-family: inherit; }
         .fingerprint-actions {
             display: flex;
             flex-shrink: 0;
             gap: 6px;
         }
         .fingerprint-help {
-            color: #777;
-            font-size: 11px;
+            color: #888;
+            font-size: 12px;
             line-height: 1.4;
             margin-top: 6px;
         }
@@ -1065,14 +1065,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             border-bottom: 1px solid #1a1a1a;
             color: #888;
         }
-        .log-entry .time { color: #555; margin-right: 8px; }
+        .log-entry .time { color: #888; margin-right: 8px; }
         .log-entry .type-sync { color: #4ade80; }
         .log-entry .type-error { color: #ef4444; }
         .log-entry .type-info { color: #60a5fa; }
         .log-empty {
             text-align: center;
             padding: 20px;
-            color: #555;
+            color: #888;
             font-size: 13px;
         }
 
@@ -1157,20 +1157,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <option value="1800">30 min</option>
                 <option value="3600">1 hr</option>
             </select>
-            <span id="syncIntervalStatus" style="font-size:12px;color:#555;"></span>
+            <span id="syncIntervalStatus" style="font-size:12px;color:#888;"></span>
             <span id="syncProgress" style="font-size:12px;color:#888;margin-left:auto;"></span>
         </div>
 
         <div class="status-card">
             <label style="font-size:13px;color:#ccc;"><input type="checkbox" id="e2eeLockPrefix" onchange="updateE2eeLockPrefix(this)"{{E2EE_LOCK_PREFIX_CHECKED}}> Show a lock (🔒) on events, tasks and contacts in your apps</label>
-            <span id="e2eeLockPrefixStatus" style="font-size:12px;color:#555;margin-left:8px;"></span>
+            <span id="e2eeLockPrefixStatus" style="font-size:12px;color:#888;margin-left:8px;"></span>
             <div class="fingerprint-help">Apps update as items change or after a re-sync.</div>
         </div>
 
         <div class="status-card">
             <h3 style="font-size:14px;color:#888;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px;">Experimental</h3>
             <label style="font-size:13px;color:#ccc;"><input type="checkbox" id="experimentalBirthdays" onchange="updateExperimentalBirthdays(this)"{{EXPERIMENTAL_BIRTHDAYS_CHECKED}}> Birthdays calendar</label>
-            <span id="experimentalBirthdaysStatus" style="font-size:12px;color:#555;margin-left:8px;"></span>
+            <span id="experimentalBirthdaysStatus" style="font-size:12px;color:#888;margin-left:8px;"></span>
             <div class="fingerprint-help">Adds a Birthdays calendar made from your contacts. Turn it on per account on the dashboard.</div>
         </div>
         <script>
@@ -1396,7 +1396,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 }
                 select.disabled = true;
                 st.textContent = 'Saving...';
-                st.style.color = '#555';
+                st.style.color = '#888';
                 // The promise is returned so the chain can be awaited in tests.
                 intervalSave.pending = fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({syncInterval: parseInt(val)})})
                     .then(handleJsonResponse)
@@ -1406,7 +1406,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         select.setAttribute('data-saved', acknowledged);
                         select.value = acknowledged;
                         st.textContent = 'Saved';
-                        st.style.color = '#555';
+                        st.style.color = '#888';
                         intervalSave.clearTimer = setTimeout(function() {
                             intervalSave.clearTimer = null;
                             st.textContent = '';
@@ -1437,7 +1437,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 var wanted = box.checked;
                 box.disabled = true;
                 st.textContent = 'Saving...';
-                st.style.color = '#555';
+                st.style.color = '#888';
                 return fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({e2eeLockPrefix: wanted})})
                     .then(handleJsonResponse)
                     .then(function(data) {
@@ -1456,7 +1456,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 var wanted = box.checked;
                 box.disabled = true;
                 st.textContent = 'Saving...';
-                st.style.color = '#555';
+                st.style.color = '#888';
                 return fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({experimentalBirthdays: wanted})})
                     .then(handleJsonResponse)
                     .then(function(data) {
@@ -1653,7 +1653,7 @@ def _render_network_card() -> str:
         )
 
     parts.append(
-        '<div style="margin-top:8px;font-size:12px;color:#666;">'
+        '<div style="margin-top:8px;font-size:12px;color:#888;">'
         'Only this computer can open this page. It answers a request only when '
         'the bridge can show the request arrived on a bound loopback listener '
         '(never a wildcard or remote bind), was accepted on a loopback address on '
@@ -1662,7 +1662,7 @@ def _render_network_card() -> str:
         'port, and changes must carry the page\'s CSRF token. Anything else gets '
         'a plain 404 (not found).'
         '</div>'
-        '<div style="margin-top:8px;font-size:12px;color:#666;">'
+        '<div style="margin-top:8px;font-size:12px;color:#888;">'
         'Your CalDAV/CardDAV address is a listener address above followed by '
         '/&lt;account email&gt;/.'
         '</div>'
