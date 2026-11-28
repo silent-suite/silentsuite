@@ -11,6 +11,7 @@ Original: https://github.com/etesync/etesync-dav
 import hashlib
 import logging
 import os
+import pathlib
 import re
 import secrets
 import sqlite3
@@ -318,11 +319,12 @@ def clear_cached_user(username, db_path=None):
 def list_cached_users():
     """Return usernames that still have rows in the local cache.
 
-    Read-only: never creates the cache file, its tables or the global proxy.
+    Read-only: never creates the cache file, its tables or the global proxy,
+    and never reconnects a closed proxy (that would recreate a missing file).
     """
     with _cache_database_init_lock:
         database = getattr(db.database_proxy, "obj", None)
-        if database is not None:
+        if database is not None and not database.is_closed():
             with db.atomic_connection():
                 if not database.table_exists(models.User._meta.table_name):
                     return []
@@ -330,11 +332,17 @@ def list_cached_users():
                     user.username
                     for user in models.User.select(models.User.username)
                 )
-        path = config.DATABASE_FILE
+        path = database.database if database is not None else config.DATABASE_FILE
         if not os.path.exists(path):
             return []
-        with _private_umask():
-            connection = sqlite3.connect(path, timeout=5.0)
+        uri = pathlib.Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+        try:
+            with _private_umask():
+                connection = sqlite3.connect(uri, timeout=5.0, uri=True)
+        except sqlite3.OperationalError:
+            if not os.path.exists(path):
+                return []
+            raise
         try:
             table = models.User._meta.table_name
             if connection.execute(

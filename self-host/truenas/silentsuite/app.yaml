@@ -1,0 +1,58 @@
+annotations:
+  min_scale_version: 24.10.2.2
+app_version: v0.5.22-beta
+capabilities: []
+categories:
+- productivity
+changelog_url: https://github.com/silent-suite/silentsuite/releases
+date_added: '2026-11-27'
+description: End-to-end encrypted calendar, contacts, tasks and notes, built on the
+  Etebase protocol.
+home: https://silentsuite.io
+host_mounts: []
+icon: https://media.sys.truenas.net/apps/silentsuite/icons/icon.svg
+keywords:
+- calendar
+- contacts
+- tasks
+- notes
+- etebase
+- encryption
+lib_version: 2.3.22
+lib_version_hash: 9e1c926d174eeac7c158a956a7aa3e2d87b01c2e99c733dd500f388468e95213
+maintainers:
+- email: dev@truenas.com
+  name: truenas
+  url: https://www.truenas.com/
+name: silentsuite
+run_as_context:
+- description: Container [postgres] runs as non-root user and group.
+  gid: 999
+  group_name: Host group is [docker]
+  uid: 999
+  user_name: Host user is [netdata]
+- description: Container [router] runs as non-root user and group.
+  gid: 101
+  group_name: Host group is [systemd-timesync]
+  uid: 101
+  user_name: Host user is [systemd-timesync]
+- description: Container [server] can run as any non-root user and group.
+  gid: 568
+  group_name: Host group is [apps]
+  uid: 568
+  user_name: Host user is [apps]
+- description: Container [web] runs as non-root user and group.
+  gid: 1001
+  group_name: Host group is [unknown (1001)]
+  uid: 1001
+  user_name: Host user is [unknown (1001)]
+screenshots: []
+sources:
+- https://apps.truenas.com/catalog/silentsuite_community/
+- https://github.com/silent-suite/silentsuite
+- https://github.com/silent-suite/silentsuite/pkgs/container/silentsuite-server
+- https://github.com/silent-suite/silentsuite/pkgs/container/silentsuite-web-selfhost
+title: SilentSuite
+train: community
+version: 1.0.0
+risks: []

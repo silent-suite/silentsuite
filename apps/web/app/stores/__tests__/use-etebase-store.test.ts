@@ -1963,6 +1963,93 @@ describe('useEtebaseStore.refreshCollection', () => {
   })
 })
 
+describe('useEtebaseStore item listing page cursor guard', () => {
+  // A runaway listing on code without the guard must fail the test, not hang the worker.
+  const RUNAWAY = 50
+
+  function stuckPage(stoken: string | null) {
+    let calls = 0
+    return async () => {
+      calls += 1
+      if (calls > RUNAWAY) throw new Error('runaway listing')
+      return { stoken, done: false }
+    }
+  }
+
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      restoreBlocked: false,
+      syncEngine: null,
+    })
+  })
+
+  it.each([
+    ['a repeated', 'same-stoken'],
+    ['a missing', null],
+  ])('fails the initial domain load on %s stoken while not done', async (_label, stoken) => {
+    const { secureGet } = await import('@/app/lib/secure-storage')
+    vi.mocked(secureGet).mockResolvedValue('raw-session')
+    coreMock.restoreSession.mockResolvedValue({ id: 'account' })
+    coreMock.getAccountFingerprint.mockReturnValue('fingerprint')
+    coreMock.listCollections.mockImplementation(async (_account, type) => [mockCollection(type)])
+    const page = stuckPage(stoken)
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => (
+      collection.uid === 'etebase.vevent' ? { items: [], ...(await page()) } : { items: [], stoken: null, done: true }
+    ))
+    coreMock.SyncEngine.mockImplementation(function (this: any) {
+      this.trackCollection = vi.fn()
+      this.onStokenAdvance = vi.fn()
+      this.start = vi.fn(async () => {})
+    })
+
+    await useEtebaseStore.getState().initialize()
+
+    const calendarCalls = coreMock.listItems.mock.calls.filter((call) => call[1].uid === 'etebase.vevent')
+    expect(calendarCalls.length).toBeLessThanOrEqual(2)
+    expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('failed')
+    expect(useEtebaseStore.getState().domainLoadState.tasks).toBe('loaded')
+  })
+
+  it.each([
+    ['a repeated', 'same-stoken'],
+    ['a missing', null],
+  ])('fails refreshCollection on %s stoken instead of reporting a complete listing', async (_label, stoken) => {
+    const page = stuckPage(stoken)
+    const list = vi.fn(async () => ({ data: [mockItem('item-1', 'first page')], ...(await page()) }))
+    const account = {
+      getCollectionManager: () => ({
+        fetch: vi.fn(async (uid: string) => ({ uid })),
+        getItemManager: () => ({ list }),
+      }),
+    }
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], notes: [], preferences: [] },
+      isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
+    })
+
+    await useEtebaseStore.getState().refreshCollection('calendar', 'col-1')
+
+    expect(list.mock.calls.length).toBeLessThanOrEqual(2)
+    expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('failed')
+  })
+
+  it('caps the number of pages even when every stoken is new', async () => {
+    const { nextItemPageStoken } = await import('../use-etebase-store')
+    const next = nextItemPageStoken(3)
+    expect(next({ stoken: 'a', done: false })).toBe('a')
+    expect(next({ stoken: 'b', done: false })).toBe('b')
+    expect(() => next({ stoken: 'c', done: false })).toThrow(/more than 3 pages/)
+  })
+})
+
 describe('useEtebaseStore.reconcileCollections', () => {
   beforeEach(() => {
     offlineQueueMock.getAll.mockReset().mockResolvedValue([])

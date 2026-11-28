@@ -118,8 +118,13 @@ function readOverride(event: CalendarEvent, block: string[]): { instance: Date; 
         description: topLevelProperty(block, 'DESCRIPTION') ? changed.description : event.description,
         location: topLevelProperty(block, 'LOCATION') ? changed.location : event.location,
         categories: topLevelProperty(block, 'CATEGORIES') ? changed.categories : event.categories,
+        // Without its own end an override keeps the series' length, except a date-only one in a
+        // timed series, which lasts its day (RFC 5545 §3.6.1).
         endDate: topLevelProperty(block, 'DTEND') || topLevelProperty(block, 'DURATION')
-          ? changed.endDate : occurrenceEnd(event, changed.startDate),
+          ? changed.endDate
+          : changed.allDay && !event.allDay
+            ? new Date(changed.startDate.getFullYear(), changed.startDate.getMonth(), changed.startDate.getDate() + 1)
+            : occurrenceEnd(event, changed.startDate),
       },
     }
   } catch {
@@ -130,8 +135,9 @@ function readOverride(event: CalendarEvent, block: string[]): { instance: Date; 
 
 /**
  * The occurrence of `master` at `instance` as a same-UID override moved or changed it: the series
- * with the override's start, end, title, description, location and labels, as the grid shows it.
- * Undefined when no readable override replaces that occurrence.
+ * with the override's start, end, time form (all-day, zone or floating), title, description,
+ * location and labels, as the grid shows it. Undefined when no readable override replaces that
+ * occurrence.
  */
 export function overriddenOccurrence(master: CalendarEvent, instance: Date): CalendarEvent | undefined {
   for (const block of master.overrides ?? []) {
@@ -142,11 +148,17 @@ export function overriddenOccurrence(master: CalendarEvent, instance: Date): Cal
       ...master,
       startDate: changed.startDate,
       endDate: changed.endDate,
+      allDay: changed.allDay,
       title: changed.title,
       description: changed.description,
       location: changed.location,
       categories: changed.categories,
     }
+    // The override's own DTSTART form wins: a moved occurrence can be timed in an all-day series.
+    if (changed.timezone) occurrence.timezone = changed.timezone
+    else delete occurrence.timezone
+    if (changed.floating) occurrence.floating = true
+    else delete occurrence.floating
     if (changed.startWallClock) occurrence.startWallClock = changed.startWallClock
     else delete occurrence.startWallClock
     return occurrence

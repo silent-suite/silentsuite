@@ -65,6 +65,7 @@ def test_unknown_option_exits_2_without_starting(argv, shown, monkeypatch, capsy
         ["--no-tray"],
         ["--background"],
         windows_background.child_argv([], argv=["silentsuite-bridge", "--background", "--no-tray"]),
+        windows_background.child_argv([], argv=["silentsuite-bridge", "--server", "https://dav.example", "--background"]),
         # Arguments the OS or a frozen runtime may add.
         ["-psn_0_12345"],
         ["--multiprocessing-fork", "parent_pid=1", "pipe_handle=2"],

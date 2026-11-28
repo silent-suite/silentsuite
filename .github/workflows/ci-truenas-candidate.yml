@@ -1,0 +1,71 @@
+name: CI TrueNAS Candidate
+
+# Checks the TrueNAS community-train app in self-host/truenas with TrueNAS's own
+# renderer and CI script, then probes the running stack. No publication, release
+# or deployment. GitHub-hosted runner only: the renderer mounts the Docker socket.
+on:
+  pull_request:
+    paths:
+      - "self-host/truenas/**"
+      - "scripts/truenas-candidate-*"
+      - ".github/workflows/ci-truenas-candidate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: truenas-candidate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    name: TrueNAS app candidate (amd64)
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      # truenas/apps master, 2026-11-27 (contribution guide, library 2.3.22, ci.py).
+      TRUENAS_APPS_SHA: bf0166f91e64e51e5d428d3423e20bec54e4df0c
+      # ghcr.io/truenas/apps_validation:slim on 2026-11-27, pinned.
+      RENDERER_IMAGE: ghcr.io/truenas/apps_validation@sha256:7e572762185554700b1357250ff2dca995695ac556cc9a82ffbedeb976223c26
+
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Checkout pinned truenas/apps
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: truenas/apps
+          ref: ${{ env.TRUENAS_APPS_SHA }}
+          path: .truenas-apps
+          persist-credentials: false
+
+      - name: Assert truenas/apps revision
+        run: test "$(git -C .truenas-apps rev-parse HEAD)" = "$TRUENAS_APPS_SHA"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install hash-locked PyYAML
+        run: |
+          cat > "$RUNNER_TEMP/truenas-requirements.txt" <<'REQUIREMENTS'
+          PyYAML==6.0.3 \
+              --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
+              --hash=sha256:9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28
+          REQUIREMENTS
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r "$RUNNER_TEMP/truenas-requirements.txt"
+
+      - name: TrueNAS checks and stack probes
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" RUNNER_TEMP="$RUNNER_TEMP" \
+            bash scripts/truenas-candidate-smoke.sh "$GITHUB_WORKSPACE/.truenas-apps" "$RENDERER_IMAGE"

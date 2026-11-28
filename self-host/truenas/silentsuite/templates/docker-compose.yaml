@@ -1,0 +1,118 @@
+{% from "macros/router.conf" import router_conf %}
+{% from "macros/server-start.sh" import server_start %}
+{% set tpl = ix_lib.base.render.Render(values) %}
+
+{# The web and server images are one release: refuse to render a mixed pair. #}
+{% if values.images.image.tag.split("@")[0] != values.images.web_image.tag.split("@")[0] %}
+  {% do tpl.funcs.fail("The SilentSuite server and web images must use the same release tag.") %}
+{% endif %}
+
+{# The database password is immutable after install, so refuse values the server cannot use.
+   Fixed message: never echo the value. #}
+{% set db_password = values.silentsuite.db_password %}
+{% if not db_password or db_password != db_password.strip() or "\r" in db_password or "\n" in db_password or "\0" in db_password %}
+  {% do tpl.funcs.fail("The database password must not be empty, start or end with spaces, or contain line breaks.") %}
+{% endif %}
+
+{# Creating an account needs an https:// origin: a TrueNAS certificate, or the user's own proxy. #}
+{% if not values.network.certificate_id and not values.network.behind_https_proxy %}
+  {% do tpl.funcs.fail("Select a certificate, or enable 'Behind My Own HTTPS Reverse Proxy'. SilentSuite accounts can only be created over HTTPS.") %}
+{% endif %}
+{% if values.network.certificate_id and values.network.behind_https_proxy %}
+  {% do tpl.funcs.fail("Choose one: a certificate (SilentSuite serves HTTPS) or 'Behind My Own HTTPS Reverse Proxy' (plain HTTP for your proxy), not both.") %}
+{% endif %}
+
+{% set ss_net = tpl.networks.create_internal("silentsuite-net") %}
+{% set scheme = "https" if values.network.certificate_id else "http" %}
+{% set perm_container = tpl.deps.perms(values.consts.perms_container_name) %}
+
+{# -- PostgreSQL -- #}
+{% set pg_config = {
+  "user": values.consts.db_user,
+  "password": values.silentsuite.db_password,
+  "database": values.consts.db_name,
+  "volume": values.storage.postgres_data,
+} %}
+{% set postgres = tpl.deps.postgres(values.consts.postgres_container_name, "postgres_16_image", pg_config, perm_container) %}
+{% do postgres.container.add_network(ss_net) %}
+
+{# -- Etebase sync server -- #}
+{% set server = tpl.add_container(values.consts.server_container_name, "image") %}
+{% do server.add_network(ss_net) %}
+{% do server.set_user(values.consts.server_user, values.consts.server_group) %}
+{% do server.remove_devices() %}
+{% do server.configs.add("server-start.sh", server_start(values), "/package/server-start.sh", "0555") %}
+{% do server.set_entrypoint(["/bin/sh", "/package/server-start.sh"]) %}
+{% do server.healthcheck.set_custom_test([
+  "CMD", "python", "-c",
+  "import http.client,sys; c=http.client.HTTPConnection('127.0.0.1',%d,timeout=5); c.request('GET','/api/v1/authentication/is_etebase/'); sys.exit(0 if c.getresponse().status<500 else 1)" | format(values.consts.server_port)
+]) %}
+{% do server.depends.add_dependency(values.consts.postgres_container_name, "service_healthy") %}
+{% do server.environment.add_env("ETEBASE_EASY_CONFIG_PATH", "/run/silentsuite/etebase-server.ini") %}
+{% do server.environment.add_env("SILENTSUITE_DB_NAME", values.consts.db_name) %}
+{% do server.environment.add_env("SILENTSUITE_DB_USER", values.consts.db_user) %}
+{% do server.environment.add_env("SILENTSUITE_DB_PASSWORD", values.silentsuite.db_password) %}
+{% do server.environment.add_env("SILENTSUITE_DB_HOST", values.consts.postgres_container_name) %}
+{% do server.environment.add_env("SILENTSUITE_DB_PORT", postgres.get_port()) %}
+{% do server.environment.add_env("ETEBASE_OWNER_PASSWORD", values.silentsuite.installation_password) %}
+{% do server.environment.add_env("ETEBASE_DISABLE_DJANGO_ADMIN", "true") %}
+{% do server.environment.add_env("CORS_ALLOWED_ORIGINS", "") %}
+{# TLS, when enabled, ends at the router; the router reaches the server over the app network. #}
+{% do server.environment.add_env("ETEBASE_SECURE_SSL_REDIRECT", "false") %}
+{% do server.environment.add_user_envs(values.silentsuite.additional_envs) %}
+{% do server.add_storage("/data", values.storage.data) %}
+{# Whether TrueNAS sets the data ownership (the permissions action below applies). Only then
+   may the wrapper tighten the directory; otherwise it checks and never changes it. #}
+{% set data = values.storage.data %}
+{% set data_managed = (data.type == "ix_volume" and not data.ix_volume_config.get("acl_enable", false) and data.ix_volume_config.get("auto_permissions", true))
+  or (data.type == "host_path" and not data.host_path_config.get("acl_enable", false) and data.host_path_config.get("auto_permissions", false)) %}
+{% do server.environment.add_env("SILENTSUITE_DATA_PERMISSIONS", "managed" if data_managed else "operator") %}
+{% do server.add_storage("/run/silentsuite", {"type": "tmpfs", "tmpfs_config": {"size": 1, "mode": "0700", "uid": values.consts.server_user, "gid": values.consts.server_group}}) %}
+{% do perm_container.add_or_skip_action("data", values.storage.data, {"uid": values.consts.server_user, "gid": values.consts.server_group, "mode": "check"}) %}
+
+{# -- Web app -- #}
+{% set web = tpl.add_container(values.consts.web_container_name, "web_image") %}
+{% do web.add_network(ss_net) %}
+{% do web.set_user(values.consts.web_user, values.consts.web_group) %}
+{% do web.remove_devices() %}
+{% do web.healthcheck.set_custom_test([
+  "CMD", "node", "-e",
+  "fetch('http://127.0.0.1:%d/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))" | format(values.consts.web_port)
+]) %}
+
+{# -- Router: the only published port -- #}
+{% set router = tpl.add_container(values.consts.router_container_name, "router_image") %}
+{% do router.add_network(ss_net) %}
+{% do router.set_user(values.consts.router_user, values.consts.router_group) %}
+{% do router.remove_devices() %}
+{% do router.configs.add("nginx.conf", router_conf(values), "/etc/nginx/nginx.conf") %}
+{% if values.network.certificate_id %}
+  {% set cert = values.ix_certificates[values.network.certificate_id] %}
+  {% do router.configs.add("private", cert.privatekey, values.consts.ssl_key_path) %}
+  {% do router.configs.add("public", cert.certificate, values.consts.ssl_cert_path) %}
+{% endif %}
+{% do router.healthcheck.set_test("wget", {"port": values.consts.router_port, "path": "/api/v1/authentication/is_etebase/", "scheme": scheme}) %}
+{% do router.depends.add_dependency(values.consts.server_container_name, "service_healthy") %}
+{% do router.depends.add_dependency(values.consts.web_container_name, "service_healthy") %}
+{% do router.add_port(values.network.web_port, {"container_port": values.consts.router_port}) %}
+
+{% if perm_container.has_actions() %}
+  {% do perm_container.activate() %}
+  {% do server.depends.add_dependency(values.consts.perms_container_name, "service_completed_successfully") %}
+  {% do postgres.add_dependency(values.consts.perms_container_name, "service_completed_successfully") %}
+{% endif %}
+
+{# In proxy mode the direct port is plain HTTP, where sign-up is refused: link nothing there. #}
+{% if values.network.certificate_id %}
+  {% do tpl.portals.add(values.network.web_port, {"scheme": "https"}) %}
+{% endif %}
+
+{% do tpl.notes.add_info("Create your account in the web app: choose Sign up and enter the installation password you set for this app. Your account password then encrypts your data and is never sent to this server, so keep it safe; it cannot be recovered.") %}
+{% if values.network.certificate_id %}
+  {% do tpl.notes.add_info("Mobile and desktop apps connect only with a certificate they trust. The built-in self-signed TrueNAS certificate works in a browser after you accept its warning, but not in those apps.") %}
+{% else %}
+  {% do tpl.notes.add_warning("SilentSuite serves plain HTTP on this port for your own HTTPS reverse proxy or tunnel. Sign up and connect apps through the proxy's https:// address; signing up over plain http:// on the local network is refused.") %}
+{% endif %}
+{% do tpl.notes.add_info("Back up both storage locations together: stop the app, then snapshot or copy the data and the Postgres data. To restore onto a fresh install, use the same database password, select the certificate (or the proxy option) again, and point both storage fields at the restored data.") %}
+
+{{ tpl.render() | tojson }}
