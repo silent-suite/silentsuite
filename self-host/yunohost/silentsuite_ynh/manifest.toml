@@ -1,0 +1,84 @@
+#:schema https://raw.githubusercontent.com/YunoHost/apps/main/schemas/manifest.v2.schema.json
+
+packaging_format = 2
+
+id = "silentsuite"
+name = "SilentSuite"
+description.en = "End-to-end encrypted calendar, contacts, tasks and notes"
+description.fr = "Agenda, contacts, tâches et notes chiffrés de bout en bout"
+
+version = "0.5.20-beta~ynh1"
+
+maintainers = []
+
+[upstream]
+license = "AGPL-3.0-only"
+website = "https://silentsuite.io"
+admindoc = "https://github.com/silent-suite/silentsuite/blob/main/self-host/SELF-HOSTING.md"
+code = "https://github.com/silent-suite/silentsuite"
+
+[integration]
+yunohost = ">= 12.1.17"
+helpers_version = "2.1"
+architectures = ["amd64"]
+multi_instance = false
+ldap = false
+sso = false
+disk = "1G"
+ram.build = "300M"
+ram.runtime = "500M"
+
+[install]
+    [install.domain]
+    type = "domain"
+
+    [install.init_main_permission]
+    type = "group"
+    default = "all_users"
+
+[resources]
+    [resources.system_user]
+
+    [resources.install_dir]
+    owner = "root:rwx"
+    group = "__APP__:rx"
+
+    [resources.data_dir]
+
+    [resources.ports]
+    server.default = 3735
+    web.default = 3000
+
+    [resources.permissions]
+    main.url = "/"
+    main.auth_header = false
+
+    # Native Etebase clients (Android, Bridge) cannot pass the SSO: only their protocol paths.
+    api.url = "/api/v1/authentication/is_etebase/"
+    api.additional_urls = [
+        "/api/v1/authentication/login_challenge/",
+        "/api/v1/authentication/login/",
+        "/api/v1/authentication/logout/",
+        "/api/v1/authentication/change_password/",
+        "/api/v1/authentication/dashboard_url/",
+        "/api/v1/collection/",
+        "/api/v1/invitation/",
+        "/api/v1/ws/",
+    ]
+    api.allowed = "visitors"
+    api.protected = true
+    api.show_tile = false
+    api.auth_header = false
+
+    owner.url = "/api/v1/owner/"
+    owner.additional_urls = ["/admin/"]
+    owner.allowed = "admins"
+    owner.protected = true
+    owner.show_tile = false
+    owner.auth_header = false
+
+    [resources.apt]
+    packages = "postgresql, skopeo, umoci"
+
+    [resources.database]
+    type = "postgresql"

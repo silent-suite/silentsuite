@@ -1,0 +1,66 @@
+#!/bin/bash
+
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+source _common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# INITIALIZE AND STORE SETTINGS
+#=================================================
+
+# Installation password (needed to create accounts) and the separate signing material
+# for its signup grants. Both names match YunoHost's operation-log redaction; the
+# script trace in yunohost-cli.log is not redacted, so it stays off while they exist here.
+_silentsuite_xtrace_off
+owner_password=$(ynh_string_random --length=40)
+registration_token=$(ynh_string_random --length=64)
+ynh_app_setting_set --key=owner_password --value="$owner_password"
+ynh_app_setting_set --key=registration_token --value="$registration_token"
+_silentsuite_xtrace_restore
+
+#=================================================
+# DOWNLOAD, CHECK AND UNPACK SOURCE
+#=================================================
+ynh_script_progression "Fetching and verifying the SilentSuite images..."
+
+_silentsuite_fetch_images
+_silentsuite_promote_images
+_silentsuite_remove_old_images
+
+#=================================================
+# APP INITIAL CONFIGURATION
+#=================================================
+ynh_script_progression "Adding $app's configuration files..."
+
+_silentsuite_add_config
+
+#=================================================
+# SYSTEM CONFIGURATION
+#=================================================
+ynh_script_progression "Adding system configurations related to $app..."
+
+ynh_config_add_nginx
+
+ynh_config_add_systemd --service="$app-server" --template="server.service"
+ynh_config_add_systemd --service="$app-web" --template="web.service"
+
+yunohost service add "$app-server" --description="SilentSuite server"
+yunohost service add "$app-web" --description="SilentSuite web app"
+
+_silentsuite_set_permissions
+
+#=================================================
+# START SYSTEMD SERVICE
+#=================================================
+ynh_script_progression "Starting $app's systemd services..."
+
+_silentsuite_start
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_script_progression "Installation of $app completed"

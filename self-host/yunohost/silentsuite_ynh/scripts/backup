@@ -1,0 +1,57 @@
+#!/bin/bash
+
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+# Keep this path for calling _common.sh inside the execution's context of backup and restore scripts
+source ../settings/scripts/_common.sh
+source /usr/share/yunohost/helpers
+
+ynh_print_info "Declaring files to be backed up..."
+
+#=================================================
+# BACKUP THE APP MAIN DIR
+#=================================================
+
+# The image trees are included so a restore works offline.
+ynh_backup "$install_dir"
+
+#=================================================
+# BACKUP THE DATA DIR
+#=================================================
+
+ynh_backup "$data_dir"
+
+#=================================================
+# BACKUP SYSTEM CONFIGURATION
+#=================================================
+
+ynh_backup "/etc/nginx/conf.d/$domain.d/$app.conf"
+
+ynh_backup "/etc/systemd/system/$app-server.service"
+ynh_backup "/etc/systemd/system/$app-web.service"
+
+#=================================================
+# BACKUP THE POSTGRESQL DATABASE
+#=================================================
+ynh_print_info "Backing up the PostgreSQL database..."
+
+# Right before an upgrade YunoHost takes a safety backup named <app>-pre-upgrade1 or -2,
+# and restores it if the upgrade fails. For that backup only, stop the services first, so
+# no sync write can be accepted after this dump and then lost by that restore. The upgrade
+# (or the restore) starts them again.
+case "$(basename "${YNH_BACKUP_DIR:-}")" in
+    "$app-pre-upgrade1" | "$app-pre-upgrade2")
+        ynh_systemctl --service="$app-web" --action="stop"
+        ynh_systemctl --service="$app-server" --action="stop"
+        ;;
+esac
+
+ynh_psql_dump_db > db.sql
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_print_info "Backup script completed for $app. (YunoHost will then actually copy those files to the archive)."

@@ -1357,7 +1357,14 @@ def main():
             print("Configured accounts:")
             for user in users:
                 print(f"- {user} ({creds.get_server_url(user)})")
-        signed_out = list_signed_out_accounts(credentials=creds)
+        try:
+            signed_out = list_signed_out_accounts(credentials=creds)
+        except Exception:  # noqa: BLE001 - configured accounts are already listed
+            print(
+                "Warning: could not read the local cache, so signed-out accounts are not listed.",
+                file=sys.stderr,
+            )
+            signed_out = []
         if signed_out:
             print("Signed out, local copy kept:")
             for user in signed_out:

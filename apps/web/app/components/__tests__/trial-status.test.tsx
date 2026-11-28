@@ -34,7 +34,10 @@ vi.mock('@/app/components/CalendarListPanel', () => ({ CalendarListPanel: () => 
 vi.mock('@/app/components/TaskListPanel', () => ({ TaskListPanel: () => null }))
 vi.mock('@/app/components/ContactListPanel', () => ({ ContactListPanel: () => null }))
 vi.mock('@/app/components/NotebookListPanel', () => ({ NotebookListPanel: () => null }))
-vi.mock('@/app/components/OnboardingChecklist', () => ({ OnboardingChecklist: () => null }))
+vi.mock('@/app/components/OnboardingChecklist', () => ({
+  OnboardingChecklist: () => null,
+  OnboardingChecklistAt: ({ width }: { width: string }) => <div>checklist {width}</div>,
+}))
 
 const NOW = new Date('2026-10-30T12:00:00.000Z')
 const HOUR = 3_600_000

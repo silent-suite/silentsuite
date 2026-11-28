@@ -27,13 +27,21 @@ vi.mock('@/app/components/CalendarListPanel', () => ({ CalendarListPanel: () => 
 vi.mock('@/app/components/TaskListPanel', () => ({ TaskListPanel: () => null }))
 vi.mock('@/app/components/ContactListPanel', () => ({ ContactListPanel: () => null }))
 vi.mock('@/app/components/NotebookListPanel', () => ({ NotebookListPanel: () => null }))
-vi.mock('@/app/components/OnboardingChecklist', () => ({ OnboardingChecklist: () => null }))
+vi.mock('@/app/components/OnboardingChecklist', () => ({
+  OnboardingChecklist: () => null,
+  OnboardingChecklistAt: ({ width }: { width: string }) => <div>checklist {width}</div>,
+}))
 
 describe('Sidebar preference readiness', () => {
   beforeEach(() => {
     state.preferenceStatus = 'loading'
     state.miniCalendar.mockClear()
     useExperimentalStore.setState({ hydrated: true, notesAccounts: [] })
+  })
+
+  it('keeps its onboarding checklist to md and up, leaving phones to the settings copy', () => {
+    render(<Sidebar />)
+    expect(screen.getByText('checklist md-up')).toBeInTheDocument()
   })
 
   it('only exposes Notes after opting in', () => {
