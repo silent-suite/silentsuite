@@ -8,10 +8,10 @@ Once set up, your SilentSuite data syncs directly into Android's system calendar
 
 ## Install
 
-The next Android release requires **Android 10 (API 29) or newer**. Devices running
-Android 9 or older stay on their last compatible release, **v0.5.15-beta**, and
-cannot install subsequent app updates. This does not disable an existing
-installation or promise ongoing maintenance of the older release.
+Since v0.5.16-beta the app requires **Android 10 (API 29) or newer**. Devices
+running Android 9 or older can stay on **v0.5.15-beta**, the last release that
+supports them, but cannot install later updates. This does not disable an existing
+installation, and the older release is not promised further fixes.
 
 Choose the install channel you want to keep using for updates. Google Play is
 the simplest option for most people. F-Droid, Obtainium, Zapstore, and direct
@@ -212,7 +212,7 @@ With the default settings, an edit you save on mobile data waits for Wi-Fi unles
 - A sync you start from Android's own account settings counts as a calendar, contact, or task sync here, so notes follow **Automatic Notes sync**.
 - Coming back onto Wi-Fi does not sync notes on its own, and there is no separate background schedule for notes yet. If the other services do not sync on this device, notes refresh when you open the Notes screen, save a note, pull to refresh, tap **Refresh**, or tap **Sync now** on the account screen, as the settings above allow.
 - If **Sync over WiFi only** (under **Settings**, **Sync**) is on for the account, notes sync by themselves only on Wi-Fi, whatever **Automatic Notes sync** says. If a network name is also saved there under **Saved WiFi network**, notes do not sync by themselves until you remove it, because Android does not give the app network names. Neither affects syncs you start.
-- When notes are not syncing by themselves on the connection Android reports, the notebook list says so, names the setting behind it, and says whether pulling down will try a sync.
+- When notes are not syncing by themselves on the connection Android reports, the notebook list says so in one line, including whether pulling down will sync now, and the Notes row on the account screen says **Waiting for Wi-Fi**.
 
 ## Source Code
 

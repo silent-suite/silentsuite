@@ -143,6 +143,16 @@ class LoginLifecycleContractTest {
         }
     }
 
+    @Test fun signInFailureDialogsUseSignInTitleNotEncryptionSetupTitle() {
+        listOf("DetectConfigurationFragment.kt", "LoginCredentialsChangeFragment.kt").forEach { name ->
+            val source = File(sourceRoot, name).readText()
+            val dialog = source.substringAfter("class NothingDetectedFragment").substringBefore("companion object")
+
+            assertTrue(dialog.contains("setTitle(R.string.login_failed_title)"))
+            assertFalse(dialog.contains("R.string.setting_up_encryption"))
+        }
+    }
+
     @Test fun changedCredentialsFailureCanOpenLogsWithoutPassingRawPayload() {
         val source = File(sourceRoot, "LoginCredentialsChangeFragment.kt").readText()
         val dialog = source.substringAfter("class NothingDetectedFragment").substringBefore("companion object")
