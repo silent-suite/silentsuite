@@ -240,4 +240,22 @@ describe('NotificationProvider schedules zone-correct alarms for a UTC-anchored 
     view.unmount()
   })
 
+  it('follows a moved occurrence and skips a cancelled one', async () => {
+    vi.setSystemTime(new Date('2026-03-09T12:00:00Z'))
+    state.events = [deserializeCalendarEvent(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+      'BEGIN:VEVENT', 'UID:moved', 'SUMMARY:Daily', 'DTSTART:20260309T180000Z', 'DTEND:20260309T190000Z',
+      'RRULE:FREQ=DAILY;COUNT=3', 'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT15M', 'END:VALARM', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:moved', 'RECURRENCE-ID:20260310T180000Z', 'DTSTART:20260310T200000Z', 'DTEND:20260310T210000Z',
+      'SUMMARY:Moved', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:moved', 'RECURRENCE-ID:20260311T180000Z', 'STATUS:CANCELLED', 'END:VEVENT',
+      'END:VCALENDAR'].join('\r\n'))]
+    const view = render(<NotificationProvider>{null}</NotificationProvider>)
+    await flushAsync()
+    expect(scheduleMessages().at(-1)?.map(a => [a.triggerAt, a.title])).toEqual([
+      [ms('2026-03-09T17:45:00Z'), 'Daily'],
+      [ms('2026-03-10T19:45:00Z'), 'Moved'],
+    ])
+    view.unmount()
+  })
+
 })
