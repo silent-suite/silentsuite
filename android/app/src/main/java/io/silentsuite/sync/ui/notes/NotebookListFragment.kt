@@ -346,8 +346,9 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
     }
 
     /**
-     * The line that says Notes do not sync by themselves on the network the device reports, and
-     * what pulling down would do (answer 5 of 2026-10-12 on #709). It is decided again on every
+     * The one sentence that says Notes do not sync by themselves on the network the device reports,
+     * and whether pulling down would sync now (answer 5 of 2026-10-12 on #709). Each notebook row
+     * shows its own count of waiting changes. It is decided again on every
      * reload and at no other time: nothing here listens for network changes, so it can be out of
      * date while the screen stays open. Without a reading there is no line. [waiting] is the sum of
      * the rows' counts, so it leaves out what the Unsynced text row counts.
@@ -356,20 +357,15 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
         val parts = network?.let { NotesNetworkPolicy.notice(waiting, it.settings, it.account, it.reading) }.orEmpty()
         renderedNetworkNotice = parts
         val line = view?.findViewById<TextView>(R.id.notebooks_network_notice) ?: return
-        line.visibility = if (parts.isEmpty()) View.GONE else View.VISIBLE
-        line.text = parts.joinToString(" ") { noticeText(it, waiting) }
+        val sentence = NotesNetworkPolicy.line(parts)
+        line.visibility = if (sentence == null) View.GONE else View.VISIBLE
+        line.text = sentence?.let { getString(noticeText(it)) }.orEmpty()
     }
 
-    private fun noticeText(part: NotesNetworkPolicy.NoticePart, waiting: Int): String = when (part) {
-        NotesNetworkPolicy.NoticePart.CHANGES_WAITING ->
-            resources.getQuantityString(R.plurals.notes_network_changes_waiting, waiting, waiting)
-        NotesNetworkPolicy.NoticePart.MAY_BE_OUT_OF_DATE -> getString(R.string.notes_network_may_be_out_of_date)
-        NotesNetworkPolicy.NoticePart.NOTES_SETTING -> getString(R.string.notes_network_notes_setting)
-        NotesNetworkPolicy.NoticePart.ACCOUNT_WIFI_ONLY -> getString(R.string.notes_network_account_wifi_only)
-        NotesNetworkPolicy.NoticePart.NO_WIFI_REPORTED -> getString(R.string.notes_network_no_wifi_reported)
-        NotesNetworkPolicy.NoticePart.ACCOUNT_NETWORK_NAME -> getString(R.string.notes_network_account_network_name)
-        NotesNetworkPolicy.NoticePart.TRY_NOW -> getString(R.string.notes_network_try_now)
-        NotesNetworkPolicy.NoticePart.SYNC_NOW_NEEDS_WIFI -> getString(R.string.notes_network_sync_now_needs_wifi)
+    private fun noticeText(line: NotesNetworkPolicy.NoticeLine): Int = when (line) {
+        NotesNetworkPolicy.NoticeLine.WAITING_FOR_WIFI_TRY_NOW -> R.string.notes_network_waiting_wifi_try_now
+        NotesNetworkPolicy.NoticeLine.WAITING_FOR_WIFI -> R.string.notes_network_waiting_wifi
+        NotesNetworkPolicy.NoticeLine.NETWORK_NAME -> R.string.notes_network_name_saved
     }
 
     private fun renderEmptyState() {

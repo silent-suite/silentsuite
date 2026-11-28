@@ -94,4 +94,40 @@ public class UnbundledTimeZonesTest {
         assertEquals(String.join("\n", failures), 0, failures.size());
         assertNotNull(registry.getTimeZone("Europe/Kyiv"));
     }
+
+    /**
+     * The legacy SystemV IDs are aliases (tz.alias), so the sweep above skips them. Each resolves
+     * to a zone with its offset: fixed offsets to Etc/GMT+N, the DST ones to the zones IANA's
+     * old "systemv" file linked them to.
+     */
+    @Test
+    public void systemVAliasesResolveToTheirZones() {
+        final TimeZoneRegistry registry = TimeZoneRegistryFactory.getInstance().createRegistry();
+        final String[][] aliases = {
+                // ID, expected zone, standard offset (hours), DST
+                {"SystemV/AST4", "Etc/GMT+4", "-4", "false"},
+                {"SystemV/AST4ADT", "America/Halifax", "-4", "true"},
+                {"SystemV/CST6", "Etc/GMT+6", "-6", "false"},
+                {"SystemV/CST6CDT", "America/Chicago", "-6", "true"},
+                {"SystemV/EST5", "Etc/GMT+5", "-5", "false"},
+                {"SystemV/EST5EDT", "America/New_York", "-5", "true"},
+                {"SystemV/HST10", "Pacific/Honolulu", "-10", "false"},
+                {"SystemV/MST7", "Etc/GMT+7", "-7", "false"},
+                {"SystemV/MST7MDT", "America/Denver", "-7", "true"},
+                {"SystemV/PST8", "Etc/GMT+8", "-8", "false"},
+                {"SystemV/PST8PDT", "America/Los_Angeles", "-8", "true"},
+                {"SystemV/YST9", "Etc/GMT+9", "-9", "false"},
+                {"SystemV/YST9YDT", "America/Anchorage", "-9", "true"},
+        };
+        final long winter = Instant.parse("2026-01-15T12:00:00Z").toEpochMilli();
+        final long summer = Instant.parse("2026-07-15T12:00:00Z").toEpochMilli();
+        for (String[] alias : aliases) {
+            final TimeZone tz = registry.getTimeZone(alias[0]);
+            assertNotNull(alias[0], tz);
+            assertEquals(alias[0], alias[1], tz.getID());
+            final int standard = Integer.parseInt(alias[2]) * 3600000;
+            assertEquals(alias[0] + " in January", standard, tz.getOffset(winter));
+            assertEquals(alias[0] + " in July", Boolean.parseBoolean(alias[3]) ? standard + 3600000 : standard, tz.getOffset(summer));
+        }
+    }
 }

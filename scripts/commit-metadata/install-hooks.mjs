@@ -6,9 +6,8 @@
 // worktree sets core.hooksPath or resolves another hooks directory; never changes git
 // config. Re-running with identical files only restores their executable mode.
 //
-//   node install-hooks.mjs --repo <path> --base <branch> [--base <branch>]
-//   (--base names the protected integration branch(es) on the pushed remote,
-//    e.g. main for the public repo; dev and main for the private repo)
+//   node install-hooks.mjs --repo <path> --base <branch>
+//   (--base names the protected integration branch on the pushed remote, e.g. main)
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync, writeFileSync, chmodSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -16,18 +15,17 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const BRANCH = /^[A-Za-z0-9._/-]+$/
 
-export function hookFiles(bases) {
-  const baseArgs = bases.map(base => `--base ${base}`).join(' ')
+export function hookFiles(base) {
   const wrapper = (mode, extra) => `#!/bin/sh\n# Commit metadata guard (installed by scripts/commit-metadata/install-hooks.mjs).\nexec node "$(dirname "$0")/commit-metadata-guard.mjs" ${mode}${extra} "$@"\n`
   return {
     'commit-metadata-guard.mjs': readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'guard.mjs'), 'utf8'),
     'commit-msg': wrapper('commit-msg', ''),
-    'pre-push': wrapper('pre-push', ` ${baseArgs} --`),
+    'pre-push': wrapper('pre-push', ` --base ${base} --`),
   }
 }
 
-export function install(repo, bases) {
-  if (!bases.length || bases.some(base => !BRANCH.test(base) || base.startsWith('-'))) throw new Error('invalid --base')
+export function install(repo, base) {
+  if (typeof base !== 'string' || !BRANCH.test(base) || base.startsWith('-')) throw new Error('invalid --base')
   const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
   const common = git('rev-parse', '--path-format=absolute', '--git-common-dir')
   if (common.status !== 0) throw new Error('not a git repository')
@@ -44,7 +42,7 @@ export function install(repo, bases) {
     if (resolved.status !== 0) throw new Error(`cannot inspect worktree ${path}; refusing (git worktree prune?)`)
     if (resolved.stdout.trim() !== hooks) throw new Error(`worktree ${path} uses another hooks directory; refusing`)
   }
-  const files = hookFiles(bases)
+  const files = hookFiles(base)
   for (const [name, content] of Object.entries(files)) {
     const target = join(hooks, name)
     if (existsSync(target) && readFileSync(target, 'utf8') !== content) throw new Error(`refusing to overwrite existing ${target}`)
@@ -68,15 +66,15 @@ export function install(repo, bases) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const args = process.argv.slice(2)
   let repo
-  const bases = []
+  let base
   try {
     for (let i = 0; i < args.length; i += 2) {
       if (args[i] === '--repo' && args[i + 1] && !repo) repo = resolve(args[i + 1])
-      else if (args[i] === '--base' && args[i + 1]) bases.push(args[i + 1])
-      else throw new Error('usage: install-hooks.mjs --repo <path> --base <branch> [--base <branch>]')
+      else if (args[i] === '--base' && args[i + 1] && !base) base = args[i + 1]
+      else throw new Error('usage: install-hooks.mjs --repo <path> --base <branch>')
     }
     if (!repo) throw new Error('missing --repo')
-    const { hooks, written, repaired } = install(repo, bases)
+    const { hooks, written, repaired } = install(repo, base)
     console.log(`commit-metadata hooks installed in ${hooks} (wrote ${written.length}, restored executable mode on ${repaired.length} file(s))`)
   } catch (error) {
     console.error(`commit-metadata install: ${error.message}`)

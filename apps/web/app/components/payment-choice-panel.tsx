@@ -95,7 +95,14 @@ interface PaymentChoicePanelProps {
   onSuccess: () => void | Promise<void>
   onCancel?: () => void
   onDismissibilityChange?: (dismissible: boolean) => void
-  title?: string
+  /**
+   * True while closing would drop work in flight: a payment start, a card
+   * being confirmed or a settled crypto payment being completed. A parent's
+   * own close control stays unavailable until it reports false again.
+   */
+  onBusyChange?: (busy: boolean) => void
+  /** Pass null when the surrounding dialog already shows the heading. */
+  title?: string | null
   successPoll?: () => void | Promise<void>
 }
 function PriceDisplay({ offer }: { offer: AnnualOffer }) {
@@ -152,7 +159,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * that no payment exists. The thrown reason is never rendered: server detail,
  * identifiers and checkout URLs stay out of the error surface.
  */
-function readCurrentPaymentFlow(data: unknown): CurrentPaymentFlow | null {
+export function readCurrentPaymentFlow(data: unknown): CurrentPaymentFlow | null {
   const malformed = () => new Error('The current payment flow reply could not be read.')
   if (!isPlainObject(data) || !Object.prototype.hasOwnProperty.call(data, 'flow')) throw malformed()
   const flow = data.flow
@@ -221,6 +228,12 @@ function BitcoinCancellationAcknowledgement({
   )
 }
 
+// A cancellation's Retry-After wait outlives the panel, so closing and reopening the dialog can't
+// re-enable an early retry for the same payment. Keyed by account and the payment's identity (see
+// cancelWaitId), so it never blocks another payment or an account with no payment in progress.
+const cancelWaits = new Map<string, { until: number; message: string }>()
+const cancelWaitKey = (accountId: string | null, waitId: string) => `${accountId ?? ''}:${waitId}`
+
 function safeBtcpayUrl(rawUrl: string): string {
   const checkoutUrl = resolveBtcpayUrl(rawUrl)
   if (!checkoutUrl) throw new Error('Cryptocurrency checkout returned an unexpected payment URL.')
@@ -231,6 +244,7 @@ export default function PaymentChoicePanel({
   onSuccess,
   onCancel,
   onDismissibilityChange,
+  onBusyChange,
   title = 'Continue with silentsuite.io',
   successPoll,
 }: PaymentChoicePanelProps) {
@@ -263,12 +277,15 @@ export default function PaymentChoicePanel({
   const [bitcoinSession, setBitcoinSession] = useState<BitcoinPaymentSession | null>(null)
   const [currentFlow, setCurrentFlow] = useState<CurrentPaymentFlow | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
+  const [cardProcessing, setCardProcessing] = useState(false)
+  const [bitcoinCompleting, setBitcoinCompleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [cancelBlockedUntil, setCancelBlockedUntil] = useState<{ authorityId: string | null; until: number; message: string } | null>(null)
+  const [cancelBlockedUntil, setCancelBlockedUntil] = useState<{ waitId: string | null; until: number; message: string } | null>(null)
   useEffect(() => {
     if (!cancelBlockedUntil) return
     // Expiry only re-enables the control and retires its wait copy; it never sends a request.
     const timer = window.setTimeout(() => {
+      if (cancelBlockedUntil.waitId) cancelWaits.delete(cancelWaitKey(owner.current.accountId, cancelBlockedUntil.waitId))
       setCancelBlockedUntil(null)
       setError(current => current === cancelBlockedUntil.message ? null : current)
     }, Math.max(0, cancelBlockedUntil.until - Date.now()))
@@ -442,7 +459,25 @@ export default function PaymentChoicePanel({
   const cancellationBlocked = bitcoinAcknowledgementRequired && !bitcoinCancelAcknowledged
   // A 429 refusal holds the displayed authority's cancel controls until the
   // server's wait elapses; a different authority is never blocked by it.
-  const cancelRateLimited = cancelBlockedUntil !== null && cancelBlockedUntil.authorityId === displayedAuthorityId
+  // A wait recorded before the dialog was closed applies again once the same authority is shown.
+  // The payment a wait belongs to: the authority Billing named, else the current flow's own kind and
+  // creation time. A displayed session without a named authority has no stable identity, so its
+  // wait stays in panel state only (null).
+  const cancelWaitId = displayedAuthorityId
+    ? `authority:${displayedAuthorityId}`
+    : !bitcoinSession && !clientSecret && currentFlow
+      ? `flow:${currentFlow.flowKind}:${currentFlow.createdAt}`
+      : null
+  useEffect(() => {
+    if (!cancelWaitId) return
+    const key = cancelWaitKey(owner.current.accountId, cancelWaitId)
+    const wait = cancelWaits.get(key)
+    if (!wait) return
+    if (wait.until <= Date.now()) { cancelWaits.delete(key); return }
+    setCancelBlockedUntil({ waitId: cancelWaitId, ...wait })
+    setError(wait.message)
+  }, [cancelWaitId])
+  const cancelRateLimited = cancelBlockedUntil !== null && cancelBlockedUntil.waitId === cancelWaitId
   const cancellationDisabled = loading !== null || cancellationBlocked || cancelRateLimited
   // Identity of the provider authority currently on screen. A different
   // authority must never inherit a previous acknowledgement.
@@ -547,6 +582,13 @@ export default function PaymentChoicePanel({
     onDismissibilityChange?.(implicitDismissible)
   }, [implicitDismissible, onDismissibilityChange])
 
+  // Unmounting now would drop the start or cancellation reply or the success
+  // handling, so the confirmation poll would never run for a payment that went through.
+  const busy = loading === 'stripe' || loading === 'btcpay' || loading === 'cancel-flow' || cardProcessing || bitcoinCompleting
+  useLayoutEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
+
   const cancelCurrentFlow = async (provider: PaymentFlowCancellationProvider = cancellationProvider): Promise<boolean> => {
     // A Bitcoin authority is never released without a local acknowledgement,
     // even if a control were somehow actioned while blocked.
@@ -578,13 +620,16 @@ export default function PaymentChoicePanel({
             return false
           }
           const message = rateLimitedCancellationCopy(Math.max(1, Math.ceil(result.retryAfterMs / 60_000)))
-          setCancelBlockedUntil({ authorityId: displayedAuthorityId, until: Date.now() + result.retryAfterMs, message })
+          const until = Date.now() + result.retryAfterMs
+          if (cancelWaitId) cancelWaits.set(cancelWaitKey(owner.current.accountId, cancelWaitId), { until, message })
+          setCancelBlockedUntil({ waitId: cancelWaitId, until, message })
           setError(message)
           return false
         }
         setError(result.message)
         return false
       }
+      if (cancelWaitId) cancelWaits.delete(cancelWaitKey(owner.current.accountId, cancelWaitId))
       setCancelBlockedUntil(null)
       setCurrentFlow(null)
       setClientSecret(null)
@@ -748,7 +793,7 @@ export default function PaymentChoicePanel({
       <BitcoinPaymentPanel
         session={bitcoinSession}
         title={`Pay ${formatDisclosureAmount(paymentDisclosure)}/year annual with Bitcoin, Lightning and Monero`}
-        description={`Scan the QR code or copy the payment details to pay ${formatDisclosureAmount(paymentDisclosure)} for ${paymentPlan ? `${annualOfferPlanLabel(paymentPlan)} (${paymentPlan.planId})` : 'this annual payment'}. ${compactAnnualPaymentCopy(paymentDisclosure)}`}
+        description={`Scan the QR code or copy the payment details to pay ${formatDisclosureAmount(paymentDisclosure)} for ${paymentPlan ? annualOfferPlanLabel(paymentPlan) : 'this annual payment'}. ${compactAnnualPaymentCopy(paymentDisclosure)}`}
         settledMessage="Payment settled. Refreshing your subscription..."
         backLabel={loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         backDisabled={cancellationDisabled}
@@ -767,6 +812,7 @@ export default function PaymentChoicePanel({
           </div>
         )}
         onBack={() => { void cancelCurrentFlow('btcpay') }}
+        onCompletingChange={setBitcoinCompleting}
         onPaymentComplete={async () => {
           if (!accountCurrent()) return
           await onSuccess()
@@ -794,7 +840,7 @@ export default function PaymentChoicePanel({
               <Crown className="h-4 w-4 text-amber-400" />
               <div>
                 <span className="text-sm font-medium text-[rgb(var(--foreground))]">{paymentPlan ? annualOfferPlanLabel(paymentPlan) : 'Annual payment'}</span>
-                <p className="text-xs text-[rgb(var(--muted))]">{paymentPlan ? `Annual card payment · ${paymentPlan.planId}` : 'Annual card payment'}</p>
+                <p className="text-xs text-[rgb(var(--muted))]">Annual card payment</p>
               </div>
             </div>
             <div className="text-right">
@@ -817,6 +863,7 @@ export default function PaymentChoicePanel({
           submitLabel={`Pay ${formatDisclosureAmount(paymentDisclosure)}`}
           mode="payment"
           returnPath="/settings/subscription"
+          onProcessingChange={setCardProcessing}
         />
         {error && (
           <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
@@ -890,7 +937,7 @@ export default function PaymentChoicePanel({
             onChange={setBitcoinCancelAcknowledged}
           />
         )}
-        <Button onClick={() => { void cancelCurrentFlow() }} disabled={cancellationDisabled || !currentFlow.cancellable} variant="outline" className="w-full">
+        <Button onClick={() => { void cancelCurrentFlow() }} disabled={cancellationDisabled || !currentFlow.cancellable} variant="outline" className="h-auto min-h-9 w-full whitespace-normal text-center">
           {loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         </Button>
         {!currentFlow.cancellable && (
@@ -906,7 +953,7 @@ export default function PaymentChoicePanel({
 
   return (
     <div className="space-y-5">
-      <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{title}</h2>
+      {title && <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{title}</h2>}
       {!annualOffer && (
         <p role="status" className="text-sm text-[rgb(var(--muted))]">
           {!optionsLoaded ? 'Loading payment options...' : offerUnavailableMessage}
@@ -917,7 +964,7 @@ export default function PaymentChoicePanel({
         <div className="flex items-center justify-end" data-plan-id={annualOffer.offer.planId}>
           <div className="flex items-center gap-2">
             <Crown className="h-3.5 w-3.5 text-amber-400" />
-            <span className="sr-only">{annualOfferPlanLabel(annualOffer.offer)} ({annualOffer.offer.planId})</span>
+            <span className="sr-only">{annualOfferPlanLabel(annualOffer.offer)}</span>
             <PriceDisplay offer={annualOffer.offer} />
           </div>
         </div>

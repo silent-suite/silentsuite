@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 import { flushSync } from 'react-dom'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
-import { parseAccountNotice, type AccountNotice } from '@/app/lib/account-notice'
+import { classifyEndedHistory, parseAccountNotice, type AccountNotice, type EndedHistory } from '@/app/lib/account-notice'
 import { logger } from '@/app/lib/logger'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/constants'
@@ -29,7 +29,7 @@ import {
 } from '@/app/lib/account-epoch'
 import type * as EtebaseStoreModule from '@/app/stores/use-etebase-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
-import { BillingResponseError, startSignupAnnualPayment, type AnnualOffer } from '@/app/lib/billing-v2'
+import { BillingResponseError, requestSignupPass, startSignupAnnualPayment, type AnnualOffer, type SignupPassAuthority } from '@/app/lib/billing-v2'
 import type { OwnerSignupOptions } from '@/app/lib/etebase-auth'
 
 export interface User {
@@ -106,6 +106,7 @@ type RedirectPendingSignup = Pick<PendingSignup,
   | 'billingContractVersion'
   | 'provisionedUser'
   | 'provisionedSubscriptionStatus'
+  | 'etebaseAccountReady'
 >
 
 /** Shape of the data persisted to sessionStorage for surviving full-page redirects. */
@@ -144,8 +145,8 @@ function tupleForIdentity(previous: User | null, nextId: string | undefined) {
   return previous?.id === nextId ? {} : { subscriptionStatus: null, hostedAccess: null, ...clearedAccountNotice }
 }
 
-/** The informational notice and its expiry claim belong to one account generation. */
-const clearedAccountNotice = { accountNotice: null, accountNoticeCheckedAt: null, trialExpiryRefreshClaim: null }
+/** The informational notice, its expiry claim and the ended wording belong to one account generation. */
+const clearedAccountNotice = { accountNotice: null, accountNoticeCheckedAt: null, trialExpiryRefreshClaim: null, endedHistory: null }
 
 /**
  * One expiry refresh for an account generation and trial-end instant. `readSequence` is the
@@ -182,11 +183,14 @@ interface AuthState {
   accountNoticeCheckedAt: number | null
   /** One expiry refresh per account generation and trial-end instant, shared by every countdown. */
   trialExpiryRefreshClaim: TrialExpiryRefreshClaim | null
+  /** Wording only, from the same read as subscriptionStatus: which history the read-only banner names. */
+  endedHistory: EndedHistory | null
   isDegraded: () => boolean
   isReadOnly: () => boolean
   canWrite: () => boolean
   prepareSignupDraft: (email: string, wantsProductUpdates?: boolean, rememberDevice?: boolean) => void
-  createEtebaseAccount: (email: string, password: string, serverUrl?: string, owner?: OwnerSignupOptions) => Promise<void>
+  /** Hosted callers pass the live Billing authority used to fetch a signup pass; restored pages have none. */
+  createEtebaseAccount: (email: string, password: string, serverUrl?: string, owner?: OwnerSignupOptions, signupAuthority?: SignupPassAuthority) => Promise<void>
   /** Historical signature retained for callers; fresh hosted v1 creation rejects. */
   signup: (planId: string, trialPath: string) => Promise<SignupResult>
   provisionAnnualNoCard: (checkoutIntentToken: string) => Promise<void>
@@ -269,6 +273,8 @@ function makeRedirectPendingSignup(pending: PendingSignup): RedirectPendingSignu
     redirect.provisionedUser = { id: user.id, planId: user.planId, isAdmin: user.isAdmin }
   }
   if (typeof pending.provisionedSubscriptionStatus === 'string') redirect.provisionedSubscriptionStatus = pending.provisionedSubscriptionStatus
+  // Not a secret: it only says this browser already created the encrypted account, so a restored page logs in.
+  if (pending.etebaseAccountReady === true) redirect.etebaseAccountReady = true
   return redirect
 }
 
@@ -287,6 +293,7 @@ function parseRedirectPendingSignup(value: unknown): RedirectPendingSignup | nul
     redirect.provisionedUser = { id: user.id, planId: user.planId, isAdmin: user.isAdmin }
   }
   if (typeof value.provisionedSubscriptionStatus === 'string') redirect.provisionedSubscriptionStatus = value.provisionedSubscriptionStatus
+  if (value.etebaseAccountReady === true) redirect.etebaseAccountReady = true
   return redirect
 }
 
@@ -358,6 +365,8 @@ class SignupRedirectCheckpoint {
       next.provisionedUser = previous.pendingSignup.provisionedUser
       next.provisionedSubscriptionStatus = previous.pendingSignup.provisionedSubscriptionStatus
     }
+    // An account once created stays created for this attempt.
+    if (previous?.pendingSignup.etebaseAccountReady) next.etebaseAccountReady = true
     const data: RedirectSignupState = {
       pendingSignup: next,
       selectedInterval: previous?.selectedInterval ?? selectedInterval ?? 'annual',
@@ -501,7 +510,7 @@ const AUTH_RATE_LIMIT_MESSAGE =
 const AUTH_TEMPORARY_UNAVAILABLE_MESSAGE =
   'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.'
 
-const AUTH_REFRESH_RETRY_MESSAGE =
+export const AUTH_REFRESH_RETRY_MESSAGE =
   'Your session could not be confirmed. Please retry restoring your session. Your encrypted data is safe.'
 
 function refreshRetryDelayMs(value: string | null): number {
@@ -946,10 +955,21 @@ function clearHostedValidationMarkers() {
   }
 }
 
+/**
+ * Etebase rejects an unknown user ("User not found") and a wrong password
+ * ("Wrong password for user.") with the same UnauthorizedError (HTTP 401).
+ * Both get one message, so the form never says which accounts exist.
+ */
+function isWrongCredentials(err: Error, raw: string): boolean {
+  return err.name === 'UnauthorizedError'
+    || raw.includes('unauthorized') || raw.includes('401')
+    || raw.includes('wrong password') || raw.includes('user not found')
+}
+
 function authErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'Login failed'
   const raw = err.message.toLowerCase()
-  if (raw.includes('unauthorized') || raw.includes('401')) return 'Invalid email or password. Please try again.'
+  if (isWrongCredentials(err, raw)) return 'Invalid email or password. Please try again.'
   if (raw.includes('not found') || raw.includes('404')) return 'No account found with this email. Please sign up first.'
   if (raw.includes('429') || raw.includes('too many') || raw.includes('rate limit') || raw.includes('throttl')) {
     return AUTH_RATE_LIMIT_MESSAGE
@@ -1289,6 +1309,63 @@ function isOwnerOperationFailure(err: unknown): err is Error {
   return name === 'OwnerAuthError' || name === 'AbortError'
 }
 
+const ACCOUNT_EXISTS_MESSAGE = 'An account with this email already exists. Please log in instead.'
+
+/**
+ * The hosted server refused account creation (403) even after one fresh pass.
+ * Fixed text for payment-return and recovery pages; the main signup flow
+ * shows its own re-verify screen for this class.
+ */
+export class HostedSignupRefusedError extends Error {
+  constructor() {
+    super('We could not create your account here. No new payment was started. Contact support@silentsuite.io and we will finish your setup.')
+    this.name = 'HostedSignupRefusedError'
+  }
+}
+
+/** Patched-SDK errors carry no status or server text we rely on; branch on the class name only. */
+function isSdkError(err: unknown, name: 'ConflictError' | 'PermissionDeniedError' | 'UnauthorizedError' | 'NotFoundError'): boolean {
+  return err instanceof Error && err.name === name
+}
+
+/**
+ * Hosted signup: fetch a Billing pass right before signup and send it as the
+ * registration token. 409 name-taken or an SDK ConflictError logs in instead.
+ * Any other pass outcome signs up without a pass and lets the server decide.
+ * A server 403 gets one fresh pass and one retry, then a generic refusal.
+ */
+async function hostedEtebaseSignUp(email: string, password: string, serverUrl: string | undefined, authority: SignupPassAuthority | undefined) {
+  const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
+  const logInExisting = async () => {
+    try {
+      return await etebaseLogIn(email, password, serverUrl)
+    } catch (err) {
+      // Wrong password, or the SDK's own signup fallback refused (409/403): never a new account.
+      if (isSdkError(err, 'UnauthorizedError') || isSdkError(err, 'ConflictError')
+        || isSdkError(err, 'PermissionDeniedError') || isSdkError(err, 'NotFoundError')) throw new Error(ACCOUNT_EXISTS_MESSAGE)
+      throw err
+    }
+  }
+  for (let attempt = 0; ; attempt += 1) {
+    const outcome = authority
+      ? await requestSignupPass({ fetcher: fetch, billingApiUrl: BILLING_API_URL, email, authority })
+      : { kind: 'unavailable' as const }
+    if (outcome.kind === 'name-taken') return logInExisting()
+    try {
+      return outcome.kind === 'pass'
+        ? await etebaseSignUp(email, password, serverUrl, undefined, outcome.signupPass)
+        : await etebaseSignUp(email, password, serverUrl)
+    } catch (err) {
+      if (isSdkError(err, 'ConflictError')) return logInExisting()
+      if (isSdkError(err, 'PermissionDeniedError')) {
+        if (attempt === 0 && authority) continue
+        throw new HostedSignupRefusedError()
+      }
+      throw err
+    }
+  }
+}
+
 function signupSingleFlight<A extends unknown[], R>(operation: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
   let active: { args: A; promise: Promise<R> } | undefined
   return (...args) => {
@@ -1436,6 +1513,7 @@ async function readSubscription(
         hostedAccess: parseHostedAccess(data.hostedAccess),
         accountNotice: parseAccountNotice(data.accountNotice),
         accountNoticeCheckedAt: Date.now(),
+        endedHistory: classifyEndedHistory(data),
         ...settleExpiryClaim(get().trialExpiryRefreshClaim, originalUser?.id, epoch, sequence, data),
       })
       return 'published'
@@ -1505,12 +1583,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     })
   },
 
-  createEtebaseAccount: signupSingleFlight(async (email: string, password: string, serverUrl?: string, owner?: OwnerSignupOptions) => {
+  createEtebaseAccount: signupSingleFlight(async (email: string, password: string, serverUrl?: string, owner?: OwnerSignupOptions, signupAuthority?: SignupPassAuthority) => {
     const existing = get().pendingSignup
     if ((existing?.provisionedUser || existing?.etebaseAccountReady) && (existing.email !== email || existing.serverUrl !== serverUrl)) {
       throw new Error('Your account is already set up. Sign in with its original account details.')
     }
     set({ isLoading: true, error: null })
+    const hosted = !owner && !isSelfHosted && !isCustomServer(serverUrl)
     try {
       const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
       let authResult: { authToken: string; savedSession: string }
@@ -1519,10 +1598,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           ? await etebaseLogIn(email, password, serverUrl)
           : owner
             ? await etebaseSignUp(email, password, serverUrl, owner)
-            : await etebaseSignUp(email, password, serverUrl)
+            : hosted
+              ? await hostedEtebaseSignUp(email, password, serverUrl, signupAuthority)
+              : await etebaseSignUp(email, password, serverUrl)
       } catch (signupErr) {
         // Owner-authorization failures and cancellations never fall back to login.
         if (isOwnerOperationFailure(signupErr)) throw signupErr
+        // Hosted signup already branched on the SDK error class; the text match below is self-host/custom only.
+        if (hosted) throw signupErr
         const raw = signupErr instanceof Error ? signupErr.message.toLowerCase() : ''
         if (!raw.includes('conflict') && !raw.includes('409') && !raw.includes('already')) {
           throw signupErr
@@ -1542,8 +1625,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         throw new DOMException('Signup was cancelled.', 'AbortError')
       }
       if (get().pendingSignup !== existing) throw new Error('Signup was superseded.')
-      if (isCustomServer(serverUrl) && serverUrl) {
-        localStorage.setItem('silentsuite-server-url', serverUrl)
+      // Save the server selection only now that the account exists on it.
+      if (typeof localStorage !== 'undefined') {
+        if (serverUrl && (isSelfHosted || isCustomServer(serverUrl))) localStorage.setItem('silentsuite-server-url', serverUrl)
+        else localStorage.removeItem('silentsuite-server-url')
       }
 
 
@@ -1561,7 +1646,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isLoading: false,
       })
     } catch (err) {
-      if (isOwnerOperationFailure(err)) {
+      if (isOwnerOperationFailure(err) || err instanceof HostedSignupRefusedError) {
         // Keep the typed error and its fixed message; never remap it as an account conflict.
         if (get().pendingSignup === existing) set({ error: err.message, isLoading: false })
         throw err
@@ -2530,6 +2615,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         hostedAccess: parseHostedAccess(subData.hostedAccess),
         accountNotice: parseAccountNotice(subData.accountNotice),
         accountNoticeCheckedAt: Date.now(),
+        endedHistory: classifyEndedHistory(subData),
         // After every ownership, reset and latest-read check above: this retry's own verified
         // account, current boundary and read sequence. Another account never matches the claim.
         ...settleExpiryClaim(get().trialExpiryRefreshClaim, refreshData.id, owner.epoch, sequence, subData),

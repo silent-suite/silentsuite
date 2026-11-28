@@ -115,7 +115,6 @@ export function verifyStandaloneBuildArgs(dockerfile, overrides, { testedSha, pu
       NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true',
       NEXT_PUBLIC_SENTRY_DSN: undefined,
       NEXT_PUBLIC_WEB_VITALS_ENABLED: 'true',
-      NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
       NEXT_PUBLIC_SELF_HOSTED: 'false',
       NEXT_PUBLIC_OWNER_REGISTRATION: 'false',
       VCS_REF: testedSha,
@@ -134,7 +133,7 @@ export function verifyStandaloneBuildArgs(dockerfile, overrides, { testedSha, pu
     const defaults = effectiveBuildArgs(dockerfile, '')
     const dsnDefault = defaults.filter(arg => arg.name === 'NEXT_PUBLIC_SENTRY_DSN')
     assert.ok(dsnDefault.length === 1 && dsnDefault[0].value === '' && dsnDefault[0].stage === 'builder')
-    for (const name of ['NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION', 'NEXT_PUBLIC_WEB_VITALS_ENABLED']) {
+    for (const name of ['NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION', 'NEXT_PUBLIC_WEB_VITALS_ENABLED']) {
       const matches = defaults.filter(arg => arg.name === name)
       assert.equal(matches.length, 1)
       assert.equal(matches[0].value, 'false')

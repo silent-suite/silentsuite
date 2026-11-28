@@ -106,6 +106,34 @@ describe('MiniCalendar event dots', () => {
     expect(dotsFor('Wednesday, May 6, 2026')[0]).toHaveStyle({ backgroundColor: '#10b981' })
   })
 
+  it('shows a moved occurrence on its new day and no dot for a cancelled one', () => {
+    const uid = 'override-series'
+    storeMock.calendarState.events = [
+      {
+        ...makeEvent({
+          id: 'daily-with-overrides',
+          uid,
+          calendarId: 'green-cal',
+          startDate: new Date('2026-05-04T09:00:00Z'),
+          endDate: new Date('2026-05-04T10:00:00Z'),
+          recurrenceRule: 'FREQ=DAILY;COUNT=3',
+        }),
+        timezone: 'UTC',
+        overrides: [
+          ['BEGIN:VEVENT', `UID:${uid}`, 'RECURRENCE-ID:20260505T090000Z', 'DTSTART:20260512T090000Z', 'DTEND:20260512T100000Z', 'END:VEVENT'],
+          ['BEGIN:VEVENT', `UID:${uid}`, 'RECURRENCE-ID:20260506T090000Z', 'STATUS:CANCELLED', 'END:VEVENT'],
+        ],
+      },
+    ]
+
+    render(<MiniCalendar />)
+
+    expect(dotsFor('Monday, May 4, 2026')).toHaveLength(1)
+    expect(dotsFor('Tuesday, May 5, 2026')).toHaveLength(0)
+    expect(dotsFor('Wednesday, May 6, 2026')).toHaveLength(0)
+    expect(dotsFor('Tuesday, May 12, 2026')).toHaveLength(1)
+  })
+
   it('does not show dots for hidden calendars', () => {
     storeMock.calendarListState.calendars = [
       { id: 'red-cal', name: 'Red', color: '#ef4444', visible: false },

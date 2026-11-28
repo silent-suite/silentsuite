@@ -128,6 +128,16 @@ def test_final_apk_and_aab_gates_require_conscrypt_ndk_r28_identity():
         assert "app/build/outputs/apk/release/*.apk" in run
 
 
+# The provider check and the four custom-trust and hostname cases the runtime job must see executed.
+CONSCRYPT_RUNTIME_METHODS = (
+    "providerLoadsAndCreatesTlsContext",
+    "unacceptedCertificateIsRejectedByCustomTrust",
+    "acceptedCertificateConnectsDespiteHostnameMismatch",
+    "trustedChainWithMatchingHostnameConnects",
+    "trustedChainWithOtherHostnameIsRejectedWithoutAcceptance",
+)
+
+
 def test_conscrypt_provider_runs_on_api_floor_and_target_api():
     job = workflow_jobs()["conscrypt-runtime"]
     assert job["needs"] == "conscrypt-r28"
@@ -143,7 +153,8 @@ def test_conscrypt_provider_runs_on_api_floor_and_target_api():
     assert "at.bitfire.cert4android.ConscryptProviderRuntimeTest" in command
     assert "-PrequireConscryptR28=true" in command
     ledger = steps["Assert Conscrypt runtime methods executed"]["run"]
-    assert "providerLoadsAndCreatesTlsContext" in ledger
+    for method in CONSCRYPT_RUNTIME_METHODS:
+        assert ledger.count(f'"{method}",') == 1, method
 
 
 def test_conscrypt_runtime_test_exercises_the_real_native_provider():

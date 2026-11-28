@@ -182,6 +182,24 @@ describe('ContactsPage mobile reachability', () => {
     expect(screen.queryByText('Bob')).not.toBeInTheDocument()
   })
 
+  it('sorts by family name, then given name, then display name', () => {
+    const contact = (id: string, displayName: string, given: string, family: string, prefix = ''): Contact => ({ id, uid: id, displayName, name: { prefix, given, family, suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, listId: 'book', created_at: new Date(), updated_at: new Date() })
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+    storeMock.contactState.contacts = [
+      contact('1', 'Dr. Ada Lovelace', 'Ada', 'Lovelace', 'Dr.'),
+      contact('2', 'Charles Babbage', 'Charles', 'Babbage'),
+      contact('3', 'Zoe Lovelace', 'Zoe', 'Lovelace'),
+      contact('4', 'Acme Corp', '', ''),
+      contact('5', 'Grace', 'Grace', ''),
+      contact('6', 'Ada Lovelace (work)', 'Ada', 'Lovelace'),
+    ]
+    renderWithIntl(<ContactsPage />)
+
+    const order = screen.getAllByRole('button', { name: /to favorites$/ })
+      .map((button) => button.getAttribute('aria-label')!.replace(/^Add (.*) to favorites$/, '$1'))
+    expect(order).toEqual(['Acme Corp', 'Charles Babbage', 'Grace', 'Ada Lovelace (work)', 'Dr. Ada Lovelace', 'Zoe Lovelace'])
+  })
+
   it('shows the account total, including contacts in hidden address books', () => {
     const contact = (id: string, listId: string): Contact => ({ id, uid: id, displayName: `Person ${id}`, name: { prefix: '', given: id, family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, listId, created_at: new Date(), updated_at: new Date() })
     storeMock.contactListState.lists = [
@@ -585,5 +603,98 @@ describe('ContactsPage address books shared read-only', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete contact?' })).getByRole('button', { name: 'Delete contact' }))
     expect(storeMock.contactState.deleteContact).not.toHaveBeenCalled()
     expect(storeMock.contactState.updateContact).not.toHaveBeenCalled()
+  })
+})
+
+describe('ContactsPage birthdays without a year', () => {
+  const book: ContactList = { id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }
+  const lin: Contact = {
+    id: 'lin', uid: 'lin', displayName: 'Lin', name: { prefix: '', given: 'Lin', family: '', suffix: '' },
+    phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: '--05-14',
+    photoUrl: null, listId: 'book', created_at: new Date(), updated_at: new Date(),
+  }
+
+  beforeEach(() => {
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useDomainSnapshotStore.setState({ appliedEpoch: {} })
+    storeMock.contactState.searchQuery = ''
+    storeMock.contactState.contacts = [lin]
+    storeMock.contactListState.lists = [book]
+    storeMock.contactListState.activeListId = null
+    storeMock.authState.canWrite.mockReturnValue(true)
+    storeMock.contactState.createContact.mockReset()
+    storeMock.contactState.createContact.mockResolvedValue({ ...lin, id: 'new' })
+    storeMock.contactState.updateContact.mockReset()
+  })
+
+  function createWithBirthday(date: string, noYear: boolean) {
+    fireEvent.click(screen.getByRole('button', { name: 'New Contact' }))
+    const form = screen.getByRole('dialog', { name: 'New Contact' })
+    fireEvent.change(within(form).getByRole('textbox', { name: 'Given name' }), { target: { value: 'Grace' } })
+    if (noYear) fireEvent.click(within(form).getByRole('checkbox', { name: 'No year' }))
+    fireEvent.change(within(form).getByLabelText('Birthday'), { target: { value: date } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save Contact' }))
+  }
+
+  it('saves a new birthday without a year as --MM-DD', async () => {
+    renderWithIntl(<ContactsPage />)
+    createWithBirthday('1990-05-14', true)
+    await waitFor(() => expect(storeMock.contactState.createContact).toHaveBeenCalledTimes(1))
+    expect(storeMock.contactState.createContact).toHaveBeenCalledWith(expect.objectContaining({ birthday: '--05-14' }))
+  })
+
+  it('still saves a full birthday date by default', async () => {
+    renderWithIntl(<ContactsPage />)
+    createWithBirthday('1990-05-14', false)
+    await waitFor(() => expect(storeMock.contactState.createContact).toHaveBeenCalledTimes(1))
+    expect(storeMock.contactState.createContact).toHaveBeenCalledWith(expect.objectContaining({ birthday: '1990-05-14' }))
+  })
+
+  it('saves no birthday when "No year" is turned off again in a new contact', async () => {
+    renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'New Contact' }))
+    const form = screen.getByRole('dialog', { name: 'New Contact' })
+    fireEvent.change(within(form).getByRole('textbox', { name: 'Given name' }), { target: { value: 'Grace' } })
+    const noYear = within(form).getByRole('checkbox', { name: 'No year' })
+    fireEvent.click(noYear)
+    fireEvent.change(within(form).getByLabelText('Birthday'), { target: { value: '2000-05-14' } })
+    fireEvent.click(noYear)
+    expect(within(form).getByLabelText('Birthday')).toHaveValue('')
+    fireEvent.click(within(form).getByRole('button', { name: 'Save Contact' }))
+    await waitFor(() => expect(storeMock.contactState.createContact).toHaveBeenCalledTimes(1))
+    expect(storeMock.contactState.createContact).toHaveBeenCalledWith(expect.objectContaining({ birthday: null }))
+  })
+
+  it('shows an existing birthday without a year in the editor and keeps it yearless', () => {
+    renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByText('Lin'))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit contact' }))
+    const noYear = screen.getByRole('checkbox', { name: 'No year' })
+    const date = screen.getByLabelText('Birthday')
+    expect(noYear).toBeChecked()
+    expect(date).toHaveValue('2000-05-14')
+
+    // Leaving the field unchanged saves nothing.
+    fireEvent.blur(date)
+    expect(storeMock.contactState.updateContact).not.toHaveBeenCalled()
+
+    fireEvent.change(date, { target: { value: '2000-06-01' } })
+    fireEvent.blur(date)
+    expect(storeMock.contactState.updateContact).toHaveBeenLastCalledWith('lin', { birthday: '--06-01' })
+  })
+
+  it('never invents a year when "No year" is turned off', () => {
+    renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByText('Lin'))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit contact' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'No year' }))
+    const date = screen.getByLabelText('Birthday')
+    expect(date).toHaveValue('')
+    fireEvent.blur(date)
+    expect(storeMock.contactState.updateContact).not.toHaveBeenCalled()
+
+    fireEvent.change(date, { target: { value: '1985-06-01' } })
+    fireEvent.blur(date)
+    expect(storeMock.contactState.updateContact).toHaveBeenLastCalledWith('lin', { birthday: '1985-06-01' })
   })
 })

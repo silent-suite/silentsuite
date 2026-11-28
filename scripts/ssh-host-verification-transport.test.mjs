@@ -30,7 +30,7 @@ import test from 'node:test'
 
 const require = createRequire(path.resolve('apps/web/package.json'))
 const { parseDocument } = require('yaml')
-const workflowPath = path.resolve('.github/workflows/deploy-web.yml')
+const workflowPath = path.resolve('.github/workflows/deploy-web-standalone.yml')
 const pinnedAction = 'appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2'
 // The pinned action's entrypoint.sh defaults DRONE_SSH_VERSION to 1.8.2 and
 // downloads this release asset. The digest matches both the release

@@ -34,7 +34,10 @@ vi.mock('@/app/components/CalendarListPanel', () => ({ CalendarListPanel: () => 
 vi.mock('@/app/components/TaskListPanel', () => ({ TaskListPanel: () => null }))
 vi.mock('@/app/components/ContactListPanel', () => ({ ContactListPanel: () => null }))
 vi.mock('@/app/components/NotebookListPanel', () => ({ NotebookListPanel: () => null }))
-vi.mock('@/app/components/OnboardingChecklist', () => ({ OnboardingChecklist: () => null }))
+vi.mock('@/app/components/OnboardingChecklist', () => ({
+  OnboardingChecklist: () => null,
+  OnboardingChecklistAt: ({ width }: { width: string }) => <div>checklist {width}</div>,
+}))
 
 const NOW = new Date('2026-10-30T12:00:00.000Z')
 const HOUR = 3_600_000
@@ -250,7 +253,7 @@ describe('seven-day trial status near Settings', () => {
       expect(subscriptionReads()).toBe(2)
       expect(document.body).not.toHaveTextContent(countdownText)
       const section = card()
-      expect(within(section).getByText('Your trial has ended.')).toBeInTheDocument()
+      expect(within(section).getByText('Your free trial ended.')).toBeInTheDocument()
       expect(within(section).getByText('Ended on')).toBeInTheDocument()
       expect(within(section).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /choose payment/i })).not.toBeInTheDocument()
@@ -282,14 +285,14 @@ describe('seven-day trial status near Settings', () => {
       await flush()
       await flush()
 
-      expect(screen.queryByText('Your trial has ended.')).not.toBeInTheDocument()
+      expect(screen.queryByText('Your free trial ended.')).not.toBeInTheDocument()
       expect(useAuthStore.getState().hostedAccess).toBeNull()
       expect((useAuthStore.getState() as unknown as { accountNotice?: unknown }).accountNotice).toBeNull()
     })
 
     const endedCard = () => {
       const section = card()
-      expect(within(section).getByText('Your trial has ended.')).toBeInTheDocument()
+      expect(within(section).getByText('Your free trial ended.')).toBeInTheDocument()
       expect(within(section).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /choose payment/i })).not.toBeInTheDocument()
       expect(document.body).not.toHaveTextContent(countdownText)
@@ -418,7 +421,7 @@ describe('seven-day trial status near Settings', () => {
       await flush()
       expect(subscriptionReads()).toBe(2)
       expect(document.body).not.toHaveTextContent(countdownText)
-      expect(screen.queryByText('Your trial has ended.')).not.toBeInTheDocument()
+      expect(screen.queryByText('Your free trial ended.')).not.toBeInTheDocument()
 
       await act(async () => { vi.advanceTimersByTime(DAY) })
       await flush()

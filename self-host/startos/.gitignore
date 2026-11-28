@@ -1,0 +1,10 @@
+*.s9pk
+startos/*.js
+node_modules/
+.startos/
+javascript
+ncc-cache
+docker-images
+
+# The repository root ignores lockfiles; this standalone wrapper needs its own for npm ci.
+!package-lock.json

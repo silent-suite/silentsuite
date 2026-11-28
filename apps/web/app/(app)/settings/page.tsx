@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { OnboardingChecklistAt } from '@/app/components/OnboardingChecklist'
 import { SettingsNav } from './settings-nav'
 
 // Matches Tailwind's `lg`, where the layout shows the settings rail.
@@ -22,7 +23,9 @@ export default function SettingsPage() {
   }, [router])
 
   return (
-    <div className="max-w-2xl lg:hidden">
+    <div className="max-w-2xl space-y-4 lg:hidden">
+      {/* The sidebar holds the checklist from md up; phones get it here. */}
+      <OnboardingChecklistAt width="below-md" />
       <SettingsNav variant="overview" pathname="/settings" />
     </div>
   )

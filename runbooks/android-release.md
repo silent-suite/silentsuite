@@ -1,12 +1,16 @@
 # Android release: Play Console upload checklist
 
-Pushing a `v*` tag runs the signed `build-release` job in
-`.github/workflows/build-android.yml`. It builds the signed AAB, manually
-packages `native-debug-symbols.zip` from the locally rebuilt Etebase AAR (AGP
-8.11.1 does not emit a standalone symbol ZIP for projects whose native
-libraries arrive exclusively through prebuilt AARs), verifies both against the
-expected native inventory, and attaches deterministic artifacts to the draft
-umbrella GitHub release.
+An Android release starts with a `silentsuite_release` `repository_dispatch`
+to `.github/workflows/release-controller.yml`, naming the release tag and its
+exact commit. After admitting the request, the controller calls
+`.github/workflows/release-android.yml` (`workflow_call`). Its
+`build-unsigned-release` job builds the AAB, manually packages
+`native-debug-symbols.zip` from the locally rebuilt Etebase AAR (AGP 8.11.1
+does not emit a standalone symbol ZIP for projects whose native libraries
+arrive exclusively through prebuilt AARs) and verifies both against the
+expected native inventory; `sign-release` signs the AAB, and
+`attach-release-assets` attaches deterministic artifacts to the draft umbrella
+GitHub release.
 
 Native inventory of the release AAB, for arm64-v8a, armeabi-v7a, x86, and
 x86_64:

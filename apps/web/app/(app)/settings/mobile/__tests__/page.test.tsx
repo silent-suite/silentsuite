@@ -66,8 +66,9 @@ describe('MobileSettingsPage Android download choices', () => {
       expect(existsSync(resolve(process.cwd(), `public${src}`))).toBe(true)
     }
 
-    expect(screen.getByText('On the roadmap, coming soon')).toBeInTheDocument()
-    expect(screen.getByText('iOS is not currently supported.')).toBeInTheDocument()
+    expect(screen.getByText('Native app planned')).toBeInTheDocument()
+    expect(screen.getByText("iOS isn't supported yet, and the app's scope and timing haven't been decided.")).toBeInTheDocument()
+    expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/EteSync iOS app/i)).not.toBeInTheDocument()
   })
 

@@ -477,12 +477,6 @@ def refresh_sync_thread(user):
     return start_sync_thread(user)
 
 
-def get_sync_thread(user):
-    """Get the SyncThread for a user, or None."""
-    with _sync_threads_lock:
-        return _sync_threads.get(user)
-
-
 def stop_sync_thread(user, timeout=2.0):
     """Stop and remove one user's SyncThread.
 

@@ -6,6 +6,7 @@ import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { CollectionListItem } from '@/app/components/CollectionListItem'
 import { canDeleteCollection } from '@/app/lib/collection-access'
+import { useTaskListsLoading } from '@/app/hooks/use-domain-initializing'
 
 export function TaskListPanel() {
   const { lists, activeListId, toggleVisibility, setActiveList, getNextColor } = useTaskListStore()
@@ -15,6 +16,8 @@ export function TaskListPanel() {
   const [isAdding, setIsAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const isCreatingRef = useRef(false)
+  // Show a skeleton, not the local "My Tasks" placeholder, until the real list names load.
+  const listsLoading = useTaskListsLoading(lists)
 
   const handleAdd = useCallback(async () => {
     if (isCreatingRef.current) return
@@ -65,7 +68,17 @@ export function TaskListPanel() {
       </div>
 
       <div className="space-y-0.5">
-        {lists.map((list) => (
+        {listsLoading && (
+          <div role="status" aria-label="Loading task lists" className="space-y-1.5 px-1 py-1">
+            {[1, 2].map((i) => (
+              <div key={i} className="flex items-center gap-2">
+                <div className="h-3 w-3 shrink-0 rounded-sm skeleton-shimmer" />
+                <div className="h-3 rounded skeleton-shimmer" style={{ width: `${50 + i * 15}%` }} />
+              </div>
+            ))}
+          </div>
+        )}
+        {!listsLoading && lists.map((list) => (
           <CollectionListItem
             key={list.id}
             name={list.name}

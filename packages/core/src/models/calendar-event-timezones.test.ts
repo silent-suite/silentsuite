@@ -3,6 +3,17 @@ import { deserializeCalendarEvent, serializeCalendarEvent, expandEventRecurrence
 import { parseVEvent } from '../utils/ical-parser.js';
 
 describe('imported event time zones', () => {
+  it('reads each EXDATE line in its own zone', () => {
+    const event = deserializeCalendarEvent([
+      'BEGIN:VEVENT', 'UID:exdate-zones', 'DTSTART;TZID=Europe/Berlin:20260315T100000', 'RRULE:FREQ=DAILY;COUNT=4',
+      'EXDATE;TZID=Europe/Berlin:20260316T100000', 'EXDATE;TZID=America/New_York:20260317T050000', 'END:VEVENT',
+    ].join('\r\n'));
+    expect(event.exceptions.map(d => d.toISOString())).toEqual(['2026-03-16T09:00:00.000Z', '2026-03-17T09:00:00.000Z']);
+    expect(expandEventRecurrence(event, { start: new Date('2026-03-15Z'), end: new Date('2026-03-19Z') }).map(d => d.toISOString())).toEqual([
+      '2026-03-15T09:00:00.000Z', '2026-03-18T09:00:00.000Z',
+    ]);
+  });
+
   it.each([
     ['"America/New_York"', '2026-11-17T15:00:00.000Z'],
     ['W. Europe Standard Time', '2026-11-17T09:00:00.000Z'],
@@ -12,6 +23,45 @@ describe('imported event time zones', () => {
     expect(event.startDate.toISOString()).toBe(expected);
     expect(serializeCalendarEvent({ ...event, title: 'Edited' })).toContain('20261117T100000');
     expect(parseVEvent(serializeCalendarEvent(event)).dtstartParams?.TZID?.replace(/^"(.*)"$/, '$1')).toBe(zone.replace(/^"(.*)"$/, '$1'));
+  });
+
+  it('still excludes EXDATEs written in two zones after a web save', () => {
+    const event = deserializeCalendarEvent([
+      'BEGIN:VEVENT', 'UID:exdate-save', 'DTSTART;TZID=Europe/Berlin:20260315T100000', 'DTEND;TZID=Europe/Berlin:20260315T110000',
+      'RRULE:FREQ=DAILY;COUNT=4', 'EXDATE;TZID=Europe/Berlin:20260316T100000', 'EXDATE;TZID=America/New_York:20260317T050000', 'END:VEVENT',
+    ].join('\r\n'));
+    const saved = deserializeCalendarEvent(serializeCalendarEvent({ ...event, title: 'Edited' }));
+    expect(saved.exceptions.map(d => d.toISOString())).toEqual(['2026-03-16T09:00:00.000Z', '2026-03-17T09:00:00.000Z']);
+    expect(expandEventRecurrence(saved, { start: new Date('2026-03-15Z'), end: new Date('2026-03-19Z') }).map(d => d.toISOString())).toEqual([
+      '2026-03-15T09:00:00.000Z', '2026-03-18T09:00:00.000Z',
+    ]);
+  });
+
+  it('keeps an EXDATE in the repeated DST hour on the same instant after a web save', () => {
+    const event = deserializeCalendarEvent([
+      'BEGIN:VEVENT', 'UID:exdate-fold', 'DTSTART;TZID=America/New_York:20261025T013000', 'DTEND;TZID=America/New_York:20261025T020000',
+      'RRULE:FREQ=DAILY;COUNT=14', 'EXDATE:20261101T063000Z', 'EXDATE;TZID=America/New_York:20261102T013000', 'END:VEVENT',
+    ].join('\r\n'));
+    expect(event.exceptions.map(d => d.toISOString())).toEqual(['2026-11-01T06:30:00.000Z', '2026-11-02T06:30:00.000Z']);
+    const text = serializeCalendarEvent({ ...event, title: 'Edited' });
+    expect(text).toContain('EXDATE:20261101T063000Z');
+    expect(text).toContain('EXDATE;TZID=America/New_York:20261102T013000');
+    const saved = deserializeCalendarEvent(text);
+    expect(saved.exceptions.map(d => d.toISOString())).toEqual(['2026-11-01T06:30:00.000Z', '2026-11-02T06:30:00.000Z']);
+    // The first 01:30 on the fold day is still an occurrence; the 2 November one stays excluded.
+    expect(expandEventRecurrence(saved, { start: new Date('2026-10-31Z'), end: new Date('2026-11-04Z') }).map(d => d.toISOString())).toEqual([
+      '2026-10-31T05:30:00.000Z', '2026-11-01T05:30:00.000Z', '2026-11-03T06:30:00.000Z',
+    ]);
+  });
+
+  it('writes EXDATEs away from a DST fold in the start zone', () => {
+    const event = deserializeCalendarEvent([
+      'BEGIN:VEVENT', 'UID:exdate-plain', 'DTSTART;TZID=America/New_York:20261025T013000', 'DTEND;TZID=America/New_York:20261025T020000',
+      'RRULE:FREQ=DAILY;COUNT=14', 'EXDATE:20261026T053000Z', 'END:VEVENT',
+    ].join('\r\n'));
+    const text = serializeCalendarEvent({ ...event, title: 'Edited' });
+    expect(text).toContain('EXDATE;TZID=America/New_York:20261026T013000');
+    expect(text).not.toMatch(/EXDATE:/);
   });
 
   it('quotes a custom identifier when an existing event is saved', () => {

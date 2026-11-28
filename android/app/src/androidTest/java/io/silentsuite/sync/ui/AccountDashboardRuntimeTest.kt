@@ -373,11 +373,15 @@ class AccountDashboardRuntimeTest {
         val appNeeded = activity.getString(R.string.dashboard_status_task_app_needed)
         val appDetail = activity.getString(R.string.dashboard_detail_task_provider)
         val learn = activity.getString(R.string.dashboard_install_task_app)
-        // The Tasks service row stays accurate whether or not the reminder is shown.
+        // The Tasks service row keeps its status whether or not the reminder is shown; the
+        // explanation appears once, in the headline while it shows the reminder.
         assertEquals(appNeeded, dashboardText(activity, R.id.taskdav_status))
         assertEquals(appDetail, dashboardText(activity, R.id.taskdav_status_detail))
+        assertEquals(if (shown) View.GONE else View.VISIBLE,
+            activity.findViewById<View>(R.id.taskdav_status_detail).visibility)
         val dismiss = activity.findViewById<View>(R.id.dashboard_task_reminder_dismiss)
-        val action = activity.findViewById<TextView>(R.id.dashboard_context_action)
+        val primary = activity.findViewById<TextView>(R.id.dashboard_context_action)
+        val action = activity.findViewById<TextView>(R.id.dashboard_task_app_action)
         if (shown) {
             assertTrue(dismiss.isShown)
             assertEquals(activity.getString(R.string.dashboard_task_reminder_dismiss), dismiss.contentDescription.toString())
@@ -387,12 +391,14 @@ class AccountDashboardRuntimeTest {
             assertEquals(appDetail, dashboardText(activity, R.id.dashboard_last_result))
             assertTrue(action.isShown)
             assertEquals(learn, action.text.toString())
+            assertFalse(primary.isShown)
         } else {
             assertEquals(View.GONE, dismiss.visibility)
             val row = activity.findViewById<View>(R.id.dashboard_status_row)
             assertFalse(row.isShown && dashboardText(activity, R.id.dashboard_overall_status) == appNeeded)
             assertFalse(row.isShown && dashboardText(activity, R.id.dashboard_last_result) == appDetail)
-            assertFalse(action.isShown && action.text.toString() == learn)
+            assertFalse(action.isShown)
+            assertFalse(primary.isShown && primary.text.toString() == learn)
         }
     }
 
@@ -521,8 +527,9 @@ class AccountDashboardRuntimeTest {
                     it == context.getString(R.string.dashboard_status_task_app_needed)
                 }
                 scenario.onActivity { activity ->
-                    assertEquals(context.getString(R.string.dashboard_install_task_app),
-                        activity.findViewById<TextView>(R.id.dashboard_context_action).text.toString())
+                    val taskAppLink = activity.findViewById<TextView>(R.id.dashboard_task_app_action)
+                    assertTrue(taskAppLink.isShown)
+                    assertEquals(context.getString(R.string.dashboard_install_task_app), taskAppLink.text.toString())
                 }
             }
         } finally {
@@ -710,7 +717,9 @@ class AccountDashboardRuntimeTest {
                     assertEquals(View.VISIBLE, row.findViewById<View>(R.id.read_only).visibility)
                     assertTrue(row.contentDescription.toString().contains("Read-only collection"))
                     assertTrue(activity.findViewById<View>(R.id.account_swipe_refresh).isShown)
-                    assertTrue(activity.findViewById<View>(R.id.dashboard_context_action).isShown)
+                    // Without a task provider the headline action is the task-app text link.
+                    assertTrue(activity.findViewById<View>(R.id.dashboard_context_action).isShown ||
+                        activity.findViewById<View>(R.id.dashboard_task_app_action).isShown)
 
                     // Invoke collection management and creation through the production listeners. The
                     // launch seam captures both intents before a destination Activity can load a session.

@@ -481,3 +481,28 @@ def test_custom_san_replacement_succeeds_with_explicit_confirmation(tmp_path, mo
     assert output.index(warning) < output.index("GENERATION STARTED")
     assert (tmp_path / "cert.pem").read_text() == "replacement cert"
     assert (tmp_path / "key.pem").read_text() == "replacement key"
+
+
+def test_list_accounts_shows_signed_out_accounts_with_local_copy(
+    tmp_path, monkeypatch, capsys, mem_db,
+):
+    from silentsuite_bridge.local_cache.models import User
+
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    accounts.store_authenticated_account(
+        "alice@example.com", "password", "alice-session", "https://server-a.test",
+    )
+    User.create(username="alice@example.com")
+    User.create(username="bob@example.com")
+
+    code = _run_main(["--list-accounts"], monkeypatch)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "alice@example.com (https://server-a.test)" in out
+    assert "Signed out, local copy kept:" in out
+    assert (
+        "- bob@example.com (remove with: silentsuite-bridge --remove-account bob@example.com)"
+        in out
+    )
+    assert "alice@example.com (remove with" not in out

@@ -324,6 +324,17 @@ export function toVEvent(event: CalendarEvent): string {
   // Keep the source DURATION while it still describes the event's length; otherwise write DTEND.
   const keepDuration = currentDuration(event) !== undefined;
 
+  // An exclusion whose wall clock in the zone does not read back as the same instant (the
+  // repeated hour of a DST change) is written in UTC on its own EXDATE line, so it keeps its
+  // instant. RFC 5545 allows UTC EXDATE values with a TZID DTSTART.
+  const exdateUtc = tzid
+    ? event.exceptions.map((d) => {
+      const second = Math.floor(d.getTime() / 1000) * 1000;
+      return parseICalDateValue(formatICalDateTimeLocal(d, tzid), tzid).date.getTime() !== second;
+    })
+    : [];
+  const anyExdateUtc = exdateUtc.some(Boolean);
+
   const vevent: VEvent = {
     uid: event.uid,
     // A DST-gap DTSTART is written with its intended wall clock, which the instant cannot recover.
@@ -336,12 +347,13 @@ export function toVEvent(event: CalendarEvent): string {
     rrule: event.recurrenceRule ?? undefined,
     exdate:
       event.exceptions.length > 0
-        ? event.exceptions.map(formatTimed)
+        ? event.exceptions.map((d, i) => (exdateUtc[i] ? formatICalDateTime(d) : formatTimed(d)))
         : undefined,
     exdateParams:
       event.exceptions.length > 0 && tzid
         ? { TZID: tzid }
         : undefined,
+    exdateTzids: anyExdateUtc ? exdateUtc.map((utc) => (utc ? undefined : tzid)) : undefined,
     valarms: event.alarms.length > 0 ? event.alarms : undefined,
     categories: event.categories && event.categories.length > 0 ? event.categories : undefined,
     status: event.status,
@@ -400,9 +412,10 @@ function readVEvent(veventStr: string): CalendarEvent {
     ? parseICalDateValue(vevent.dtend, endTzid)
     : { date: endFromDuration ?? new Date(startParsed.date.getTime()), allDay: startParsed.allDay };
 
-  const exdateTzid = vevent.exdateParams?.['TZID'] ?? (isAllDay ? undefined : startTzid);
+  const noZoneTzid = isAllDay ? undefined : startTzid;
+  const exdateTzid = vevent.exdateParams?.['TZID'] ?? noZoneTzid;
   const exceptions = (vevent.exdate ?? []).map(
-    (d) => parseICalDateValue(d, exdateTzid).date,
+    (d, i) => parseICalDateValue(d, vevent.exdateTzids ? vevent.exdateTzids[i] || noZoneTzid : exdateTzid).date,
   );
 
   // Captured from the wire value before parsing: a gap wall time cannot be recovered later.

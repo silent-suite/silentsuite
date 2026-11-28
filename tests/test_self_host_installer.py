@@ -960,7 +960,6 @@ def test_the_installer_never_asks_for_a_repository_setting(workspace):
 
 SELF_HOSTING_DOC = ROOT / "self-host" / "SELF-HOSTING.md"
 MANUAL_SETUP_DOCS = (
-    ROOT / "docs" / "self-hosting" / "manual-setup.md",
     ROOT / "apps" / "docs" / "self-hosting" / "manual-setup.md",
 )
 

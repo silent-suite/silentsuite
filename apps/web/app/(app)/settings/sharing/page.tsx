@@ -167,7 +167,7 @@ function FingerprintConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={submitting}
-            className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
+            className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary-strong))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-strong-hover))] disabled:opacity-50"
           >
             {confirmLabel}
           </button>
@@ -463,7 +463,7 @@ export default function SharingSettingsPage() {
         <p className="text-xs text-[rgb(var(--muted))]">
           Before sending or accepting an invitation, compare security fingerprints with the other person over a separate
           channel. Your own fingerprint is under{' '}
-          <Link href="/settings/security" className="underline text-[rgb(var(--primary))]">Settings → Security</Link>.
+          <Link href="/settings/security" className="underline text-[rgb(var(--primary-text))]">Settings → Security</Link>.
         </p>
       </div>
 
@@ -476,7 +476,7 @@ export default function SharingSettingsPage() {
       <section className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <MailPlus className="h-5 w-5 text-[rgb(var(--primary))]" />
+            <MailPlus className="h-5 w-5 text-[rgb(var(--primary-text))]" />
             <div>
               <p className="text-sm font-medium text-[rgb(var(--foreground))]">Invitations</p>
               <p className="text-xs text-[rgb(var(--muted))]">
@@ -519,7 +519,7 @@ export default function SharingSettingsPage() {
                     type="button"
                     onClick={() => handleAccept(invitation)}
                     disabled={!invitation.senderFingerprint}
-                    className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
+                    className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary-strong))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-strong-hover))] disabled:opacity-50"
                   >
                     Accept
                   </button>
@@ -549,7 +549,7 @@ export default function SharingSettingsPage() {
 
       <section className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-4">
         <div className="flex items-start gap-3">
-          <Users className="h-5 w-5 text-[rgb(var(--primary))] mt-0.5" />
+          <Users className="h-5 w-5 text-[rgb(var(--primary-text))] mt-0.5" />
           <div>
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">Collection members</p>
             <p className="text-xs text-[rgb(var(--muted))]">
@@ -587,32 +587,43 @@ export default function SharingSettingsPage() {
                   {MANAGED_BIRTHDAYS_MESSAGE}
                 </p>
               ) : card.accessLevel === 1 ? (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <input
-                    value={inviteUsernames[card.uid] ?? ''}
-                    onChange={(event) => {
-                      // Read the value now; the updater can run after React has restored the controlled DOM value.
-                      const value = event.target.value
-                      setInviteUsernames((current) => ({ ...current, [card.uid]: value }))
-                    }}
-                    placeholder="friend@example.com"
-                    className="max-md:min-h-[44px] min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))]"
-                  />
-                  <select
-                    value={inviteAccessLevels[card.uid] ?? 'readOnly'}
-                    onChange={(event) => {
-                      const value = event.target.value as CollectionAccessLevel
-                      setInviteAccessLevels((current) => ({ ...current, [card.uid]: value }))
-                    }}
-                    className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
-                  >
-                    {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                  <button type="button" onClick={() => handleInvite(card)} className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))]">
-                    Invite
-                  </button>
+                <div className="space-y-1">
+                  <label htmlFor={`invite-recipient-${card.uid}`} className="block text-xs font-medium text-[rgb(var(--foreground))]">
+                    Invite by username or email
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      id={`invite-recipient-${card.uid}`}
+                      value={inviteUsernames[card.uid] ?? ''}
+                      onChange={(event) => {
+                        // Read the value now; the updater can run after React has restored the controlled DOM value.
+                        const value = event.target.value
+                        setInviteUsernames((current) => ({ ...current, [card.uid]: value }))
+                      }}
+                      placeholder="e.g. friend@example.com"
+                      className="max-md:min-h-[44px] min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))]"
+                    />
+                    <select
+                      value={inviteAccessLevels[card.uid] ?? 'readOnly'}
+                      onChange={(event) => {
+                        const value = event.target.value as CollectionAccessLevel
+                        setInviteAccessLevels((current) => ({ ...current, [card.uid]: value }))
+                      }}
+                      className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
+                    >
+                      {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => handleInvite(card)}
+                      disabled={!inviteUsernames[card.uid]?.trim()}
+                      className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary-strong))] px-3 py-2 text-xs font-medium text-white enabled:hover:bg-[rgb(var(--primary-strong-hover))] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Invite
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <p className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-xs text-[rgb(var(--muted))]">
@@ -668,7 +679,7 @@ export default function SharingSettingsPage() {
 
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
         <div className="flex items-start gap-3">
-          <ShieldCheck className="h-5 w-5 text-[rgb(var(--primary))] mt-0.5 flex-shrink-0" />
+          <ShieldCheck className="h-5 w-5 text-[rgb(var(--primary-text))] mt-0.5 flex-shrink-0" />
           <div className="space-y-1">
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">End-to-end encrypted sharing</p>
             <p className="text-xs text-[rgb(var(--muted))]">

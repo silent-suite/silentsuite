@@ -215,6 +215,7 @@ def test_bounded_diagnostic_code_maps_by_table_lookup():
 
 
 def test_reauth_required_status_reports_its_own_code():
+    _store_accounts((PRIVATE_EMAIL, PRIVATE_SERVER), (PRIVATE_USER, PRIVATE_SERVER))
     update_status("error", error=web_module.REAUTH_REQUIRED, account=PRIVATE_EMAIL)
     update_status("error", error="ConnectionError", account=PRIVATE_USER)
 
@@ -223,6 +224,21 @@ def test_reauth_required_status_reports_its_own_code():
     assert report.error_code_for("ReauthRequired") == "reauth_required"
     assert diagnostics["error_codes"] == ["other", "reauth_required"]
     assert diagnostics["sync_status"] == "error"
+
+
+def test_no_accounts_reports_offline_like_the_dashboard():
+    # The dashboard shows Disconnected with no accounts; the report must not
+    # turn the initial "starting" state into "syncing".
+    assert web_module._bridge_status["state"] == "starting"
+    diagnostics = web_module._report_diagnostics()
+    assert diagnostics["sync_status"] == "offline"
+    assert diagnostics["fields"]["accounts"] == 0
+    assert "Disconnected" in web_module._render_dashboard()
+
+
+def test_starting_with_accounts_still_reports_syncing():
+    _store_accounts((PRIVATE_EMAIL, report.HOSTED_SERVER_URL))
+    assert web_module._report_diagnostics()["sync_status"] == "syncing"
 
 
 def test_unknown_state_and_unmapped_codes_become_other_and_unknown():

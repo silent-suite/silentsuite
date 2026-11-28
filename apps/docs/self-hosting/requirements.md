@@ -11,7 +11,8 @@ Before you begin, make sure you have the following.
 | **Installer tools** | `curl`, `tar`, `sha256sum` (or `shasum`), and `openssl`. `install.sh` checks for these before it starts; `openssl` generates the database password, admin password, and bootstrap token. |
 | **Domain name** | A domain you control (e.g., `sync.example.com`), with the ability to create DNS A records. |
 | **Server resources** | Minimum 1 GB RAM, 10 GB disk. More is better if you expect multiple users. |
-| **Reverse proxy** | Caddy, nginx, Traefik, Cloudflare Tunnel, or similar -- for TLS termination. |
+| **Reverse proxy** | Caddy, nginx, Traefik, Cloudflare Tunnel, or similar -- for TLS termination. The stack itself does not include one. |
+| **Open ports** | Whichever ports your reverse proxy needs reachable from the internet, typically 443, plus 80 if your proxy gets Let's Encrypt certificates through the HTTP-01 challenge. |
 
 ## Verify Docker Is Installed
 

@@ -31,6 +31,7 @@ import java.net.URI
 
 class LoginCredentialsFragment : Fragment() {
     internal lateinit var editUserName: EditText
+    internal lateinit var editUserNameLayout: TextInputLayout
     internal lateinit var editUrlPassword: TextInputLayout
 
     internal lateinit var showAdvanced: TextView
@@ -49,6 +50,7 @@ class LoginCredentialsFragment : Fragment() {
 
 
         editUserName = v.findViewById<TextInputEditText>(R.id.user_name)
+        editUserNameLayout = v.findViewById<TextInputLayout>(R.id.user_name_layout)
         editUrlPassword = v.findViewById<TextInputLayout>(R.id.url_password)
         showAdvanced = v.findViewById<TextView>(R.id.show_advanced)
         customServer = v.findViewById<TextInputEditText>(R.id.custom_server)
@@ -130,10 +132,10 @@ class LoginCredentialsFragment : Fragment() {
 
         val userName = editUserName.text.toString()
         if (userName.isEmpty()) {
-            editUserName.error = getString(R.string.login_email_address_error)
+            editUserNameLayout.error = getString(R.string.login_email_address_error)
             valid = false
         } else {
-            editUserName.error = null
+            editUserNameLayout.error = null
         }
 
         val password = editUrlPassword.editText?.text.toString()

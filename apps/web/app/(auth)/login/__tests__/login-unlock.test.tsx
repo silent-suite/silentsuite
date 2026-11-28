@@ -20,6 +20,7 @@ vi.mock('next/navigation', () => ({
 }))
 
 vi.mock('@/app/stores/use-auth-store', () => ({
+  AUTH_REFRESH_RETRY_MESSAGE: 'restore-retry',
   useAuthStore: Object.assign((selector?: (s: typeof authState) => unknown) =>
     selector ? selector(authState) : authState, { getState: () => authState }),
 }))
@@ -186,5 +187,15 @@ describe('LoginPage server selection', () => {
 
     expect(authState.login).toHaveBeenCalledWith('user@example.com', 'wrong-password', 'https://other.example.test', false)
     expect(localStorage.getItem('silentsuite-server-url')).toBeNull()
+  })
+})
+
+describe('LoginPage server error', () => {
+  it('announces the server error to screen readers', () => {
+    authState.error = 'Invalid email or password. Please try again.'
+
+    render(<LoginPage />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid email or password. Please try again.')
   })
 })

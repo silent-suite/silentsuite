@@ -59,14 +59,7 @@ const toastStoreMock = vi.hoisted(() => ({
 const dataCacheMock = vi.hoisted(() => ({
   ensureEncryptedEnvelope: vi.fn(async () => true),
   ensureFingerprint: vi.fn(async () => true),
-  getCacheCapabilityStatus: vi.fn(() => ({ featureFlagEnabled: false, encryptedEnvelopeAvailable: false, enabled: false })),
-  getStoken: vi.fn(async () => null),
-  setStoken: vi.fn(async () => {}),
-  putItems: vi.fn(async () => {}),
   putItem: vi.fn(async () => {}),
-  deleteItem: vi.fn(async () => {}),
-  replaceItemsForCollection: vi.fn(async () => {}),
-  isCacheEnabled: vi.fn(() => false),
 }))
 
 // Stub the offline queue so isOfflineError + enqueue don't try to open IndexedDB.
@@ -125,14 +118,7 @@ beforeEach(() => {
   toastStoreMock.showErrorToast.mockReset()
   dataCacheMock.ensureEncryptedEnvelope.mockReset().mockResolvedValue(true)
   dataCacheMock.ensureFingerprint.mockReset().mockResolvedValue(true)
-  dataCacheMock.getCacheCapabilityStatus.mockReset().mockReturnValue({ featureFlagEnabled: false, encryptedEnvelopeAvailable: false, enabled: false })
-  dataCacheMock.getStoken.mockReset().mockResolvedValue(null)
-  dataCacheMock.setStoken.mockReset().mockResolvedValue(undefined)
-  dataCacheMock.putItems.mockReset().mockResolvedValue(undefined)
   dataCacheMock.putItem.mockReset().mockResolvedValue(undefined)
-  dataCacheMock.deleteItem.mockReset().mockResolvedValue(undefined)
-  dataCacheMock.replaceItemsForCollection.mockReset().mockResolvedValue(undefined)
-  dataCacheMock.isCacheEnabled.mockReset().mockReturnValue(false)
   useEtebaseStore.setState({ accountFingerprint: 'test-account-fingerprint' })
   sessionStorage.clear()
 })
@@ -545,30 +531,6 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     expect(useEtebaseStore.getState().isInitialized).toBe(true)
   })
 
-  it('ignores SyncEngine stoken callbacks from an old account epoch', async () => {
-    await primeSuccessfulRestore()
-    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
-    dataCacheMock.isCacheEnabled.mockReturnValue(true)
-    let stokenHandler!: (event: { collectionType: string; collectionUid: string; stoken: string | null }) => void
-    coreMock.SyncEngine.mockImplementation(function (this: any) {
-      this.trackCollection = vi.fn()
-      this.onStokenAdvance = vi.fn((handler) => {
-        stokenHandler = handler
-      })
-      this.start = vi.fn(async () => {})
-    })
-
-    await useEtebaseStore.getState().initialize()
-    expect(stokenHandler).toBeTruthy()
-    dataCacheMock.setStoken.mockClear()
-
-    bumpAccountEpoch()
-    stokenHandler({ collectionType: 'etebase.vevent', collectionUid: 'old-calendar', stoken: 'old-stoken' })
-    await Promise.resolve()
-
-    expect(dataCacheMock.setStoken).not.toHaveBeenCalled()
-  })
-
   it('marks a failed domain without aborting later domains and still starts sync', async () => {
     await primeSuccessfulRestore()
     coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
@@ -658,92 +620,44 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     expect(calendarEvent).toMatchObject({ type: 'calendar', status: 'loaded', itemCount: 1, collectionCount: 1 })
   })
 
-  it('hydrates local cache only after fingerprint survives and envelope is available', async () => {
+  it('restores the encrypted replay envelope after the fingerprint check', async () => {
     await primeSuccessfulRestore()
-    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
-    dataCacheMock.isCacheEnabled.mockReturnValueOnce(false).mockReturnValue(true)
-    dataCacheMock.ensureFingerprint.mockResolvedValueOnce(true)
-    dataCacheMock.ensureEncryptedEnvelope.mockResolvedValueOnce(true)
     coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
 
-    const calls: string[] = []
-    await useEtebaseStore.getState().initialize({
-      onCacheHydrate: () => calls.push('cacheHydrate'),
-      onDomainLoaded: (event) => calls.push(`domain:${event.type}`),
-    })
+    await useEtebaseStore.getState().initialize()
 
     expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint', expect.any(Number))
     expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledWith(expect.any(Number))
-    expect(calls).toEqual(['cacheHydrate', 'domain:calendar', 'domain:tasks', 'domain:contacts', 'domain:notes'])
-  })
-
-  it('restores the encrypted replay envelope when the general cache flag is disabled', async () => {
-    await primeSuccessfulRestore()
-    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({
-      featureFlagEnabled: false,
-      encryptedEnvelopeAvailable: false,
-      enabled: false,
-    })
-    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
-    const onCacheHydrate = vi.fn()
-
-    await useEtebaseStore.getState().initialize({ onCacheHydrate })
-
-    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint', expect.any(Number))
-    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledWith(expect.any(Number))
-    expect(onCacheHydrate).not.toHaveBeenCalled()
-  })
-
-  it('does not hydrate local cache when fingerprint mismatch wipes stale cache', async () => {
-    await primeSuccessfulRestore()
-    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
-    dataCacheMock.isCacheEnabled.mockReturnValueOnce(false).mockReturnValue(true)
-    dataCacheMock.ensureFingerprint.mockResolvedValueOnce(false)
-    dataCacheMock.ensureEncryptedEnvelope.mockResolvedValueOnce(true)
-    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
-
-    const onCacheHydrate = vi.fn()
-    await useEtebaseStore.getState().initialize({ onCacheHydrate })
-
-    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint', expect.any(Number))
-    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledWith(expect.any(Number))
-    expect(onCacheHydrate).not.toHaveBeenCalled()
-    expect(useEtebaseStore.getState().isInitialized).toBe(true)
+    expect(dataCacheMock.ensureFingerprint.mock.invocationCallOrder[0]).toBeLessThan(dataCacheMock.ensureEncryptedEnvelope.mock.invocationCallOrder[0]!)
   })
 
   it('continues restore when encrypted cache envelope setup fails', async () => {
     await primeSuccessfulRestore()
-    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
     dataCacheMock.ensureFingerprint.mockResolvedValueOnce(true)
     dataCacheMock.ensureEncryptedEnvelope.mockRejectedValueOnce(new Error('quota'))
     coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
 
-    const onCacheHydrate = vi.fn()
-    await useEtebaseStore.getState().initialize({ onCacheHydrate })
+    await useEtebaseStore.getState().initialize()
 
-    expect(onCacheHydrate).not.toHaveBeenCalled()
     expect(useEtebaseStore.getState().isInitialized).toBe(true)
     expect(useEtebaseStore.getState().domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded' })
   })
 
-  it('quietly cancels cache setup after an account boundary without logging or hydrating', async () => {
+  it('quietly cancels cache setup after an account boundary without logging', async () => {
     await primeSuccessfulRestore()
-    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
     let releaseFingerprint!: () => void
     dataCacheMock.ensureFingerprint.mockImplementationOnce(() => new Promise<boolean>((resolve) => {
       releaseFingerprint = () => resolve(true)
     }))
-    const onCacheHydrate = vi.fn()
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    const initialize = useEtebaseStore.getState().initialize({ onCacheHydrate })
+    const initialize = useEtebaseStore.getState().initialize()
     await vi.waitFor(() => expect(dataCacheMock.ensureFingerprint).toHaveBeenCalled())
     bumpAccountEpoch()
     releaseFingerprint()
     await initialize
 
     expect(dataCacheMock.ensureEncryptedEnvelope).not.toHaveBeenCalled()
-    expect(onCacheHydrate).not.toHaveBeenCalled()
     expect(coreMock.listCollections).not.toHaveBeenCalled()
     expect(warnSpy).not.toHaveBeenCalled()
     warnSpy.mockRestore()
@@ -753,9 +667,8 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     await primeSuccessfulRestore()
     let releaseList!: (collections: unknown[]) => void
     coreMock.listCollections.mockImplementationOnce(() => new Promise((resolve) => { releaseList = resolve }))
-    const onCacheHydrate = vi.fn()
 
-    const initialize = useEtebaseStore.getState().initialize({ onCacheHydrate })
+    const initialize = useEtebaseStore.getState().initialize()
     await vi.waitFor(() => expect(coreMock.listCollections).toHaveBeenCalledTimes(1))
     bumpAccountEpoch()
     releaseList([])
@@ -763,7 +676,6 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
 
     expect(coreMock.createCollection).not.toHaveBeenCalled()
     expect(coreMock.listCollections).toHaveBeenCalledTimes(1)
-    expect(onCacheHydrate).not.toHaveBeenCalled()
   })
 
   it('remains backwards-compatible when called with no options', async () => {
@@ -1090,7 +1002,6 @@ describe('useEtebaseStore.createItemsBatch', () => {
 
     await expect(mutation).resolves.toEqual([null])
     expect(itemManager.batch).not.toHaveBeenCalled()
-    expect(dataCacheMock.putItems).not.toHaveBeenCalled()
     expect(useEtebaseStore.getState().itemCache.has('old-created')).toBe(false)
     expect(errorSpy).not.toHaveBeenCalled()
     expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
@@ -1116,7 +1027,6 @@ describe('useEtebaseStore.createItemsBatch', () => {
 
     expect(result).toEqual(Array(26).fill(null))
     expect(itemManager.batch).not.toHaveBeenCalled()
-    expect(dataCacheMock.putItems).not.toHaveBeenCalled()
     expect(useEtebaseStore.getState().itemCache.size).toBe(0)
     expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
   })
@@ -1138,7 +1048,6 @@ describe('useEtebaseStore.createItemsBatch', () => {
 
     expect(result).toEqual([null])
     expect(itemManager.batch).toHaveBeenCalledTimes(1)
-    expect(dataCacheMock.putItems).not.toHaveBeenCalled()
     expect(useEtebaseStore.getState().itemCache.size).toBe(0)
     expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
   })
@@ -1152,7 +1061,6 @@ describe('useEtebaseStore.createItemsBatch', () => {
     }
     const syncEngine: MockSyncEngine = { pause: vi.fn(), resume: vi.fn() }
     setupStoreWithMocks(itemManager, syncEngine)
-    dataCacheMock.isCacheEnabled.mockReturnValue(true)
 
     const mutation = useEtebaseStore.getState().createItemsBatch('calendar', [{ content: 'OLD', tempId: 'old-temp' }])
     await vi.waitFor(() => expect(itemManager.batch).toHaveBeenCalled())
@@ -1162,7 +1070,6 @@ describe('useEtebaseStore.createItemsBatch', () => {
 
     await expect(mutation).resolves.toEqual([null])
     expect(useEtebaseStore.getState().itemCache.has('old-batch-item')).toBe(false)
-    expect(dataCacheMock.putItems).not.toHaveBeenCalled()
     expect(syncEngine.resume).not.toHaveBeenCalled()
     expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
   })
@@ -1180,7 +1087,6 @@ describe('useEtebaseStore.updateItem account boundary', () => {
       itemTypeMap: new Map([['item-old', 'calendar']]),
       itemCollectionMap: new Map([['item-old', 'col-1']]),
     })
-    dataCacheMock.isCacheEnabled.mockReturnValue(true)
 
     const mutation = useEtebaseStore.getState().updateItem('calendar', 'item-old', 'OLD CONTENT')
     await vi.waitFor(() => expect(coreMock.updateItem).toHaveBeenCalled())
@@ -1960,8 +1866,6 @@ describe('useEtebaseStore.refreshCollection', () => {
         }),
       }),
     }
-
-    dataCacheMock.isCacheEnabled.mockReturnValue(true)
     useEtebaseStore.setState({
       account: oldAccount as any,
       collections: { calendar: [{ uid: 'old-calendar' }] as any[], tasks: [], contacts: [], notes: [], preferences: [] },
@@ -1990,7 +1894,6 @@ describe('useEtebaseStore.refreshCollection', () => {
     await expect(refresh).rejects.toBeInstanceOf(AccountBoundaryChangedError)
     expect(useEtebaseStore.getState().itemCache.size).toBe(0)
     expect(useEtebaseStore.getState().collections.calendar).toEqual([])
-    expect(dataCacheMock.replaceItemsForCollection).not.toHaveBeenCalled()
   })
 
   it('does not mark the new account failed when an old-account refresh rejects', async () => {
@@ -2057,6 +1960,93 @@ describe('useEtebaseStore.refreshCollection', () => {
 
     await expect(fetch).rejects.toBeInstanceOf(AccountBoundaryChangedError)
     expect(useEtebaseStore.getState().itemCache.size).toBe(0)
+  })
+})
+
+describe('useEtebaseStore item listing page cursor guard', () => {
+  // A runaway listing on code without the guard must fail the test, not hang the worker.
+  const RUNAWAY = 50
+
+  function stuckPage(stoken: string | null) {
+    let calls = 0
+    return async () => {
+      calls += 1
+      if (calls > RUNAWAY) throw new Error('runaway listing')
+      return { stoken, done: false }
+    }
+  }
+
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      restoreBlocked: false,
+      syncEngine: null,
+    })
+  })
+
+  it.each([
+    ['a repeated', 'same-stoken'],
+    ['a missing', null],
+  ])('fails the initial domain load on %s stoken while not done', async (_label, stoken) => {
+    const { secureGet } = await import('@/app/lib/secure-storage')
+    vi.mocked(secureGet).mockResolvedValue('raw-session')
+    coreMock.restoreSession.mockResolvedValue({ id: 'account' })
+    coreMock.getAccountFingerprint.mockReturnValue('fingerprint')
+    coreMock.listCollections.mockImplementation(async (_account, type) => [mockCollection(type)])
+    const page = stuckPage(stoken)
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => (
+      collection.uid === 'etebase.vevent' ? { items: [], ...(await page()) } : { items: [], stoken: null, done: true }
+    ))
+    coreMock.SyncEngine.mockImplementation(function (this: any) {
+      this.trackCollection = vi.fn()
+      this.onStokenAdvance = vi.fn()
+      this.start = vi.fn(async () => {})
+    })
+
+    await useEtebaseStore.getState().initialize()
+
+    const calendarCalls = coreMock.listItems.mock.calls.filter((call) => call[1].uid === 'etebase.vevent')
+    expect(calendarCalls.length).toBeLessThanOrEqual(2)
+    expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('failed')
+    expect(useEtebaseStore.getState().domainLoadState.tasks).toBe('loaded')
+  })
+
+  it.each([
+    ['a repeated', 'same-stoken'],
+    ['a missing', null],
+  ])('fails refreshCollection on %s stoken instead of reporting a complete listing', async (_label, stoken) => {
+    const page = stuckPage(stoken)
+    const list = vi.fn(async () => ({ data: [mockItem('item-1', 'first page')], ...(await page()) }))
+    const account = {
+      getCollectionManager: () => ({
+        fetch: vi.fn(async (uid: string) => ({ uid })),
+        getItemManager: () => ({ list }),
+      }),
+    }
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], notes: [], preferences: [] },
+      isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
+    })
+
+    await useEtebaseStore.getState().refreshCollection('calendar', 'col-1')
+
+    expect(list.mock.calls.length).toBeLessThanOrEqual(2)
+    expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('failed')
+  })
+
+  it('caps the number of pages even when every stoken is new', async () => {
+    const { nextItemPageStoken } = await import('../use-etebase-store')
+    const next = nextItemPageStoken(3)
+    expect(next({ stoken: 'a', done: false })).toBe('a')
+    expect(next({ stoken: 'b', done: false })).toBe('b')
+    expect(() => next({ stoken: 'c', done: false })).toThrow(/more than 3 pages/)
   })
 })
 

@@ -1,2 +1,0 @@
-* Fix crashes on older Android devices
-* Fix crashes with some screen not loading for some users.

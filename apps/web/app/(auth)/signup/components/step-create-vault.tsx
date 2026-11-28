@@ -93,7 +93,7 @@ export function PasswordKeyAcknowledgement({
       <button
         onClick={onContinue}
         disabled={!acknowledged || busy}
-        className="w-full rounded-lg bg-[rgb(var(--primary))] px-4 py-3 text-sm font-medium text-white hover:bg-[rgb(var(--primary-hover))] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full rounded-lg bg-[rgb(var(--primary-strong))] px-4 py-3 text-sm font-medium text-white hover:bg-[rgb(var(--primary-strong-hover))] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {busy ? 'Creating your account...' : 'Continue to your workspace'}
       </button>

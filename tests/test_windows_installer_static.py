@@ -79,6 +79,17 @@ def test_windows_installer_starts_bridge_with_background_mode_and_polls_dashboar
     assert 'Join-Path $env:LOCALAPPDATA "silentsuite\\silentsuite-bridge\\bridge.log"' in script
 
 
+def test_windows_installer_summary_shows_sign_in_only_when_login_did_not_complete():
+    script = read(INSTALLER)
+    done_block = script[script.index("# --- Done ---"):]
+    done_block = done_block[:done_block.index("} catch {")]
+
+    assert "Log in:" not in done_block
+    guard = done_block.index("if (-not $LoginOk) {")
+    sign_in = done_block.index("Sign in:   on the dashboard, or run")
+    assert guard < sign_in < done_block.index("}", guard)
+
+
 def test_windows_installer_checks_autostart_exit_code_before_claiming_success():
     script = read(INSTALLER)
     autostart_block = script[script.index("# --- Auto-start ---"):script.index("# --- Login ---")]

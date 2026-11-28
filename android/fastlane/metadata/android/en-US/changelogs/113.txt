@@ -1,3 +1,0 @@
-* Fix contacts sync on Android 11
-* Fix issue with tasks.org crashing because of permissions
-* Update cert4android

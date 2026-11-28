@@ -9,7 +9,7 @@ vi.mock('next/navigation', () => ({
 }))
 vi.mock('@/app/stores/use-auth-store', () => {
   const state = { login: vi.fn(), unlockEtebaseSession: vi.fn(), isLoading: false, error: null, clearError: vi.fn(), isAuthenticated: false }
-  return { useAuthStore: Object.assign(() => state, { getState: () => state }) }
+  return { AUTH_REFRESH_RETRY_MESSAGE: 'restore-retry', useAuthStore: Object.assign(() => state, { getState: () => state }) }
 })
 vi.mock('@/app/stores/use-etebase-store', () => {
   observation.etebaseImports += 1

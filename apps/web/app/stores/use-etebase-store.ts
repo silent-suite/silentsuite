@@ -32,23 +32,15 @@ import {
 import { secureGet } from '@/app/lib/secure-storage'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
-import { parseVCard } from '@silentsuite/core/utils/vcard-parser'
+import { parseVCard, splitVCardFile } from '@silentsuite/core/utils/vcard-parser'
 import {
   ensureEncryptedEnvelope as cacheEnsureEncryptedEnvelope,
   ensureFingerprint as cacheEnsureFingerprint,
-  getCacheCapabilityStatus,
-  getStoken as cacheGetStoken,
-  setStoken as cacheSetStoken,
-  putItems as cachePutItems,
   putItem as cachePutItem,
   getItemsByType as cacheGetItemsByType,
-  deleteItem as cacheDeleteItem,
-  replaceItemsForCollection as cacheReplaceItemsForCollection,
-  isCacheEnabled as isLocalCacheEnabled,
   openQueuePayload as cacheOpenQueuePayload,
   sealQueuePayload as cacheSealQueuePayload,
   sealedPayloadDigest as cacheSealedPayloadDigest,
-  type CachedItem,
 } from '@/app/lib/data-cache'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { RestoreDiagnosticsRecorder, classifySessionPersistence } from '@/app/lib/sync-restore-diagnostics'
@@ -132,13 +124,6 @@ export interface InitialDomainLoadEvent {
 
 export interface InitializeOptions {
   /**
-   * Called once after the Etebase session fingerprint has been verified and
-   * the encrypted local-cache envelope is available, before network item
-   * enumeration starts. This keeps cache-first paint account-scoped.
-   */
-  onCacheHydrate?: () => void | Promise<void>
-
-  /**
    * Called after each visible domain reaches a terminal ('loaded'/'failed')
    * state and the store's maps + domainLoadState have been published. Lets a
    * fast domain (calendar) paint before slower domains finish enumerating.
@@ -172,14 +157,6 @@ const COLLECTION_DEFINITIONS: [VisibleCollectionTypeKey, string, string][] = [
   ['contacts', COLLECTION_TYPE_CONTACTS, 'Personal Contacts'],
   ['notes', COLLECTION_TYPE_NOTES, 'Personal Notes'],
 ]
-
-function collectionTypeToKey(ct: string): CollectionTypeKey | null {
-  if (ct === COLLECTION_TYPE_CALENDAR) return 'calendar'
-  if (ct === COLLECTION_TYPE_TASKS) return 'tasks'
-  if (ct === COLLECTION_TYPE_CONTACTS) return 'contacts'
-  if (ct === COLLECTION_TYPE_NOTES) return 'notes'
-  return null
-}
 
 function keyToCollectionType(type: CollectionTypeKey): string {
   if (type === 'calendar') return COLLECTION_TYPE_CALENDAR
@@ -252,7 +229,6 @@ async function startSyncEngine(
   serverUrl: string,
   collections: Record<CollectionTypeKey, any[]>,
   accountEpoch: number,
-  cacheEnabled: boolean,
   diagnostics?: RestoreDiagnosticsRecorder,
 ): Promise<any | null> {
   const engine = new core.SyncEngine({
@@ -261,7 +237,7 @@ async function startSyncEngine(
   })
 
   try {
-    return await trackAndStartSyncEngine(engine, account, collections, accountEpoch, cacheEnabled, diagnostics)
+    return await trackAndStartSyncEngine(engine, account, collections, accountEpoch, diagnostics)
   } catch (err) {
     // A partially started engine may already hold a poll or reconnect timer.
     engine.stop()
@@ -274,35 +250,19 @@ async function trackAndStartSyncEngine(
   account: any,
   collections: Record<CollectionTypeKey, any[]>,
   accountEpoch: number,
-  cacheEnabled: boolean,
   diagnostics?: RestoreDiagnosticsRecorder,
 ): Promise<any | null> {
   // Track all collections
   diagnostics?.startPhase('syncEngineTrackCollections')
   for (const [key, colType] of COLLECTION_DEFINITIONS) {
     for (const collection of collections[key]) {
-      await trackCollectionWithSyncEngine(engine, colType, key, collection.uid, accountEpoch)
+      await trackCollectionWithSyncEngine(engine, colType, collection.uid, accountEpoch)
       assertCurrentAccountEpoch(accountEpoch)
     }
   }
   diagnostics?.completePhase('syncEngineTrackCollections', {
     collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
   })
-
-  // Seed persisted stokens before starting so the first sync round
-  // pulls only deltas instead of refetching the whole vault. Wire the
-  // advance handler so subsequent stoken updates are persisted too.
-  if (cacheEnabled) {
-    engine.onStokenAdvance((event: { collectionType: string; collectionUid: string; stoken: string | null }) => {
-      if (!isCurrentAccountEpoch(accountEpoch)) return
-      const key = collectionTypeToKey(event.collectionType)
-      if (!key) return
-      void cacheSetStoken(key, event.collectionUid, event.stoken, accountEpoch).catch((err) => {
-        if (err instanceof AccountBoundaryChangedError) return
-        logger.warn('[etebase-store] Failed to persist sync cursor', getSafeErrorDetails(err))
-      })
-    })
-  }
 
   diagnostics?.startPhase('syncEngineStart')
   await engine.start(account)
@@ -312,6 +272,26 @@ async function trackAndStartSyncEngine(
   }
   diagnostics?.completePhase('syncEngineStart')
   return engine
+}
+
+/** Far above any real collection; a listing that reaches it is treated as broken. */
+const MAX_ITEM_LIST_PAGES = 10_000
+
+/**
+ * One per listing. Called for each page the server marks not done, it returns the
+ * cursor for the next page, or throws when that cursor is missing or repeats or the
+ * listing runs past `maxPages`, so a misbehaving server cannot keep a loop paging
+ * forever or restart it from the first page.
+ */
+export function nextItemPageStoken(maxPages = MAX_ITEM_LIST_PAGES) {
+  const seen = new Set<string>()
+  return (page: { stoken?: string | null; done: boolean }): string => {
+    if (seen.size + 1 >= maxPages) throw new Error(`Item listing has more than ${maxPages} pages`)
+    if (!page.stoken) throw new Error('Item listing is not done but returned no stoken')
+    if (seen.has(page.stoken)) throw new Error('Item listing returned a repeated stoken')
+    seen.add(page.stoken)
+    return page.stoken
+  }
 }
 
 /**
@@ -337,6 +317,7 @@ async function loadInitialDomainItems(
   for (const collection of typedCollections) {
     let stoken: string | null = null
     let done = false
+    const nextStoken = nextItemPageStoken()
 
     while (!done) {
       const response = await core.listItems(account, collection, stoken)
@@ -352,8 +333,8 @@ async function loadInitialDomainItems(
         maps.itemCollectionMap.set(item.uid, collection.uid)
         itemCount += 1
       }
-      stoken = response.stoken
       done = response.done
+      if (!done) stoken = nextStoken(response)
     }
   }
 
@@ -408,64 +389,12 @@ function buildInitialDomainPublish(
 async function trackCollectionWithSyncEngine(
   syncEngine: any | null,
   collectionType: string,
-  type: CollectionTypeKey,
   collectionUid: string,
   accountEpoch?: number,
 ): Promise<void> {
   if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
   if (!syncEngine) return
   syncEngine.trackCollection(collectionType as CollectionType, collectionUid)
-  if (!isLocalCacheEnabled()) return
-  try {
-    const stoken = await cacheGetStoken(collectionUid)
-    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
-    if (stoken) {
-      syncEngine.setStoken?.(collectionUid, stoken)
-      logger.debug(`[etebase-store] Seeded ${type} stoken from cache`)
-    }
-  } catch (err) {
-    if (err instanceof AccountBoundaryChangedError) throw err
-    logger.warn(`[etebase-store] Failed to seed ${type} stoken`, err)
-  }
-}
-
-/**
- * Best-effort cache write. Decodes the item content (already decrypted by
- * the Etebase SDK at this point) and stores it under the item UID. Failures
- * are swallowed inside data-cache; we never block on cache writes.
- */
-async function writeItemToCache(
-  type: CollectionTypeKey,
-  collectionUid: string,
-  itemUid: string,
-  content: string,
-  accountEpoch: number,
-  meta?: ItemMeta,
-): Promise<void> {
-  if (!isLocalCacheEnabled()) return
-  const record: CachedItem = {
-    itemUid,
-    collectionType: type,
-    collectionUid,
-    content: await toCacheContent(type, itemUid, collectionUid, content, meta),
-    lastModified: Date.now(),
-  }
-  await displayCacheAfterAck(() => cachePutItem(record, accountEpoch), accountEpoch)
-}
-
-/**
- * A display-cache write after the server acknowledged a change. The cache is
- * never authority: a record another tab cleared or re-owned refuses the write,
- * and that does not undo the remote change while this tab still owns its
- * account. A boundary this tab crossed still propagates.
- */
-async function displayCacheAfterAck(write: () => Promise<void>, accountEpoch: number): Promise<void> {
-  try {
-    await write()
-  } catch (err) {
-    if (!(err instanceof AccountBoundaryChangedError) || !isCurrentAccountEpoch(accountEpoch)) throw err
-    logger.warn('[etebase-store] Display cache refused a write after a remote change')
-  }
 }
 
 /**
@@ -483,73 +412,6 @@ async function toCacheContent(
   if (type !== 'notes') return content
   const core = await import('@silentsuite/core')
   return core.serializeNote(core.noteFromEtebaseItem(itemUid, content, meta, collectionUid))
-}
-
-/**
- * When replacing cached records with server truth, keep the encrypted replay
- * payloads of items that still have queued offline mutations. The offline
- * queue stores no plaintext and reads that payload back at replay time.
- */
-export async function keepPendingCacheRecords(
-  type: CollectionTypeKey,
-  records: CachedItem[],
-  accountEpoch: number,
-  accountFingerprint: string | null,
-  collectionUid?: string,
-): Promise<CachedItem[]> {
-  if (!accountFingerprint) return records
-  const entries = await getQueuedMutations({ accountEpoch, accountFingerprint })
-  assertCurrentAccountEpoch(accountEpoch)
-  const pendingUids = new Set(
-    entries.filter((entry) => entry.collectionType === type && entry.itemUid).map((entry) => entry.itemUid as string),
-  )
-  if (pendingUids.size === 0) return records
-  const existing = await cacheGetItemsByType(type)
-  assertCurrentAccountEpoch(accountEpoch)
-  const keptByUid = new Map(
-    existing
-      .filter((record) => pendingUids.has(record.itemUid) && (!collectionUid || record.collectionUid === collectionUid))
-      .map((record) => [record.itemUid, record] as const),
-  )
-  // A pending item whose payload is unreadable keeps the server record instead.
-  const merged = records.map((record) => keptByUid.get(record.itemUid) ?? record)
-  const serverUids = new Set(records.map((record) => record.itemUid))
-  for (const [uid, record] of keptByUid) {
-    if (!serverUids.has(uid)) merged.push(record)
-  }
-  return merged
-}
-
-/**
- * When painting from the cache, hide records whose delete is still pending in
- * the offline queue of this account. The cached copy stays for replay; a queue
- * that cannot be read hides nothing.
- */
-export async function withoutPendingDeletes(
-  type: CollectionTypeKey,
-  records: CachedItem[],
-  accountEpoch: number,
-  accountFingerprint: string | null,
-): Promise<CachedItem[]> {
-  if (!accountFingerprint || records.length === 0) return records
-  let entries: QueueEntry[]
-  try {
-    entries = await getQueuedMutations({ accountEpoch, accountFingerprint })
-  } catch (err) {
-    if (err instanceof AccountBoundaryChangedError) throw err
-    // A read that failed across an account change belongs to the old account.
-    assertCurrentAccountEpoch(accountEpoch)
-    logger.warn('[etebase-store] Failed to read pending deletes for cache hydration', getSafeErrorDetails(err))
-    return records
-  }
-  assertCurrentAccountEpoch(accountEpoch)
-  const deletedUids = new Set(
-    entries
-      .filter((entry) => entry.type === 'delete' && entry.status === 'pending' && entry.collectionType === type && entry.itemUid)
-      .map((entry) => entry.itemUid as string),
-  )
-  if (deletedUids.size === 0) return records
-  return records.filter((record) => !deletedUids.has(record.itemUid))
 }
 
 export type SealIntent = 'note' | 'favorite'
@@ -727,7 +589,7 @@ async function replaceNoteStubWithDescendant(
     const collectionUid = stub.collectionUid ?? ''
     const cacheContent = await toCacheContent('notes', itemUid, collectionUid, content, meta)
     assertGuard()
-    await cachePutItem({ itemUid, collectionType: 'notes', collectionUid, content: cacheContent, lastModified: Date.now() }, accountEpoch, { allowWithoutFeatureFlag: true })
+    await cachePutItem({ itemUid, collectionType: 'notes', collectionUid, content: cacheContent, lastModified: Date.now() }, accountEpoch)
   } catch (displayErr) {
     // Only a boundary this tab crossed revokes it; a display record another tab cleared does not.
     if (displayErr instanceof AccountBoundaryChangedError && !isCurrentAccountEpoch(accountEpoch)) throw displayErr
@@ -1085,8 +947,6 @@ async function updateNoteAtCapturedBase(
       nextCache.set(itemUid, saved.item)
       set({ itemCache: nextCache })
       options.onSaved?.(saved.etag, replaced)
-      await writeItemToCache('notes', collection.uid, itemUid, content, accountEpoch, meta ?? itemMetaOf(saved.item))
-      assertGuard()
       return 'remote'
     }
     // An obligated save skips the revision dispatch: it writes only after the fresh proof below.
@@ -1405,13 +1265,6 @@ export async function uploadNoteCopyItem(collectionUid: string, prepared: any, o
   itemTypeMap.set(committed.uid, 'notes')
   itemCollectionMap.set(committed.uid, collection.uid)
   useEtebaseStore.setState({ itemCache, itemTypeMap, itemCollectionMap })
-  // The copy is on the server; a failed display write does not undo that.
-  try {
-    await writeItemToCache('notes', collection.uid, committed.uid, content, accountEpoch, itemMetaOf(committed))
-  } catch (displayErr) {
-    if (displayErr instanceof AccountBoundaryChangedError && !isCurrentAccountEpoch(accountEpoch)) throw displayErr
-    logger.warn('[etebase-store] Display write after a note copy failed', getSafeErrorDetails(displayErr))
-  }
   assertGuard()
   return { kind: 'copied', item: committed, revision, title, content }
 }
@@ -1514,11 +1367,6 @@ async function clearMembersConditionally(
       itemCache.delete(uid)
       itemTypeMap.delete(uid)
       itemCollectionMap.delete(uid)
-      if (isLocalCacheEnabled()) {
-        // The server deleted this member at its shown revision; the display cache is not authority.
-        await displayCacheAfterAck(() => cacheDeleteItem(uid, accountEpoch), accountEpoch)
-        assertGuard()
-      }
     }
     set({ itemCache, itemTypeMap, itemCollectionMap })
     await removeItemsFromDomainStore(type, collection.uid, retired, accountEpoch)
@@ -1586,6 +1434,7 @@ async function deleteCollectionIfProved(
     const stoken = before.stoken
     if (!stoken || before.isDeleted) return 'changed'
     let pageToken: string | null = null
+    const nextStoken = nextItemPageStoken()
     for (;;) {
       const page = await core.listItems(account, before, pageToken)
       assertGuard()
@@ -1596,7 +1445,7 @@ async function deleteCollectionIfProved(
         if (!knownRevision(revision) || core.savedRevisionOf(child) !== revision) return 'changed'
       }
       if (page.done) break
-      pageToken = page.stoken
+      pageToken = nextStoken(page)
     }
     const after = await core.getCollection(account, collectionUid)
     assertGuard()
@@ -1815,8 +1664,6 @@ async function updateContactAtCapturedBase(
       nextCache.set(itemUid, saved.item)
       set({ itemCache: nextCache })
       options.onSaved?.(saved.etag)
-      await writeItemToCache('contacts', collection.uid, itemUid, content, accountEpoch, itemMetaOf(saved.item))
-      assertGuard()
       return 'remote'
     }
     // The item cached at dispatch, written only at the record's own revision.
@@ -1936,7 +1783,7 @@ async function queueSealedNoteUpdate(
       collectionUid,
       content: cacheContent,
       lastModified: Date.now(),
-    }, accountEpoch, { allowWithoutFeatureFlag: true })
+    }, accountEpoch)
   } catch (displayErr) {
     // Only a boundary this tab crossed revokes it; a display record another tab cleared does not.
     if (displayErr instanceof AccountBoundaryChangedError && !isCurrentAccountEpoch(accountEpoch)) throw displayErr
@@ -1993,7 +1840,7 @@ async function queueOfflineUpdate(
         collectionUid,
         content: cacheContent,
         lastModified: Date.now(),
-      }, accountEpoch, { allowWithoutFeatureFlag: true })
+      }, accountEpoch)
       assertOfflineQueueAccountGuard(offlineQueueGuard, getState())
       const cachedItems = await cacheGetItemsByType(type)
       assertOfflineQueueAccountGuard(offlineQueueGuard, getState())
@@ -2457,7 +2304,6 @@ async function createItemsForFileImport(
     const itemTypeMap = new Map(get().itemTypeMap)
     const itemCollectionMap = new Map(get().itemCollectionMap)
     const uids: (string | null)[] = []
-    const cachedRecords: CachedItem[] = []
     for (let i = 0; i < items.length; i++) {
       if (results[i]!.outcome !== 'saved') {
         uids.push(null)
@@ -2468,17 +2314,12 @@ async function createItemsForFileImport(
       itemTypeMap.set(item.uid, type)
       itemCollectionMap.set(item.uid, collection.uid)
       uids.push(item.uid)
-      cachedRecords.push({ itemUid: item.uid, collectionType: type, collectionUid: collection.uid, content: contents[i]!.content, lastModified: Date.now() })
     }
     assertCurrentAccountEpoch(accountEpoch)
     set({ itemCache, itemTypeMap, itemCollectionMap })
     for (let i = 0; i < items.length; i++) {
       assertCurrentAccountEpoch(accountEpoch)
       if (results[i]!.outcome === 'saved') onCommitted?.(contents[i]!.tempId, items[i])
-    }
-    if (isLocalCacheEnabled() && cachedRecords.length > 0) {
-      await displayCacheAfterAck(() => cachePutItems(cachedRecords, accountEpoch), accountEpoch)
-      assertCurrentAccountEpoch(accountEpoch)
     }
     if (failure) {
       console.error('[etebase-store] File import failed', getSafeErrorDetails(failure))
@@ -2852,22 +2693,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // hydrated this browser, wipe before reseeding. Belt-and-braces against
       // the Android-style stale-cache contamination bug.
       //
-      // The encrypted envelope is restored even when the instant-reload cache
-      // flag is off: offline edits keep their replay payload in that envelope
-      // (the queue entries themselves are content-free), and it must still be
-      // readable after a reload.
-      const cacheFeatureEnabled = getCacheCapabilityStatus().featureFlagEnabled
-      let cacheEnabled = isLocalCacheEnabled()
+      // The encrypted envelope is restored on every session: offline edits keep
+      // their replay payload in that envelope (the queue entries themselves are
+      // content-free), and it must still be readable after a reload.
       try {
-        const cacheSurvived = await cacheEnsureFingerprint(accountFingerprint, accountEpoch)
+        await cacheEnsureFingerprint(accountFingerprint, accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
         await cacheEnsureEncryptedEnvelope(accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
-        cacheEnabled = isLocalCacheEnabled()
-        if (cacheFeatureEnabled && cacheSurvived && cacheEnabled) {
-          await options?.onCacheHydrate?.()
-          assertCurrentAccountEpoch(accountEpoch)
-        }
       } catch (err) {
         if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) {
           throw new AccountBoundaryChangedError()
@@ -2992,7 +2825,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       logger.debug(`[etebase-store] Loaded ${totalLoadedItemCount} items into cache`)
 
       // 4. Start SyncEngine
-      const engine = await startSyncEngine(core, account, serverUrl, collections, accountEpoch, cacheEnabled, diagnostics)
+      const engine = await startSyncEngine(core, account, serverUrl, collections, accountEpoch, diagnostics)
       if (!engine) return
       // The boundary can change after the helper's own check; teardown never
       // saw this unpublished engine, so stop it here instead of publishing.
@@ -3115,9 +2948,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         itemTypeMap: newItemTypeMap,
         itemCollectionMap: newItemCollectionMap,
       })
-      if (isLocalCacheEnabled()) {
-        await displayCacheAfterAck(() => cacheReplaceItemsForCollection(collection.uid, [], accountEpoch), accountEpoch)
-      }
       assertCurrentAccountEpoch(accountEpoch)
       await removeQueuedMutationsForCollection(type, collection.uid, true, accountEpoch, accountFingerprint)
       assertCurrentAccountEpoch(accountEpoch)
@@ -3220,14 +3050,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           }
           cleanupPromises.push(removeQueuedMutationsForCollection(type, collectionUid, true, accountEpoch, accountFingerprint))
           cleanupPromises.push(removeItemsFromDomainStore(type, collectionUid, undefined, accountEpoch))
-          if (isLocalCacheEnabled()) {
-            cleanupPromises.push(cacheReplaceItemsForCollection(collectionUid, [], accountEpoch))
-          }
         }
 
         for (const collection of activeCollections[type]) {
           if (!previousUids.has(collection.uid)) {
-            await trackCollectionWithSyncEngine(syncEngine, colType, type, collection.uid, accountEpoch)
+            await trackCollectionWithSyncEngine(syncEngine, colType, collection.uid, accountEpoch)
           }
         }
       }
@@ -3256,7 +3083,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (pendingSyncEngineStartEpoch === accountEpoch && !get().syncEngine) {
         pendingSyncEngineStartEpoch = null
         try {
-          const engine = await startSyncEngine(core, account, getServerUrl(), activeCollections, accountEpoch, isLocalCacheEnabled())
+          const engine = await startSyncEngine(core, account, getServerUrl(), activeCollections, accountEpoch)
           if (!engine) throw new AccountBoundaryChangedError()
           if (!isCurrentAccountEpoch(accountEpoch)) {
             engine.stop()
@@ -3608,8 +3435,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
     }
 
-    /** `acknowledged`: the server confirmed these deletes, so the display cache is not authority. */
-    const removeCachedItems = async (uids: string[], acknowledged: boolean) => {
+    const removeCachedItems = (uids: string[]) => {
       if (uids.length === 0) return
       assertCurrentAccountEpoch(accountEpoch)
       const uidSet = new Set(uids)
@@ -3620,11 +3446,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         newItemCache.delete(uid)
         newItemTypeMap.delete(uid)
         newItemCollectionMap.delete(uid)
-        if (isLocalCacheEnabled()) {
-          if (acknowledged) await displayCacheAfterAck(() => cacheDeleteItem(uid, accountEpoch), accountEpoch)
-          else await cacheDeleteItem(uid, accountEpoch)
-          assertCurrentAccountEpoch(accountEpoch)
-        }
       }
       assertCurrentAccountEpoch(accountEpoch)
       set({ itemCache: newItemCache, itemTypeMap: newItemTypeMap, itemCollectionMap: newItemCollectionMap })
@@ -3662,11 +3483,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         successfulUids.push(...batchEntries.map(({ uid }) => uid))
       }
 
-      await removeCachedItems(successfulUids, true)
-      if (isLocalCacheEnabled()) {
-        await displayCacheAfterAck(() => cacheReplaceItemsForCollection(collection.uid, [], accountEpoch), accountEpoch)
-        assertCurrentAccountEpoch(accountEpoch)
-      }
+      removeCachedItems(successfulUids)
       await removeQueuedMutationsForCollection(type, collection.uid, true, accountEpoch, accountFingerprint)
       const removedLocal = await removeItemsFromDomainStore(type, collection.uid, undefined, accountEpoch)
       assertCurrentAccountEpoch(accountEpoch)
@@ -3689,11 +3506,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
               console.error('[etebase-store] Failed to enqueue collection item delete', getSafeErrorDetails(queueErr))
             }
           }
-          await removeCachedItems(itemEntries.map(({ uid }) => uid), false)
-          if (isLocalCacheEnabled()) {
-            await cacheReplaceItemsForCollection(collection.uid, [], accountEpoch)
-            assertCurrentAccountEpoch(accountEpoch)
-          }
+          removeCachedItems(itemEntries.map(({ uid }) => uid))
           const removedLocal = await removeItemsFromDomainStore(type, collection.uid, undefined, accountEpoch)
           assertCurrentAccountEpoch(accountEpoch)
           return Math.max(itemEntries.length, removedLocal)
@@ -3701,7 +3514,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
         console.error(`[etebase-store] Failed to clear ${type} collection`, getSafeErrorDetails(err))
         if (successfulUids.length > 0) {
-          await removeCachedItems(successfulUids, true)
+          removeCachedItems(successfulUids)
           await removeItemsFromDomainStore(type, collection.uid, successfulUids, accountEpoch)
           assertCurrentAccountEpoch(accountEpoch)
           showErrorToast(`Deleted ${successfulUids.length} of ${itemEntries.length} ${collectionItemNoun(type)}. Please try again to delete the rest.`)
@@ -3743,6 +3556,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         throw new ReplayNotConfirmedError('Replay create cannot be reconciled without content identity')
       }
       let stoken: string | null | undefined
+      const nextStoken = nextItemPageStoken()
       do {
         assertOfflineQueueAccountGuard(guard, get())
         const response = await core.listItems(account, collection, stoken)
@@ -3756,11 +3570,12 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (wantedLogicalUid ? logicalUid(candidateContent) === wantedLogicalUid : candidateContent === wantedContent) return candidate
         }
         if (response.done) return null
-        stoken = response.stoken
+        stoken = nextStoken(response)
       } while (true)
     }
     const findRemoteItemByUid = async (collection: any, uid: string) => {
       let stoken: string | null | undefined
+      const nextStoken = nextItemPageStoken()
       do {
         assertOfflineQueueAccountGuard(guard, get())
         const response = await core.listItems(account, collection, stoken)
@@ -3768,7 +3583,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const found = response.items.find((candidate: any) => !candidate.isDeleted && candidate.uid === uid)
         if (found) return found
         if (response.done) return null
-        stoken = response.stoken
+        stoken = nextStoken(response)
       } while (true)
     }
 
@@ -3931,13 +3746,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (collection.isDeleted) return hold('target-missing')
           let child: any = null
           let stoken: string | null | undefined
+          const nextStoken = nextItemPageStoken()
           do {
             assertOfflineQueueAccountGuard(guard, get())
             const response = await core.listItems(account, collection, stoken)
             assertOfflineQueueAccountGuard(guard, get())
             child = response.items.find((candidate: any) => candidate.uid === itemUid) ?? null
             if (child || response.done) break
-            stoken = response.stoken
+            stoken = nextStoken(response)
           } while (true)
           if (!child) return hold('target-missing')
           // Deleted elsewhere: the item is gone, not changed (#744).
@@ -3965,8 +3781,13 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (written.kind === 'saved' && kind === 'favorite') {
             const { contactSealedFavoriteAcknowledged } = await import('@/app/stores/use-contact-store')
             assertOfflineQueueAccountGuard(guard, get())
+            // The record now on the server, paired with the revision this write produced.
+            const accepted = {
+              over: provedRevision,
+              record: { ...core.deserializeContact(payload.body.content), id: itemUid, listId: entry.collectionUid, revision: written.etag },
+            }
             const onAcknowledged = () => {
-              if (getAccountEpoch() === guard.accountEpoch) contactSealedFavoriteAcknowledged(itemUid)
+              if (getAccountEpoch() === guard.accountEpoch) contactSealedFavoriteAcknowledged(itemUid, accepted)
             }
             return { remoteMutationConfirmed: true, acknowledgeRev: rev, onAcknowledged }
           }
@@ -4112,8 +3933,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // The committed SDK object, still under the account the item was created in.
       assertCurrentAccountEpoch(accountEpoch)
       onCommitted?.(item)
-      // Write through to the local persistence cache so a reload paints it.
-      await writeItemToCache(type, collection.uid, item.uid, content, accountEpoch, meta ?? itemMetaOf(item))
       return item.uid
     } catch (err) {
       if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
@@ -4157,6 +3976,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const uids = new Set<string>()
       let stoken: string | undefined
       let done = false
+      const nextStoken = nextItemPageStoken()
       while (!done) {
         const page: { data: any[]; stoken: string | null; done: boolean } = await withFileImportTimeout(itemManager.list({ stoken }))
         assertCurrentAccountEpoch(accountEpoch)
@@ -4164,11 +3984,23 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (item.isDeleted) continue
           const raw = await item.getContent()
           assertCurrentAccountEpoch(accountEpoch)
-          const uid = parseVCard(typeof raw === 'string' ? raw : new TextDecoder().decode(raw), { keepMissingUid: true }).uid
+          // Only one complete, valid UTF-8 vCard vouches for its UID; an unframed or
+          // damaged payload never makes a file card look already imported. A failed read
+          // or decrypt above still aborts the whole check.
+          let text: string
+          try {
+            text = typeof raw === 'string' ? raw : new TextDecoder('utf-8', { fatal: true }).decode(raw)
+          } catch (err) {
+            if (err instanceof TypeError) continue
+            throw err
+          }
+          const { cards, incomplete } = splitVCardFile(text)
+          if (cards.length !== 1 || incomplete !== 0) continue
+          const uid = parseVCard(cards[0]!, { keepMissingUid: true }).uid
           if (uid) uids.add(uid)
         }
-        stoken = page.stoken || undefined
         done = page.done
+        if (!done) stoken = nextStoken(page)
       }
       return uids
     } catch (err) {
@@ -4288,7 +4120,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const itemTypeMap = new Map(get().itemTypeMap)
       const itemCollectionMap = new Map(get().itemCollectionMap)
       const uids: (string | null)[] = []
-      const cachedRecords: CachedItem[] = []
       for (let i = 0; i < items.length; i++) {
         if (i <= lastSuccessfulItemIndex) {
           const item = items[i]
@@ -4296,16 +4127,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           itemTypeMap.set(item.uid, type)
           itemCollectionMap.set(item.uid, collection.uid)
           uids.push(item.uid)
-          const original = contents[i]
-          if (original) {
-            cachedRecords.push({
-              itemUid: item.uid,
-              collectionType: type,
-              collectionUid: collection.uid,
-              content: original.content,
-              lastModified: Date.now(),
-            })
-          }
         } else {
           uids.push(null)
         }
@@ -4316,10 +4137,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       for (let i = 0; i <= lastSuccessfulItemIndex; i++) {
         assertCurrentAccountEpoch(accountEpoch)
         onCommitted?.(contents[i]!.tempId, items[i])
-      }
-      if (isLocalCacheEnabled() && cachedRecords.length > 0) {
-        await displayCacheAfterAck(() => cachePutItems(cachedRecords, accountEpoch), accountEpoch)
-        assertCurrentAccountEpoch(accountEpoch)
       }
 
       if (permanentFailure) {
@@ -4395,7 +4212,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const newCache = new Map(get().itemCache)
       newCache.set(itemUid, updated)
       set({ itemCache: newCache })
-      await writeItemToCache(type, collection.uid, itemUid, content, accountEpoch, options?.meta ?? itemMetaOf(updated))
       assertCurrentAccountEpoch(accountEpoch)
       if (type === 'notes') {
         // A confirmed online save supersedes queued offline edits of this note;
@@ -4548,12 +4364,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCollectionMap.set(created.uid, targetCollection.uid)
       assertCurrentAccountEpoch(accountEpoch)
       set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
-      if (isLocalCacheEnabled()) {
-        if (!keepSourceUntilQueuedDelete) await displayCacheAfterAck(() => cacheDeleteItem(itemUid, accountEpoch), accountEpoch)
-        assertCurrentAccountEpoch(accountEpoch)
-        await writeItemToCache(type, targetCollection.uid, created.uid, content, accountEpoch, meta ?? itemMetaOf(created))
-        assertCurrentAccountEpoch(accountEpoch)
-      }
       return created.uid
     } catch (err) {
       if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
@@ -4611,10 +4421,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         newTypeMap.delete(itemUid)
         newCollectionMap.delete(itemUid)
         set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
-        if (isLocalCacheEnabled()) {
-          await displayCacheAfterAck(() => cacheDeleteItem(itemUid, accountEpoch), accountEpoch)
-          assertCurrentAccountEpoch(accountEpoch)
-        }
         return 'remote'
       } catch (err) {
         if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
@@ -4655,10 +4461,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newTypeMap.delete(itemUid)
       newCollectionMap.delete(itemUid)
       set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
-      if (isLocalCacheEnabled()) {
-        await displayCacheAfterAck(() => cacheDeleteItem(itemUid, accountEpoch), accountEpoch)
-        assertCurrentAccountEpoch(accountEpoch)
-      }
       if (type === 'notes') {
         // Queued offline edits of a note that no longer exists can never replay.
         try {
@@ -4745,6 +4547,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         // Paginate through all items
         let stoken: string | undefined = undefined
         let done = false
+        const nextStoken = nextItemPageStoken()
         while (!done) {
           const response: { data: any[]; stoken: string | null; done: boolean } = await itemManager.list({ stoken })
           assertCurrentAccountEpoch(accountEpoch)
@@ -4764,8 +4567,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
               if (report) report.unreadable += 1
             }
           }
-          stoken = response.stoken || undefined
           done = response.done
+          if (!done) stoken = nextStoken(response)
         }
 
         refreshed.push({ collection: freshCollection, items: collectionItems })
@@ -4810,28 +4613,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         collections: newCollections,
         domainLoadState: { ...state.domainLoadState, [type]: nextDomainStatus },
       }))
-
-      // Mirror the refresh into the local cache. Use replace-style writes so
-      // items deleted upstream are also dropped from disk.
-      for (const { collection, items } of refreshed) {
-        assertCurrentAccountEpoch(accountEpoch)
-        if (isLocalCacheEnabled()) {
-          const cached: CachedItem[] = []
-          for (const { item, content } of items) {
-            cached.push({
-              itemUid: item.uid,
-              collectionType: type,
-              collectionUid: collection.uid,
-              content: await toCacheContent(type, item.uid, collection.uid, content, itemMetaOf(item)),
-              lastModified: Date.now(),
-            })
-          }
-          assertCurrentAccountEpoch(accountEpoch)
-          const records = await keepPendingCacheRecords(type, cached, accountEpoch, accountFingerprint, collection.uid)
-          await cacheReplaceItemsForCollection(collection.uid, records, accountEpoch)
-          assertCurrentAccountEpoch(accountEpoch)
-        }
-      }
 
       logger.debug(`[etebase-store] Refreshed ${type}: ${allResults.length} items`)
       return allResults

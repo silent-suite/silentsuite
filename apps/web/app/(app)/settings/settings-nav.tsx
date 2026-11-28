@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { ChevronRight } from 'lucide-react'
 import { isSelfHosted } from '@/app/lib/self-hosted'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 import { formatDaysLeft, useAccountTrialCountdown } from '@/app/hooks/use-trial-countdown'
 
 type SettingsLink = { label: string; href: string; hint: string; hostedOnly?: boolean }
@@ -51,9 +52,18 @@ const settingsGroups: SettingsGroup[] = [
   },
 ]
 
-function visibleGroups(): SettingsGroup[] {
-  if (!isSelfHosted) return settingsGroups
-  return settingsGroups.map((group) => ({
+// The desktop sidebar links Admin; the sidebar is hidden on phones, so the overview
+// (shown only below lg) lists it too. The rail sits beside the sidebar and leaves it out.
+const adminGroup: SettingsGroup = {
+  id: 'admin',
+  label: 'Administration',
+  links: [{ label: 'Admin', href: '/admin', hint: 'Server administration' }],
+}
+
+function visibleGroups(withAdmin: boolean): SettingsGroup[] {
+  const groups = withAdmin ? [...settingsGroups, adminGroup] : settingsGroups
+  if (!isSelfHosted) return groups
+  return groups.map((group) => ({
     ...group,
     links: group.links.filter((link) => !link.hostedOnly),
   }))
@@ -70,10 +80,12 @@ export function SettingsNav({ variant, pathname }: { variant: 'overview' | 'rail
   const isOverview = variant === 'overview'
   const countdown = useAccountTrialCountdown()
   const trialDays = countdown ? formatDaysLeft(countdown.daysLeft) : null
+  // Same rule as the sidebar: every self-hosted user administers their own server.
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin) || isSelfHosted
 
   return (
     <nav aria-label="Settings" className={isOverview ? 'space-y-6' : 'space-y-4'}>
-      {visibleGroups().map((group) => {
+      {visibleGroups(isOverview && isAdmin).map((group) => {
         const headingId = `settings-${variant}-${group.id}`
         return (
           <section key={group.id} aria-labelledby={headingId} className="space-y-2">

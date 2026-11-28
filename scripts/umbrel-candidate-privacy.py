@@ -126,8 +126,7 @@ def exercise(args, baseline):
         created_network = True
         docker(
             "run", "-d", "--pull=never", "--name", backend, "--network", network,
-            "--network-alias", "silentsuite_server_1",
-            "--network-alias", "silentsuite_web_1",
+            *[option for alias in args.alias for option in ("--network-alias", alias)],
             "-p", "127.0.0.1::3735", "-v", f"{directory}:/privacy:ro",
             "--entrypoint", "uvicorn", args.server_image, "fixture:app",
             "--app-dir", "/privacy", "--host", "0.0.0.0", "--port", "3735",
@@ -163,7 +162,15 @@ def main():
     parser.add_argument("--startup", required=True, type=Path)
     parser.add_argument("--router-config", required=True, type=Path)
     parser.add_argument("--work-dir", required=True, type=Path)
+    # Upstream names the router config resolves; the defaults are the Umbrel package's.
+    parser.add_argument("--alias", action="append", default=None)
     args = parser.parse_args()
+    if args.alias is None:
+        args.alias = ["silentsuite_server_1", "silentsuite_web_1"]
+    require(
+        all(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", alias) for alias in args.alias),
+        "privacy fixture aliases must be plain container names",
+    )
     require(
         all(re.fullmatch(r"sha256:[0-9a-f]{64}", image) for image in (args.server_image, args.router_image)),
         "privacy fixture requires the already-inspected image IDs",

@@ -369,9 +369,21 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().user).toBeNull()
   })
 
+  it('a hosted signup drops a stale custom server only once the account exists', async () => {
+    const { etebaseSignUp } = await import('@/app/lib/etebase-auth')
+    localStorage.setItem('silentsuite-server-url', 'https://dav.example.test')
+    vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('network unavailable'))
+    useAuthStore.getState().prepareSignupDraft('hosted@example.test')
+    await expect(useAuthStore.getState().createEtebaseAccount('hosted@example.test', 'password123')).rejects.toThrow()
+    expect(localStorage.getItem('silentsuite-server-url')).toBe('https://dav.example.test')
+
+    await useAuthStore.getState().createEtebaseAccount('hosted@example.test', 'password123')
+    expect(localStorage.getItem('silentsuite-server-url')).toBeNull()
+  })
+
   it('reuses an Etebase account created by an ambiguous prior signup attempt', async () => {
     const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
-    vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('409 conflict'))
+    vi.mocked(etebaseSignUp).mockRejectedValueOnce(Object.assign(new Error('User already exists'), { name: 'ConflictError' }))
 
     useAuthStore.getState().prepareSignupDraft('recover@example.com', true, true)
     await useAuthStore.getState().createEtebaseAccount('recover@example.com', 'password123')
@@ -1864,6 +1876,32 @@ describe('useAuthStore', () => {
     expect(secureStore.etebase_session).toBeUndefined()
     expect(useAuthStore.getState().error).toBe('Invalid email or password. Please try again.')
   })
+
+  it.each([
+    ['a wrong password', 'Wrong password for user.'],
+    ['an unknown user', 'User not found'],
+  ])('login shows the same credentials message for %s (Etebase UnauthorizedError)', async (_case, message) => {
+    const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+    const err = new Error(message)
+    err.name = 'UnauthorizedError'
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(err)
+
+    await useAuthStore.getState().login('test@example.com', 'wrong-password')
+
+    expect(useAuthStore.getState().error).toBe('Invalid email or password. Please try again.')
+  })
+
+  it.each(['Wrong password for user.', 'User not found'])(
+    'login maps the Etebase credentials text %j even without the error class',
+    async (message) => {
+      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error(message))
+
+      await useAuthStore.getState().login('test@example.com', 'wrong-password')
+
+      expect(useAuthStore.getState().error).toBe('Invalid email or password. Please try again.')
+    },
+  )
 
   it('login gives calm retry guidance when Etebase throttles sign-in', async () => {
     const { etebaseLogIn } = await import('@/app/lib/etebase-auth')

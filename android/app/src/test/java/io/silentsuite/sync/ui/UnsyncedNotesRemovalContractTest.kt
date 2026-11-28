@@ -349,10 +349,11 @@ class UnsyncedNotesRemovalContractTest {
         val fragment = code(File(ui, "UnsyncedNotesFragment.kt"))
         assertTrue(fragment, Regex("""withContext\(Dispatchers\.IO\) \{\s*UnsyncedNotesStores\.read\(getApplication\(\)\) """ +
             """to NotesRemovalSection\.read\(getApplication\(\)\)\s*\}""").containsMatchIn(fragment))
-        // The screen's read, and the Settings hub row's, off the main thread with its stores too.
+        // The screen's read, and the one the Settings hub row and the sign-in item share, off the main thread with its
+        // stores too.
         assertEquals(2, Regex("""NotesRemovalSection\.read\(""").findAll(fragment).count())
-        assertTrue(fragment.contains("withContext(Dispatchers.IO) {\n                    " +
-            "UnsyncedNotesStores.read(app) to NotesRemovalSection.read(app)\n                }"))
+        assertTrue(fragment.contains("withContext(Dispatchers.IO) {\n            " +
+            "UnsyncedNotesStores.read(app) to NotesRemovalSection.read(app)\n        }"))
         // Set together, the section first, so the listing's rows show with it.
         assertTrue(fragment.contains("mutableSection.value = section\n                mutableListing.value = read"))
         assertTrue(fragment.contains(

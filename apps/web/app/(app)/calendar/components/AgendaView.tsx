@@ -4,11 +4,12 @@ import { useMemo } from 'react'
 import { Clock, MapPin, Repeat2 } from 'lucide-react'
 import { CalendarEmptyState } from '@/app/components/empty-state'
 import { LabelChips } from '@/app/components/LabelEditor'
-import type { CalendarEvent, DateRange } from '@silentsuite/core'
+import { resolveTimeZone, type CalendarEvent, type DateRange } from '@silentsuite/core'
 import type { CalendarList } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 import { resolveUserTimezone, shortTimezoneLabel } from '@/app/lib/tz'
-import { expandEventsForRange, type DisplayEvent } from '../lib/calendar-grid-events'
+import { expandEventsForRange, floatingToDisplay, type DisplayEvent } from '../lib/calendar-grid-events'
 
 interface AgendaViewProps {
   events: CalendarEvent[]
@@ -75,6 +76,7 @@ function collectionFallback(calendarId: string): string {
 export function AgendaView({ events, currentDate, calendars = [], mode = 'day', onEventClick }: AgendaViewProps) {
   const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
   const timeFormat = usePreferencesStore((s) => s.timeFormat)
+  const canWrite = useAuthStore((s) => s.canWrite())
   const userTz = resolveUserTimezone(defaultTimezonePref)
   const use12h = timeFormat !== '24h'
   const calendarMeta = useMemo(() => {
@@ -88,17 +90,25 @@ export function AgendaView({ events, currentDate, calendars = [], mode = 'day', 
 
   const agendaEvents = useMemo(() => {
     const range = getAgendaRange(currentDate, mode)
+    // A floating event keeps its wall clock as browser-local fields, and the range's browser-local
+    // day is the display-zone day it names, so it is expanded and compared before the projection
+    // (as the grid converts its range for floating events). Projecting first would move a 00:15
+    // event out of its own day when the display and browser zones differ.
     return expandEventsForRange(events, range)
       .filter((event) => {
         const endComparison = event.allDay ? event.endDate > range.start : event.endDate >= range.start
         return endComparison && event.startDate <= range.end
       })
+      // A floating event shows its stored wall clock in the display zone.
+      .map((event) => event.floating
+        ? { ...event, startDate: floatingToDisplay(event.startDate, userTz), endDate: floatingToDisplay(event.endDate, userTz) }
+        : event)
       .sort(compareEvents)
       .slice(0, mode === 'upcoming' ? 6 : undefined)
-  }, [events, currentDate, mode])
+  }, [events, currentDate, mode, userTz])
 
   if (agendaEvents.length === 0) {
-    return <CalendarEmptyState />
+    return <CalendarEmptyState canWrite={canWrite} />
   }
 
   return (
@@ -111,6 +121,7 @@ export function AgendaView({ events, currentDate, calendars = [], mode = 'day', 
       {agendaEvents.map((event, index) => {
         const calendarId = event.calendarId ?? 'default'
         const collection = calendarMeta.get(calendarId) ?? { name: collectionFallback(calendarId), color: '#10b981' }
+        const eventTz = event.timezone ? resolveTimeZone(event.timezone) : undefined
         return (
           <button
             key={event.id}
@@ -159,9 +170,17 @@ export function AgendaView({ events, currentDate, calendars = [], mode = 'day', 
                     <span>
                       {formatTime(event.startDate, userTz, use12h)} – {formatTime(event.endDate, userTz, use12h)}
                     </span>
-                    {event.timezone && event.timezone !== userTz && (
+                    {eventTz && eventTz !== userTz && (
+                      // The row shows display-zone times; the badge gives the event's own time
+                      // so its zone label matches what it labels (as EventDialog names both zones).
                       <span className="ml-1 rounded bg-[rgb(var(--surface-muted))] px-1 py-0.5 text-[10px] font-medium text-[rgb(var(--muted))]">
-                        {shortTimezoneLabel(event.timezone, event.startDate)}
+                        {formatTime(event.startDate, eventTz, use12h)} – {formatTime(event.endDate, eventTz, use12h)}{' '}
+                        {shortTimezoneLabel(eventTz, event.startDate)}
+                      </span>
+                    )}
+                    {event.timezone && !eventTz && (
+                      <span className="ml-1 rounded bg-[rgb(var(--surface-muted))] px-1 py-0.5 text-[10px] font-medium text-[rgb(var(--muted))]">
+                        {event.timezone}
                       </span>
                     )}
                   </div>

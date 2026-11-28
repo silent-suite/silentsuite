@@ -5,6 +5,7 @@ import { ANALYTICS_UPSTREAM, CLOUDFLARE_IP_RANGES, clientAddress, isCloudflareAd
 import {
   buildCheckoutInitiatedPayload,
   buildCheckoutReturnedPayload,
+  buildInPageCheckoutReturnedPayload,
   buildPlanSelectedPayload,
   buildSignupPageviewPayload,
   buildSignupStepPayload,
@@ -68,6 +69,8 @@ describe('app analytics relay', () => {
     ['Plan Selected standard', buildPlanSelectedPayload(standardOffer)],
     ['Checkout Initiated', buildCheckoutInitiatedPayload(earlyOffer, 'btcpay')],
     ['Checkout Returned', buildCheckoutReturnedPayload('cancelled', 'unknown')],
+    ['Checkout Returned in page by card', buildInPageCheckoutReturnedPayload('stripe')],
+    ['Checkout Returned in page by Bitcoin', buildInPageCheckoutReturnedPayload('btcpay')],
     ['Subscription Management Entry', buildSubscriptionManagementEntryPayload()],
     ...SIGNUP_STEPS.map((step) => [`Signup Step ${step}`, buildSignupStepPayload(step)] as const),
     ...(['/signup/success', '/signup/pending-payment'] as const).flatMap((path) => (['account_created', 'completed'] as const)
@@ -117,6 +120,8 @@ describe('app analytics relay', () => {
     ['pageview on private route', { domain: 'app.silentsuite.io', name: 'pageview', url: 'https://app.silentsuite.io/calendar' }],
     ['raw referrer', { ...buildSignupPageviewPayload('https://app.silentsuite.io/signup', ''), referrer: 'https://github.com/org/repo?token=x' }],
     ['tampered amount', { ...buildPlanSelectedPayload(earlyOffer), props: { ...buildPlanSelectedPayload(earlyOffer).props, annual_amount_minor: 1 } }],
+    ['in-page return without a payment method', { ...buildInPageCheckoutReturnedPayload('stripe'), props: { outcome: 'returned', payment_method: 'unknown' } }],
+    ['in-page return with another outcome', { ...buildInPageCheckoutReturnedPayload('stripe'), props: { outcome: 'failed', payment_method: 'stripe' } }],
     ['mismatched return route', { ...buildCheckoutReturnedPayload('returned', 'stripe'), url: 'https://app.silentsuite.io/signup/cancel' }],
     ['string amount', { ...buildPlanSelectedPayload(earlyOffer), props: { ...buildPlanSelectedPayload(earlyOffer).props, annual_amount_minor: '3600' } }],
     ['array', [buildSignupStepPayload('completed')]],

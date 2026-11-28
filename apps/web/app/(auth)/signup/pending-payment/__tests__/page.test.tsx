@@ -44,13 +44,15 @@ vi.mock('@stripe/react-stripe-js', () => ({
   useStripe: () => ({}), useElements: () => ({}),
 }))
 vi.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'light' }) }))
-vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
+vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test', ETEBASE_SERVER_URL: 'https://server.silentsuite.io' }))
 vi.mock('@/app/lib/signup-return', () => ({ normalizeSignupReturnTo: (value: string | null) => value }))
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }: { href: string; children: ReactNode }) => <a href={href} {...props}>{children}</a> }))
 const recordSignupStep = vi.hoisted(() => vi.fn())
+const trackInPageCheckoutReturned = vi.hoisted(() => vi.fn())
 vi.mock('../../commercial-funnel-analytics', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../commercial-funnel-analytics')>(),
   createSignupStepRecorder: () => recordSignupStep,
+  trackInPageCheckoutReturned,
 }))
 vi.mock('../../components/step-create-vault', () => ({
   StepCreateVault: ({ onComplete }: { onComplete: () => void }) => <button type="button" data-testid="step-create-vault" onClick={onComplete}>Complete vault</button>,
@@ -137,6 +139,8 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     render(<PendingPaymentPage />)
     await screen.findByTestId('step-create-paid-account')
     expect(screen.queryByText('cryptocurrency payment settled')).not.toBeInTheDocument()
+    // Inline on /signup after a refresh, this confirmation is where the checkout finishes.
+    expect(trackInPageCheckoutReturned).toHaveBeenCalledWith('stripe')
   })
   it('stale local invoice must not establish available invoice', async () => {
     sessionStorage.setItem('silentsuite-pending-crypto-invoice', 'stale-unbound-invoice')
@@ -228,6 +232,9 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
     expect(authState.prepareSignupDraft).not.toHaveBeenCalled()
     expect(screen.getByRole('link', { name: 'Verify email again' })).toHaveAttribute('href', '/signup')
+    // The release can follow an expired offer as well, so the copy names no cause.
+    expect(screen.getByText('Payment cancelled. Please verify your email again to continue.')).toBeVisible()
+    expect(screen.queryByText(/expired/i)).not.toBeInTheDocument()
   })
 
   it('a released reconcile for another request key is rejected and does not call onReleased', async () => {
@@ -545,7 +552,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /complete restored account/i }))
     await waitFor(() => expect(authState.finalizePaidSignup).toHaveBeenCalledTimes(1))
-    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'RestoredPassword1')
+    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'RestoredPassword1', authState.pendingSignup?.serverUrl)
     expect(finalizedPending).toMatchObject({
       paymentSessionToken,
       paymentSessionRequestKey,
