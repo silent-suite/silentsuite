@@ -118,8 +118,13 @@ function readOverride(event: CalendarEvent, block: string[]): { instance: Date; 
         description: topLevelProperty(block, 'DESCRIPTION') ? changed.description : event.description,
         location: topLevelProperty(block, 'LOCATION') ? changed.location : event.location,
         categories: topLevelProperty(block, 'CATEGORIES') ? changed.categories : event.categories,
+        // Without its own end an override keeps the series' length, except a date-only one in a
+        // timed series, which lasts its day (RFC 5545 §3.6.1).
         endDate: topLevelProperty(block, 'DTEND') || topLevelProperty(block, 'DURATION')
-          ? changed.endDate : occurrenceEnd(event, changed.startDate),
+          ? changed.endDate
+          : changed.allDay && !event.allDay
+            ? new Date(changed.startDate.getFullYear(), changed.startDate.getMonth(), changed.startDate.getDate() + 1)
+            : occurrenceEnd(event, changed.startDate),
       },
     }
   } catch {

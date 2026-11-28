@@ -1729,6 +1729,23 @@ describe('useCalendarStore "this" edit of an occurrence moved to another time fo
     expect(copy).toMatch(/^DTSTART;VALUE=DATE:20270316$/m)
     expect(copy).toMatch(/^DTEND;VALUE=DATE:20270317$/m)
   })
+
+  it('gives an all-day override without its own end one day, not the timed series\' length', async () => {
+    const master = seedRemote([
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+      'BEGIN:VEVENT', 'UID:mixed-series-3',
+      'DTSTART;TZID=Europe/Berlin:20270301T100000', 'DTEND;TZID=Europe/Berlin:20270301T110000',
+      'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:Weekly', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:mixed-series-3', 'RECURRENCE-ID;TZID=Europe/Berlin:20270315T100000',
+      'DTSTART;VALUE=DATE:20270316', 'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n'))
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { location: 'Room 2' }, 'this', new Date('2027-03-15T09:00:00Z'))
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^DTSTART;VALUE=DATE:20270316$/m)
+    expect(copy).toMatch(/^DTEND;VALUE=DATE:20270317$/m)
+  })
 })
 
 
