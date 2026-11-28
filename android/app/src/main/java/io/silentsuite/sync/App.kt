@@ -29,7 +29,6 @@ import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.utils.HintManager
-import io.silentsuite.sync.utils.LanguageUtils
 import io.silentsuite.sync.utils.NotificationUtils
 import io.silentsuite.sync.utils.TaskProviderHandling
 // TODO(Phase2): Add Sentry crash reporting to replace removed ACRA
@@ -98,10 +97,11 @@ class App : Application() {
     }
 
     private fun loadLanguage() {
-        val lang = AppPreferences(this).forcedLanguage
-        if (lang != DEFAULT_LANGUAGE) {
-            LanguageUtils.setLanguage(this, lang)
-        }
+        // The app ships English strings only, so there is no language setting any more.
+        // Clear a locale saved by older builds: users could no longer see or undo it.
+        val preferences = AppPreferences(this)
+        if (preferences.forcedLanguage != DEFAULT_LANGUAGE)
+            preferences.forcedLanguage = DEFAULT_LANGUAGE
     }
 
     fun reinitLogger() {
@@ -233,7 +233,6 @@ class App : Application() {
         @Deprecated("Use AppPreferences") const val OVERRIDE_PROXY_HOST_DEFAULT = AppPreferences.DEFAULT_PROXY_HOST
         @Deprecated("Use AppPreferences") const val OVERRIDE_PROXY_PORT_DEFAULT = AppPreferences.DEFAULT_PROXY_PORT
         const val DEFAULT_LANGUAGE = AppPreferences.DEFAULT_LANGUAGE
-        var sDefaultLocacle = Locale.getDefault()
 
         var appName: String = "SilentSuite"
 

@@ -30,8 +30,11 @@ class SettingsRoutingContractTest {
         assertTrue(File(sourceRoot, "ui/AppSettingsActivity.kt").readText()
             .contains("startActivity(ReportProblemActivity.newIntent(requireContext()))"))
         val advanced = File(resourceRoot, "settings_advanced.xml").readText()
-        listOf("override_proxy", "distrust_system_certs", "select_language", "log_to_file", "log_verbose")
+        listOf("override_proxy", "distrust_system_certs", "log_to_file", "log_verbose")
             .forEach { assertTrue(advanced.contains("android:key=\"$it\"")) }
+        // The app ships English strings only: no language picker, and a locale saved by older builds is cleared.
+        assertFalse(advanced.contains("select_language"))
+        assertTrue(File(sourceRoot, "App.kt").readText().contains("preferences.forcedLanguage = DEFAULT_LANGUAGE"))
     }
 
     @Test
