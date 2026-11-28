@@ -199,6 +199,8 @@ wait_for_log() {
 
 # ── Stage 2: HTTPS stack with private secrets ──────────────────────────
 render_private tls tls
+# Managed storage that starts out writable by everyone must end up private before use.
+sudo mkdir -p "$mnt/data" && sudo chmod 777 "$mnt/data"
 up tls
 server_image="$(docker inspect -f '{{.Config.Image}}' "$(cid server)")"
 server_user="$(docker inspect -f '{{.Config.User}}' "$(cid server)")"
@@ -225,6 +227,8 @@ for name in secret.txt registration-signing; do
   [ "$(sudo stat -c '%u %a' "$mnt/data/$name")" = "$server_uid 600" ] || fail "$name owner/mode"
 done
 pass "secret files are mode 600 and owned by the server user"
+[ "$(sudo stat -c '%a' "$mnt/data")" = "700" ] || fail "managed data directory was not made private"
+pass "TrueNAS-managed data directory (created 777) is made private (700)"
 [ -z "$(sudo find "$mnt/data" -maxdepth 1 -name '*.ini')" ] || fail "server configuration written to the data dataset"
 pass "server configuration is not on the data dataset"
 
@@ -303,11 +307,12 @@ sudo rm -rf "$mnt"
 
 render_private proxy hp-badkey host_path
 sudo mkdir -p "$mnt/data" && sudo chown "$server_uid:$server_gid" "$mnt/data" && sudo chmod 750 "$mnt/data"
-sudo sh -c "printf short > '$mnt/data/registration-signing'"
+sudo sh -c "printf 'short\\377' > '$mnt/data/registration-signing'"
+sudo cp "$mnt/data/registration-signing" "$work/badkey"
 sudo chown "$server_uid:$server_gid" "$mnt/data/registration-signing" && sudo chmod 600 "$mnt/data/registration-signing"
 up hp-badkey server
 wait_for_log server "registration-signing is malformed" || fail "a short persisted signing key was not refused"
-[ "$(sudo cat "$mnt/data/registration-signing")" = "short" ] || fail "a malformed signing key was silently rotated"
+sudo cmp -s "$mnt/data/registration-signing" "$work/badkey" || fail "a malformed signing key was silently rotated"
 pass "a malformed persisted signing key is refused, not rotated"
 down
 sudo rm -rf "$mnt"

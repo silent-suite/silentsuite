@@ -155,7 +155,10 @@ questions:
       attrs:
         - variable: data
           label: SilentSuite Data Storage
-          description: Encrypted attachments and this install's keys. Back it up together with the Postgres data.
+          description: |
+            Encrypted attachments and this install's keys. Back it up together with the Postgres data.</br>
+            It must be a dedicated directory owned by uid 568 / gid 568 and not writable by its group or others.</br>
+            With automatic permissions SilentSuite sets this up (mode 0700); otherwise it only checks and refuses to start.
           schema:
             type: dict
             attrs:
@@ -236,8 +239,9 @@ questions:
                         Enabling this, will check the top level directory,</br>
                         If it finds incorrect permissions, it will `chown` the
                         host path to the user and group required for the
-                        server container (the apps user, uid 568 / gid 568).</br>
-                        Without it, the path must be writable for uid 568 / gid 568.
+                        server container (the apps user, uid 568 / gid 568), and the server makes it private (mode 0700).</br>
+                        Without it, the path must already be owned by uid 568 / gid 568 and not writable by its group or others;
+                        SilentSuite then checks it and never changes it.
                       schema:
                         type: boolean
                         default: false

@@ -33,6 +33,14 @@ def fail(message):
     sys.exit("[package-start] " + message)
 
 
+def private(path, mode):
+    try:
+        os.chmod(path, mode)
+    except PermissionError:
+        # e.g. an NFSv4 ACL dataset whose ACL mode forbids chmod
+        fail("cannot set mode %o on %s; let the server user change its permissions" % (mode, path))
+
+
 # 1. The data directory and the existing secret entries, before any change.
 try:
     info = os.lstat(DATA)
@@ -47,7 +55,11 @@ managed = os.environ.get("SILENTSUITE_DATA_PERMISSIONS") == "managed"
 if info.st_uid != os.getuid():
     fail("the data directory must be owned by uid %d / gid %d (enable automatic permissions, "
          "or give that user ownership)" % (os.getuid(), os.getgid()))
-if info.st_mode & 0o022 and not managed:
+if managed:
+    # Secure TrueNAS-managed storage first, so the checks below hold under the final mode.
+    private(DATA, 0o700)
+    info = os.lstat(DATA)
+if info.st_mode & 0o022:
     fail("the data directory must not be writable by its group or by others")
 if not os.access(DATA, os.W_OK | os.X_OK):
     fail("the data directory is not writable for uid %d / gid %d" % (os.getuid(), os.getgid()))
@@ -88,17 +100,7 @@ config["database"] = {
 with open(os.environ["ETEBASE_EASY_CONFIG_PATH"], "w", encoding="utf-8") as handle:
     config.write(handle)
 
-# 3. Repair existing secrets, then create the signing material once.
-def private(path, mode):
-    try:
-        os.chmod(path, mode)
-    except PermissionError:
-        # e.g. an NFSv4 ACL dataset whose ACL mode forbids chmod
-        fail("cannot set mode %o on %s; let the server user change its permissions" % (mode, path))
-
-
-if managed:
-    private(DATA, 0o700)
+# 3. Repair existing secrets (directory already private), then create the signing material once.
 for name in SECRETS:
     path = os.path.join(DATA, name)
     if os.path.lexists(path):
@@ -121,9 +123,9 @@ if not os.path.lexists(signing):
     dir_fd = os.open(DATA, os.O_RDONLY | os.O_DIRECTORY)
     os.fsync(dir_fd)
     os.close(dir_fd)
-with open(signing, encoding="ascii") as handle:
-    key = handle.read()
-if len(key) != 64 or any(c not in "0123456789abcdef" for c in key):
+with open(signing, "rb") as handle:
+    key = handle.read(65)
+if len(key) != 64 or any(c not in b"0123456789abcdef" for c in key):
     fail("registration-signing is malformed; restore it from a backup, or remove it to create a "
          "new one (only pending sign-up grants are affected)")
 for name in ("media", "static"):
