@@ -392,6 +392,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
     y: number
     time: number
     date: Date | null
+    /** The pressed column's day (browser-local Y/M/D, as buildDateFromHour expects). */
+    day: Date
     dayColRect: DOMRect | null
   } | null>(null)
   const selectionRef = useRef<HTMLDivElement>(null)
@@ -1077,6 +1079,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         y: e.clientY,
         time: Date.now(),
         date: startDate,
+        day: dayInfo.date,
         dayColRect: dayInfo.rect,
       }
       isDraggingRef.current = false
@@ -1307,11 +1310,14 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       const colRect = dragStartRef.current.dayColRect
       if (!colRect) return
 
-      // Build display times
-      const dayDate = dragStartRef.current.date
+      // Build display times on the pressed column's day, not the browser-local
+      // day of the start instant (they differ when the browser and calendar zones do).
+      const dayDate = dragStartRef.current.day
       const startTime = buildDateFromHour(dayDate, snappedStart)
       const endTime = buildDateFromHour(dayDate, snappedEnd)
-      dragEndTimeRef.current = endTime
+      // Keep the cursor's end, not the later of the two: mouse-up puts start and end
+      // in order, so an upward drag keeps both endpoints.
+      dragEndTimeRef.current = buildDateFromHour(dayDate, snapHour(endHour))
 
       setDragSelection({
         left: colRect.left - wrapperRect.left,

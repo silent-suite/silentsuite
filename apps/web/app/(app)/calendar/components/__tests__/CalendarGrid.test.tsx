@@ -663,6 +663,51 @@ describe('CalendarGrid slot clicks', () => {
   })
 })
 
+describe('CalendarGrid drag-to-select', () => {
+  const browserTz = process.env.TZ
+  afterEach(() => {
+    if (browserTz === undefined) delete process.env.TZ
+    else process.env.TZ = browserTz
+  })
+
+  // 16 displayed hours (07:00-23:00) over 1600px: 100px per hour, so y=200 is 09:00.
+  function dragSelect(fromY: number, toY: number) {
+    const onSlotClick = vi.fn()
+    render(<CalendarGrid events={[]} onSlotClick={onSlotClick} />)
+    const grid = screen.getByTestId('time-grid')
+    vi.spyOn(grid, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    vi.spyOn(screen.getByTestId('day-column'), 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    Object.defineProperty(grid, 'scrollHeight', { configurable: true, value: 1600 })
+    Object.defineProperty(grid, 'scrollTop', { configurable: true, value: 0, writable: true })
+    fireEvent.mouseDown(grid, { button: 0, clientX: 50, clientY: fromY })
+    fireEvent.mouseMove(grid, { clientX: 50, clientY: toY })
+    fireEvent.mouseUp(grid, { clientX: 50, clientY: toY })
+    return onSlotClick
+  }
+
+  it('keeps both endpoints of an upward drag', () => {
+    process.env.TZ = 'UTC'
+    const onSlotClick = dragSelect(400, 300)
+    expect(onSlotClick).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      startDate: new Date('2026-07-13T10:00:00.000Z'),
+      endDate: new Date('2026-07-13T11:00:00.000Z'),
+      allDay: false,
+    }))
+  })
+
+  it('builds both ends on the calendar day when the browser zone differs', () => {
+    // 09:00 on 13 July in Kathmandu (UTC+5:45) is still 12 July in Los Angeles.
+    process.env.TZ = 'America/Los_Angeles'
+    mocks.preferencesState.defaultTimezone = 'Asia/Kathmandu'
+    const onSlotClick = dragSelect(200, 300)
+    expect(onSlotClick).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      startDate: new Date('2026-07-13T03:15:00.000Z'),
+      endDate: new Date('2026-07-13T04:15:00.000Z'),
+      allDay: false,
+    }))
+  })
+})
+
 describe('CalendarGrid external drop (planning view)', () => {
   function dropHarness(props: { externalDragType?: string; onExternalDrop?: (start: Date, dataTransfer: DataTransfer) => void; externalDropMinutes?: number }) {
     render(<CalendarGrid events={[]} {...props} />)
