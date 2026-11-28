@@ -77,6 +77,14 @@ class ServerFailureContractTest {
         val caught = other.substringAfter("} catch (e: Exception) {").substringBefore("} finally {")
         assertTrue(caught.contains("R.string.collection_members_leave_error"))
         assertFalse("a failed leave keeps the screen", caught.contains("finish()"))
+        val afterLeave = other.substringAfter("membersManager.leave()").substringBefore("} catch (e: Exception) {")
+        val syncRequest = afterLeave.substringAfter("try {\n").substringBefore("\n                            true\n")
+        assertTrue("a failed sync request after the server leave has its own catch", syncRequest.trimStart()
+            .startsWith("requestSync(applicationContext, model.value!!.account)") &&
+            syncRequest.contains("} catch (e: RuntimeException) {") &&
+            syncRequest.contains("if (e is CancellationException) throw e"))
+        assertFalse("a failed sync request after the leave says nothing of a failed leave",
+            syncRequest.contains("collection_members_leave_error") || syncRequest.contains("e.message"))
         assertTrue(strings().contains("name=\"collection_members_leave_error\""))
     }
 

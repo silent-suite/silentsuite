@@ -31,7 +31,17 @@ class ResultFragment : DialogFragment() {
     }
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        if (result!!.isFailed) {
+        if (result!!.refused) {
+            // An expected refusal, not a crash: the reason alone, with nothing to report.
+            return MaterialAlertDialogBuilder(requireActivity())
+                    .setTitle(R.string.import_dialog_failed_title)
+                    .setIcon(R.drawable.ic_error_dark)
+                    .setMessage(result!!.failureMessage ?: getString(R.string.import_dialog_failed_generic))
+                    .setPositiveButton(android.R.string.ok) { dialog, which ->
+                        // dismiss
+                    }
+                    .create()
+        } else if (result!!.isFailed) {
             val failureMessage = result!!.failureMessage ?: getString(R.string.import_dialog_failed_generic)
             return MaterialAlertDialogBuilder(requireActivity())
                     .setTitle(R.string.import_dialog_failed_title)
@@ -69,6 +79,8 @@ class ResultFragment : DialogFragment() {
         var failed: Long = 0
         var e: Exception? = null
         var failureMessage: String? = null
+        /** Refused on purpose before anything was copied (say, a destination this account can't edit): no report offered. */
+        var refused: Boolean = false
 
         val isFailed: Boolean
             get() = e != null

@@ -40,6 +40,13 @@ object DeviceImport {
         }
     }
 
+    /**
+     * The app-settings route stays on screen only while a permission Android will no longer ask for is
+     * still missing. Once those are granted in Settings, any remaining card can be requested again.
+     */
+    fun settingsStillNeeded(permanentlyDenied: Set<String>, granted: (String) -> Boolean): Boolean =
+        permanentlyDenied.any { !granted(it) }
+
     /** Other apps' accounts only: SilentSuite's own collections are not a source for each other. */
     fun isImportSource(accountType: String?, ownAccountTypes: Set<String>): Boolean =
         !accountType.isNullOrBlank() && accountType !in ownAccountTypes

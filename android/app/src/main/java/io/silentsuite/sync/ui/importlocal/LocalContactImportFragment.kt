@@ -189,6 +189,7 @@ class LocalContactImportFragment : Fragment() {
                     is DeviceImporter.Destination.Ready -> destination.collection
                     else -> return ResultFragment.ImportResult().apply {
                         e = Exception("Destination is missing or read-only")
+                        refused = true
                         failureMessage = DeviceImportAccess.destinationProblem(destination)?.let { applicationContext.getString(it) }
                     }
                 }
