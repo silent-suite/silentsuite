@@ -2,6 +2,7 @@
 
 import { Lock, WifiOff, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
+import { isAndroidBundle } from '@/app/lib/android-bundle'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
@@ -58,7 +59,8 @@ export function ReadOnlyBanner() {
           {title} Your data is safe and read-only.
         </span>
       </div>
-      <div className="flex shrink-0 items-center gap-3">
+      {/* The Android bundle has neither the subscription nor the export page. */}
+      {!isAndroidBundle && <div className="flex shrink-0 items-center gap-3">
         <Link
           href="/settings/subscription"
           className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
@@ -71,7 +73,7 @@ export function ReadOnlyBanner() {
         >
           Export data
         </Link>
-      </div>
+      </div>}
     </div>
   )
 }

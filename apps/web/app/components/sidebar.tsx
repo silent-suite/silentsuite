@@ -26,6 +26,7 @@ import { OnboardingChecklistAt } from '@/app/components/OnboardingChecklist'
 import { TrialStatusLink } from '@/app/components/trial-status-link'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
+import { isAndroidBundle } from '@/app/lib/android-bundle'
 
 const navItems = [
   { href: '/calendar', labelKey: 'calendar', icon: CalendarDays },
@@ -78,7 +79,7 @@ export function Sidebar() {
 
       {/* Nav items */}
       <div className="mt-2 flex flex-1 flex-col gap-1 px-2">
-        {navItems.filter(({ href }) => href !== '/notes' || notesEnabled).map(({ href, labelKey, icon: Icon }) => {
+        {navItems.filter(({ href }) => (isAndroidBundle ? href === '/calendar' : href !== '/notes' || notesEnabled)).map(({ href, labelKey, icon: Icon }) => {
           const isActive = pathname.startsWith(href)
           const label = t(labelKey)
           return (
@@ -107,11 +108,11 @@ export function Sidebar() {
       </div>
 
       {/* Onboarding checklist */}
-      {isExpanded && <OnboardingChecklistAt width="md-up" />}
+      {isExpanded && !isAndroidBundle && <OnboardingChecklistAt width="md-up" />}
 
       {/* Bottom section */}
       <div className="flex flex-col gap-1 border-t border-[rgb(var(--border))] px-2 py-2">
-        {isAdmin && (
+        {isAdmin && !isAndroidBundle && (
           <Link
             href="/admin"
             className={`group relative flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${
@@ -132,8 +133,8 @@ export function Sidebar() {
             )}
           </Link>
         )}
-        <TrialStatusLink expanded={isExpanded} />
-        <Link
+        {!isAndroidBundle && <TrialStatusLink expanded={isExpanded} />}
+        {!isAndroidBundle && <Link
           href="/settings"
           className={`group relative flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${
             pathname.startsWith('/settings')
@@ -151,7 +152,7 @@ export function Sidebar() {
               {t('settings')}
             </span>
           )}
-        </Link>
+        </Link>}
 
         <button
           onClick={toggle}
