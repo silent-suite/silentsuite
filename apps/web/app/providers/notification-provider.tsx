@@ -6,6 +6,7 @@ import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { NOTIFICATION_LOOKAHEAD_MS, NOTIFICATION_MAX_FUTURE_MS, MS_PER_MINUTE } from '@/app/lib/constants'
 import { resolveTimeZone, expandEventRecurrence, occurrenceEnd, parseICalDurationSeconds } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
+import { isDetachedCancellation } from '@/app/(app)/calendar/lib/calendar-grid-events'
 
 interface NotificationContextValue {
   permission: NotificationPermission | 'unsupported'
@@ -115,7 +116,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     }> = []
 
     for (const event of events) {
-      if (!event.alarms || event.alarms.length === 0) continue
+      if (!event.alarms || event.alarms.length === 0 || isDetachedCancellation(event)) continue
 
       for (const [alarmIndex, alarm] of event.alarms.entries()) {
         if (alarm.action.toUpperCase() !== 'DISPLAY') continue

@@ -43,6 +43,8 @@ function makeEvent(overrides: Partial<any>) {
     exceptions: overrides.exceptions ?? [],
     alarms: [],
     calendarId: overrides.calendarId,
+    status: overrides.status,
+    unknownProperties: overrides.unknownProperties,
     created: new Date(2026, 4, 1),
     updated: new Date(2026, 4, 1),
   }
@@ -136,6 +138,31 @@ describe('MiniCalendar event dots', () => {
     render(<MiniCalendar />)
 
     expect(dotsFor('Friday, May 8, 2026')[0]).toHaveStyle({ backgroundColor: '#10b981' })
+  })
+
+  it('hides a detached cancelled occurrence like the grid does', () => {
+    storeMock.calendarState.events = [
+      makeEvent({
+        id: 'cancelled-occurrence',
+        calendarId: 'red-cal',
+        startDate: new Date(2026, 4, 11, 9),
+        endDate: new Date(2026, 4, 11, 10),
+        status: 'CANCELLED',
+        unknownProperties: ['RECURRENCE-ID:20260511T090000Z'],
+      }),
+      makeEvent({
+        id: 'cancelled-single',
+        calendarId: 'red-cal',
+        startDate: new Date(2026, 4, 12, 9),
+        endDate: new Date(2026, 4, 12, 10),
+        status: 'CANCELLED',
+      }),
+    ]
+
+    render(<MiniCalendar />)
+
+    expect(dotsFor('Monday, May 11, 2026')).toHaveLength(0)
+    expect(dotsFor('Tuesday, May 12, 2026')).toHaveLength(1)
   })
 })
 
