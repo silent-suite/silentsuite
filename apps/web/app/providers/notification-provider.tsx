@@ -4,8 +4,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { NOTIFICATION_LOOKAHEAD_MS, NOTIFICATION_MAX_FUTURE_MS, MS_PER_MINUTE } from '@/app/lib/constants'
-import { resolveTimeZone, expandEventRecurrence, occurrenceEnd, parseICalDurationSeconds } from '@silentsuite/core'
+import { resolveTimeZone, parseICalDurationSeconds } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
+import { expandEventsForRange, isDetachedCancellation } from '@/app/(app)/calendar/lib/calendar-grid-events'
 
 interface NotificationContextValue {
   permission: NotificationPermission | 'unsupported'
@@ -115,7 +116,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     }> = []
 
     for (const event of events) {
-      if (!event.alarms || event.alarms.length === 0) continue
+      if (!event.alarms || event.alarms.length === 0 || isDetachedCancellation(event)) continue
 
       for (const [alarmIndex, alarm] of event.alarms.entries()) {
         if (alarm.action.toUpperCase() !== 'DISPLAY') continue
@@ -126,14 +127,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         const seconds = absolute ? null : parseICalDurationSeconds(alarm.trigger)
         if (!absolute && seconds === null) continue
         const offset = (seconds ?? 0) * 1000
-        let occurrences: Date[]
+        // `instance` is the occurrence's recurrence identity: a moved one keeps its original start,
+        // so it cannot collide with the occurrence it lands on.
+        let occurrences: Array<{ start: Date; end: Date; title: string; instance: Date }>
+        const single = [{ start: event.startDate, end: event.endDate, title: event.title, instance: event.startDate }]
         let absoluteAt = NaN
         if (absolute) {
           const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(alarm.trigger)
           if (!match) continue
           absoluteAt = Date.UTC(+match[1]!, +match[2]! - 1, +match[3]!, +match[4]!, +match[5]!, +match[6]!)
           if (new Date(absoluteAt).toISOString().replace(/[-:]/g, '').replace('.000', '') !== alarm.trigger) continue
-          occurrences = [event.startDate]
+          occurrences = single
         } else if (event.recurrenceRule) {
           // End anchors may belong to starts before the window. Nominal durations can vary
           // across offset transitions; the margin covers those without a second expander.
@@ -143,22 +147,26 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           const end = now + NOTIFICATION_MAX_FUTURE_MS - offset - length + margin
           if (!Number.isFinite(start) || !Number.isFinite(end) || Math.abs(start) > 8.64e15 || Math.abs(end) > 8.64e15) continue
           try {
-            occurrences = expandEventRecurrence(event, { start: new Date(start), end: new Date(end) })
+            // The agenda's expansion: moved occurrences at their new time, cancelled ones left out.
+            occurrences = expandEventsForRange([event], { start: new Date(start), end: new Date(end) })
+              .map((occurrence) => ({
+                start: occurrence.startDate, end: occurrence.endDate, title: occurrence.title, instance: occurrence.instanceDate,
+              }))
           } catch {
-            occurrences = [event.startDate]
+            occurrences = single
           }
         } else {
-          occurrences = [event.startDate]
+          occurrences = single
         }
-        for (const occStart of occurrences) {
-          const alarmTime = absolute ? absoluteAt : (relatedEnd ? occurrenceEnd(event, occStart) : occStart).getTime() + offset
+        for (const { start: occStart, end: occEnd, title: occTitle, instance } of occurrences) {
+          const alarmTime = absolute ? absoluteAt : (relatedEnd ? occEnd : occStart).getTime() + offset
           const timerId = absolute ? `${event.id}_absolute_${alarmIndex}_${alarm.trigger}`
-            : `${event.id}_${occStart.getTime()}_${alarm.trigger}${relatedEnd ? `_end_${alarmIndex}` : alarmIndex ? `_${alarmIndex}` : ''}`
-          const notificationTitle = !absolute && !relatedEnd && offset < 0 ? `Event in ${formatTimeLabel(-offset)}` : event.title
+            : `${event.id}_${instance.getTime()}_${alarm.trigger}${relatedEnd ? `_end_${alarmIndex}` : alarmIndex ? `_${alarmIndex}` : ''}`
+          const notificationTitle = !absolute && !relatedEnd && offset < 0 ? `Event in ${formatTimeLabel(-offset)}` : occTitle
           // Only schedule if in the future and within lookahead window
           if (alarmTime > now && alarmTime < now + LOOKAHEAD_MS) {
             const delay = alarmTime - now
-            const eventTitle = event.title
+            const eventTitle = occTitle
             const eventTimeStr = formatNotificationTime(absolute ? new Date(alarmTime) : occStart)
 
             const timer = setTimeout(async () => {
@@ -217,7 +225,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           if (alarmTime > now && alarmTime < now + NOTIFICATION_MAX_FUTURE_MS) {
             swAlarmData.push({
               id: timerId,
-              title: event.title,
+              title: occTitle,
               time: formatNotificationTime(absolute ? new Date(alarmTime) : occStart),
               triggerAt: alarmTime,
               triggerLabel: alarm.trigger,

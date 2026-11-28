@@ -1688,6 +1688,7 @@ class SettingsRuntimeTest {
  * thread inside a store call, which rethrows anything, so an assertion there would end the app process.
  */
 private class UnsyncedNotesOnDevice(private val context: Context) {
+    /** [enabled]: the row takes a tap. A row with no action is either disabled or, for a note row, not selectable. */
     data class Row(val key: String, val title: String?, val summary: String?, val enabled: Boolean = true)
 
     data class Texts(val title: String?, val message: String?, val positive: String?, val negative: String?) {
@@ -1855,7 +1856,7 @@ private class UnsyncedNotesOnDevice(private val context: Context) {
         val screen = screenOf(settings)?.preferenceScreen ?: return null
         return (0 until screen.preferenceCount).map { screen.getPreference(it) }
             .filter { it.key != UnsyncedNotesFragment.KEY_REMOVAL }
-            .map { Row(it.key, it.title?.toString(), it.summary?.toString(), it.isEnabled) }
+            .map { Row(it.key, it.title?.toString(), it.summary?.toString(), it.isEnabled && it.isSelectable) }
     }
 
     /** The screen shows exactly [expected], in order. */
@@ -2033,7 +2034,7 @@ private class UnsyncedNotesOnDevice(private val context: Context) {
         val section = screenOf(settings)?.findPreference<PreferenceCategory>(UnsyncedNotesFragment.KEY_REMOVAL)
             ?: return null
         return (0 until section.preferenceCount).map { section.getPreference(it) }
-            .map { Row(it.key, it.title?.toString(), it.summary?.toString(), it.isEnabled) }
+            .map { Row(it.key, it.title?.toString(), it.summary?.toString(), it.isEnabled && it.isSelectable) }
     }
 
     /** The removal section shows exactly [expected], in order; null: it does not show. */

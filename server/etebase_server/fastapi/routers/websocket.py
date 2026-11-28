@@ -63,6 +63,11 @@ async def get_ticket(
 
 
 async def load_websocket_ticket(websocket: WebSocket, ticket: str) -> t.Optional[TicketInner]:
+    # Without Redis no ticket can exist; refuse like an unknown ticket instead
+    # of failing with a server error.
+    if not redisw.is_active:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return None
     # Read and delete in one MULTI/EXEC transaction so a ticket can be redeemed
     # only once. GETDEL would need Redis 6.2+; a transaction works on any version.
     async with redisw.redis.pipeline(transaction=True) as pipe:

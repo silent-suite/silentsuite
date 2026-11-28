@@ -30,18 +30,18 @@ class PermissionsActivity : BaseActivity() {
 
     private var lastAnnouncedRequirements: Set<Int>? = null
 
-    /** Android answered a request with "don't ask again", so only the app's settings can grant it now. */
-    private var settingsOffered = false
+    /** Permissions Android answered with "don't ask again", so only the app's settings can grant them now. */
+    private val settingsNeeded = linkedSetOf<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_permissions)
-        settingsOffered = savedInstanceState?.getBoolean(STATE_SETTINGS_OFFERED, false) ?: false
+        savedInstanceState?.getStringArrayList(STATE_SETTINGS_NEEDED)?.let(settingsNeeded::addAll)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean(STATE_SETTINGS_OFFERED, settingsOffered)
+        outState.putStringArrayList(STATE_SETTINGS_NEEDED, ArrayList(settingsNeeded))
     }
 
     override fun onResume() {
@@ -63,7 +63,7 @@ class PermissionsActivity : BaseActivity() {
         setupPermissions(ProviderName.TasksOrg, R.id.tasksorg_permissions, R.string.permissions_tasks_org)?.let(requirements::add)
 
         findViewById<View>(R.id.permissions_settings).visibility =
-            if (settingsOffered && requirements.isNotEmpty()) View.VISIBLE else View.GONE
+            if (DeviceImport.settingsStillNeeded(settingsNeeded, ::isGranted) && requirements.isNotEmpty()) View.VISIBLE else View.GONE
 
         val previous = lastAnnouncedRequirements
         if (previous != null && requirements != lastAnnouncedRequirements && requirements.isNotEmpty()) {
@@ -114,16 +114,19 @@ class PermissionsActivity : BaseActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         val outcome = DeviceImport.permissionOutcome(
             permissions.toList(),
-            granted = { ActivityCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED },
+            granted = ::isGranted,
             canAskAgain = { ActivityCompat.shouldShowRequestPermissionRationale(this, it) },
         )
-        if (outcome == DeviceImport.PermissionOutcome.DENIED_PERMANENTLY) settingsOffered = true
+        if (outcome == DeviceImport.PermissionOutcome.DENIED_PERMANENTLY) settingsNeeded += permissions.filterNot(::isGranted)
         refresh()
     }
 
+    private fun isGranted(permission: String) =
+        ActivityCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
     companion object {
         private val REQUEST_CODE_ASK_MULTIPLE_PERMISSIONS = 124
-        private const val STATE_SETTINGS_OFFERED = "permissionsSettingsOffered"
+        private const val STATE_SETTINGS_NEEDED = "permissionsSettingsNeeded"
 
         fun requestAllPermissions(activity: Activity) {
             val taskPermissions = TASK_PROVIDERS

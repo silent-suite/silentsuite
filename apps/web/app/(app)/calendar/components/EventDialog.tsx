@@ -329,7 +329,6 @@ export function EventDialog({
   const isEdit = mode === 'edit' && !!event
   // A floating event's times are its stored wall clock, which the app keeps in the device zone, so
   // the form reads and writes them there: they match what the calendar shows in its display zone.
-  const floatingZone = isEdit && event.floating && !event.allDay ? deviceTimezone() : undefined
   const isRecurring = isEdit && !!event.recurrenceRule
   // Delete and save go by whether the event is recurring now: another device may have made it
   // recurring, or single, since the dialog opened.
@@ -362,14 +361,19 @@ export function EventDialog({
     return shifted
   }, [isEdit, isRecurring, isManagedEvent, event, instanceDate, overridden])
   const formEvent = isEdit ? (occurrence ?? event) : undefined
+  // A moved occurrence keeps its own time form, which can differ from the series' (timed in an
+  // all-day series): the form opens, and compares its all-day flag and zone, in that form.
+  const floatingZone = formEvent?.floating && !formEvent.allDay ? deviceTimezone() : undefined
+  const ownForm = isEdit && (formEvent!.allDay !== event.allDay || formEvent!.timezone !== event.timezone
+    || !!formEvent!.floating !== !!event.floating)
 
   // Initial all-day flag — needed before form state so we can pick the right
   // TZ for formatting the initial date/time strings.
-  const initialIsAllDay = isEdit ? event.allDay : initialAllDay
+  const initialIsAllDay = formEvent ? formEvent.allDay : initialAllDay
   const initialFormTz: string | undefined = initialIsAllDay
     ? undefined
-    : isEdit
-      ? (event.timezone ?? floatingZone ?? userTz)
+    : formEvent
+      ? (formEvent.timezone ?? floatingZone ?? userTz)
       : userTz
 
   // ---------------------------------------------------------------------------
@@ -420,12 +424,12 @@ export function EventDialog({
 
   // Timezone state — per-event override, defaults to user preference
   const [timezone, setTimezone] = useState(
-    isEdit ? (event.timezone ?? defaultTimezone) : defaultTimezone,
+    formEvent ? (formEvent.timezone ?? defaultTimezone) : defaultTimezone,
   )
   // Active TZ for form fields and subtitle: undefined for all-day (local-midnight)
   // semantics, otherwise the picker's value.
   // A floating event keeps its wall clock until its zone is changed (which makes it zoned).
-  const inputZone = floatingZone && timezone === (event?.timezone ?? defaultTimezone) ? floatingZone : timezone
+  const inputZone = floatingZone && timezone === (formEvent?.timezone ?? defaultTimezone) ? floatingZone : timezone
   const formTz: string | undefined = allDay ? undefined : inputZone
   const formatTime = makeFormatTime(timeFormat !== '24h', formTz ?? userTz)
   const allTimezones = timezoneOptions(timezone)
@@ -587,7 +591,7 @@ export function EventDialog({
     if (!canWrite || !title.trim() || saving) return
     if (startDateError || endDateError) return
 
-    const kindAndZoneUnchanged = isEdit && allDay === event.allDay && timezone === (event.timezone ?? defaultTimezone)
+    const kindAndZoneUnchanged = isEdit && allDay === formEvent!.allDay && timezone === (formEvent!.timezone ?? defaultTimezone)
     const typed: WallInputs = { startDate, startTime, endDate, endTime }
 
     /**
@@ -639,16 +643,16 @@ export function EventDialog({
         if (edited(title, shown.title)) patch.title = title.trim()
         if (edited(description, shown.description || '')) patch.description = description.trim()
         if (edited(location, shown.location || '')) patch.location = location.trim()
-        if (allDay !== event.allDay) patch.allDay = allDay
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
         if (JSON.stringify(categories) !== JSON.stringify(shown.categories ?? [])) patch.categories = categories
-        if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
+        if (selectedCalendarId !== (event.calendarId ?? defaultCalendarId)) patch.calendarId = selectedCalendarId
+        if (allDay !== shown.allDay) patch.allDay = allDay
+        if (timezone !== (shown.timezone ?? defaultTimezone)) patch.timezone = timezone
         // An all-day event without a zone that becomes timed is anchored in the dialog's zone,
         // rather than being saved as a UTC instant.
-        if (event.allDay && !allDay && !event.timezone) patch.timezone = timezone
+        if (shown.allDay && !allDay && !shown.timezone) patch.timezone = timezone
         // An explicit zone change or an all-day switch replaces a floating start time.
-        if (event.floating && (patch.timezone !== undefined || patch.allDay !== undefined)) patch.floating = undefined
-        if (selectedCalendarId !== (event.calendarId ?? defaultCalendarId)) patch.calendarId = selectedCalendarId
+        if (shown.floating && (patch.timezone !== undefined || patch.allDay !== undefined)) patch.floating = undefined
 
         // Compare alarms
         const eventAlarms: VAlarm[] = alarms
@@ -664,6 +668,16 @@ export function EventDialog({
         if (Object.keys(formPatch).length === 0) {
           // No changes — just close
           onClose()
+          return
+        }
+
+        if (isRecurringNow && ownForm) {
+          // A moved occurrence in another time form than its series: the series keeps its own form
+          // and times, so "all events" and "this and future" take only the other changes.
+          const fieldPatch = Object.fromEntries(Object.entries(patch)
+            .filter(([key]) => key !== 'allDay' && key !== 'timezone' && key !== 'floating')) as Partial<CalendarEvent>
+          setScopeDialog({ mode: 'edit', pendingPatch: formPatch, seriesPatch: fieldPatch, futurePatch: fieldPatch })
+          setSaving(false)
           return
         }
 
@@ -740,6 +754,7 @@ export function EventDialog({
     event,
     occurrence,
     overridden,
+    ownForm,
     instanceDate,
     formEvent,
     initialInputs,
@@ -789,14 +804,18 @@ export function EventDialog({
         setScopeDialog(null)
         onClose()
       } else if (scopeDialog.mode === 'edit' && scopeDialog.pendingPatch) {
+        const patch = scope === 'all'
+          ? (scopeDialog.seriesPatch ?? scopeDialog.pendingPatch)
+          : scope === 'this_and_future'
+            ? (scopeDialog.futurePatch ?? scopeDialog.pendingPatch)
+            : scopeDialog.pendingPatch
+        // Nothing for the series to take (a time edit of an occurrence in its own form): only this
+        // occurrence changes, rather than an empty series update or a split.
+        const seriesUntouched = scope !== 'this' && Object.keys(patch).length === 0
         void updateRecurringEvent(
           event.id,
-          scope === 'all'
-            ? (scopeDialog.seriesPatch ?? scopeDialog.pendingPatch)
-            : scope === 'this_and_future'
-              ? (scopeDialog.futurePatch ?? scopeDialog.pendingPatch)
-              : scopeDialog.pendingPatch,
-          scope,
+          seriesUntouched ? scopeDialog.pendingPatch : patch,
+          seriesUntouched ? 'this' : scope,
           effectiveInstanceDate,
         )
         setScopeDialog(null)
@@ -1153,7 +1172,7 @@ export function EventDialog({
                       <div>
                         <input
                           type="text"
-                          inputMode="numeric"
+                          inputMode="text"
                           placeholder={datePlaceholder}
                           value={startDateInput}
                           onChange={handleStartDateChange}
@@ -1193,7 +1212,7 @@ export function EventDialog({
                       <div>
                         <input
                           type="text"
-                          inputMode="numeric"
+                          inputMode="text"
                           placeholder={datePlaceholder}
                           value={endDateInput}
                           onChange={handleEndDateChange}

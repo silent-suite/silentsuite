@@ -234,6 +234,15 @@ describe('photo', () => {
     }
   });
 
+  it('keeps a declared URI photo that looks like base64 as VALUE=URI', () => {
+    const parsed = parseVCard('BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada\r\nPHOTO;VALUE=URI:icons/me\r\nEND:VCARD');
+    expect(parsed.photo).toBe('icons/me');
+    const written = generateVCard(parsed);
+    expect(written).toContain('PHOTO;VALUE=URI:icons/me');
+    expect(written).not.toContain('ENCODING=b');
+    expect(parseVCard(written).photo).toBe('icons/me');
+  });
+
   it('keeps a long URI value as written instead of guessing base64', () => {
     const photo = `photos/${'a'.repeat(120)}`;
     expect(parseVCard(`BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada\r\nPHOTO;VALUE=URI:${photo}\r\nEND:VCARD`).photo).toBe(photo);

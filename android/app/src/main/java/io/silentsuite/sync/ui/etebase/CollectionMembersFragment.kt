@@ -152,7 +152,14 @@ class CollectionMembersFragment : Fragment() {
                             val membersManager = model.value!!.colMgr.getMemberManager(cachedCollection.col)
                             membersManager.leave()
                             if (!identity.validate(applicationContext)) return@withContext false
-                            requestSync(applicationContext, model.value!!.account)
+                            // The server already removed the membership, so a failed sync request must not say the
+                            // leave failed: the screen closes, and the next sync removes the collection.
+                            try {
+                                requestSync(applicationContext, model.value!!.account)
+                            } catch (e: RuntimeException) {
+                                if (e is CancellationException) throw e
+                                Logger.log.warning("Sync request after leave failed: ${e.javaClass.name}")
+                            }
                             true
                         }
                         if (!left) {

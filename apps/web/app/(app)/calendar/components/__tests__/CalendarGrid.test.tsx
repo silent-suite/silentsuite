@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { StrictMode, useSyncExternalStore } from 'react'
 import type { CalendarEvent } from '@silentsuite/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CalendarGrid } from '../CalendarGrid'
 
 const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
@@ -630,6 +630,81 @@ describe('CalendarGrid slot clicks', () => {
     act(() => createdWith({ epochMilliseconds: Date.parse('2026-07-13T10:10:00.000Z') }))
     expect(first).not.toHaveBeenCalled()
     expect(latest).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ startDate: new Date('2026-07-13T10:00:00.000Z'), allDay: false }))
+  })
+
+  describe('snaps to 30 minutes in the calendar timezone, not the browser one', () => {
+    const browserTz = process.env.TZ
+    beforeEach(() => { process.env.TZ = 'UTC' })
+    afterEach(() => {
+      if (browserTz === undefined) delete process.env.TZ
+      else process.env.TZ = browserTz
+    })
+
+    it.each([
+      // Kathmandu is UTC+5:45: 09:10 and 09:20 there snap to 09:00 and 09:30 Kathmandu time.
+      ['Asia/Kathmandu', '2026-07-13T03:25:00.000Z', '2026-07-13T03:15:00.000Z'],
+      ['Asia/Kathmandu', '2026-07-13T03:35:00.000Z', '2026-07-13T03:45:00.000Z'],
+      ['Asia/Kolkata', '2026-07-13T03:40:00.000Z', '2026-07-13T03:30:00.000Z'],
+      ['UTC', '2026-07-13T09:20:00.000Z', '2026-07-13T09:30:00.000Z'],
+    ])('%s: a click at %s starts at %s', (timeZone, clicked, expected) => {
+      mocks.preferencesState.defaultTimezone = timeZone
+      const onSlotClick = vi.fn()
+      render(<CalendarGrid events={[]} onSlotClick={onSlotClick} />)
+      const click = mocks.latestConfig!.callbacks.onClickDateTime as (dt: { epochMilliseconds: number }) => void
+
+      act(() => click({ epochMilliseconds: Date.parse(clicked) }))
+
+      const start = new Date(expected)
+      expect(onSlotClick).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        startDate: start,
+        endDate: new Date(start.getTime() + 3_600_000),
+      }))
+    })
+  })
+})
+
+describe('CalendarGrid drag-to-select', () => {
+  const browserTz = process.env.TZ
+  afterEach(() => {
+    if (browserTz === undefined) delete process.env.TZ
+    else process.env.TZ = browserTz
+  })
+
+  // 16 displayed hours (07:00-23:00) over 1600px: 100px per hour, so y=200 is 09:00.
+  function dragSelect(fromY: number, toY: number) {
+    const onSlotClick = vi.fn()
+    render(<CalendarGrid events={[]} onSlotClick={onSlotClick} />)
+    const grid = screen.getByTestId('time-grid')
+    vi.spyOn(grid, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    vi.spyOn(screen.getByTestId('day-column'), 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    Object.defineProperty(grid, 'scrollHeight', { configurable: true, value: 1600 })
+    Object.defineProperty(grid, 'scrollTop', { configurable: true, value: 0, writable: true })
+    fireEvent.mouseDown(grid, { button: 0, clientX: 50, clientY: fromY })
+    fireEvent.mouseMove(grid, { clientX: 50, clientY: toY })
+    fireEvent.mouseUp(grid, { clientX: 50, clientY: toY })
+    return onSlotClick
+  }
+
+  it('keeps both endpoints of an upward drag', () => {
+    process.env.TZ = 'UTC'
+    const onSlotClick = dragSelect(400, 300)
+    expect(onSlotClick).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      startDate: new Date('2026-07-13T10:00:00.000Z'),
+      endDate: new Date('2026-07-13T11:00:00.000Z'),
+      allDay: false,
+    }))
+  })
+
+  it('builds both ends on the calendar day when the browser zone differs', () => {
+    // 09:00 on 13 July in Kathmandu (UTC+5:45) is still 12 July in Los Angeles.
+    process.env.TZ = 'America/Los_Angeles'
+    mocks.preferencesState.defaultTimezone = 'Asia/Kathmandu'
+    const onSlotClick = dragSelect(200, 300)
+    expect(onSlotClick).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      startDate: new Date('2026-07-13T03:15:00.000Z'),
+      endDate: new Date('2026-07-13T04:15:00.000Z'),
+      allDay: false,
+    }))
   })
 })
 

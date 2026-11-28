@@ -420,6 +420,30 @@ describe('#744 the rendered note editor saves only through its captured base', (
     expect(leavePrevented()).toBe(false)
   })
 
+  it('asks before the tab closes when typing goes back to the saved text while a save of other text runs', async () => {
+    const leavePrevented = () => {
+      const event = new harness.window.Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    const { account, collection, item } = await openSavedNote()
+    fireEvent.change(titleBox(), { target: { value: 'Typed then undone' } })
+    const write = server.holdNext(isTransaction)
+    hideTab()
+    await write.arrived
+
+    // Back to exactly the saved text: the editor is clean, but the running save would leave the server on other text.
+    fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+    expect(leavePrevented()).toBe(true)
+
+    write.release(false)
+    await settle()
+    hideTab()
+    await settle()
+    expect(await serverTitle(account, collection, item.uid)).toBe(BASE_TITLE)
+    expect(leavePrevented()).toBe(false)
+  })
+
   it('#744 obliges a note whose editor mounts while custody is outstanding', async () => {
     const { account, collection, item } = await makeSavedNote(BASE_TITLE, BASE_BODY)
     server.seed(collection, [item])

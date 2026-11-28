@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Rounded background for the login info banner. -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/semantic_surface_variant" />
-    <corners android:radius="8dp" />
-</shape>

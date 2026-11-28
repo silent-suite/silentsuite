@@ -8,7 +8,7 @@ Common issues and how to fix them.
 docker compose ps
 ```
 
-Both `silentsuite-postgres` and `silentsuite-server` should show `Up (healthy)`.
+Both `silentsuite-postgres` and `silentsuite-server` should show `Up (healthy)`. If a service shows `Up (unhealthy)` or keeps restarting, check its logs.
 
 ## View Logs
 
@@ -74,7 +74,7 @@ docker compose restart server
 
 **Causes:**
 - **DNS not resolving:** Verify with `dig +short your-domain.com`.
-- **Reverse proxy misconfigured:** Make sure it forwards to `localhost:3735`.
+- **Reverse proxy misconfigured:** Make sure it forwards to `localhost:3735` and that the server container is healthy (`docker compose ps`). TLS is the reverse proxy's job, so certificate errors come from the proxy, not the SilentSuite server.
 - **Ports blocked:** If using Caddy or certbot, ports 80 and 443 must be open: `sudo ufw status`.
 - **Let's Encrypt rate limits:** If you've hit them, wait before retrying.
 

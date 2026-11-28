@@ -1,7 +1,7 @@
-"""Contract for the two published self-host "Updating" pages.
+"""Contract for the published self-host "Updating" page.
 
-Both trees are tracked and linked from their self-hosting index, so an operator
-who follows the navigation reaches one of them. They must agree with what the
+The page is tracked and linked from the self-hosting index, so an operator who
+follows the navigation reaches it. It must agree with what the
 software actually does: digest-pinned Compose, a restart-only `update.sh`, an
 installer that refuses an occupied target, and no cross-version procedure yet.
 """
@@ -15,11 +15,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 PAGES = {
-    "docs": ROOT / "docs" / "self-hosting" / "updating.md",
     "apps/docs": ROOT / "apps" / "docs" / "self-hosting" / "updating.md",
 }
 INDEXES = {
-    "docs": ROOT / "docs" / "self-hosting" / "README.md",
     "apps/docs": ROOT / "apps" / "docs" / "self-hosting" / "index.md",
 }
 
@@ -32,7 +30,7 @@ REQUIRED = (
 )
 
 # Each of these is a procedure the software does not support, or an authority
-# claim it contradicts. None may reappear on either page.
+# claim it contradicts. None may reappear on the page.
 FORBIDDEN = (
     "install.sh | bash",
     "silentsuite-server:latest",
@@ -75,9 +73,6 @@ def test_the_data_safety_caveat_survives(tree: str):
     assert "backup-and-restore.md" in text
 
 
-def test_both_trees_agree_on_what_is_supported():
-    """The two pages are worded for different sites but must not disagree."""
-
-    texts = {tree: page.read_text(encoding="utf-8") for tree, page in PAGES.items()}
-    for phrase in (*REQUIRED, "Do not edit the digest in `.env` by hand."):
-        assert all(phrase in text for text in texts.values()), phrase
+def test_the_updating_page_warns_against_editing_the_digest():
+    for tree, page in PAGES.items():
+        assert "Do not edit the digest in `.env` by hand." in page.read_text(encoding="utf-8"), tree

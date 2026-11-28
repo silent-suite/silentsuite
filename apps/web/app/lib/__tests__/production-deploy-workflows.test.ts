@@ -125,7 +125,6 @@ const approvedNode24ActionPins: Record<string, string> = {
   'actions/github-script': '3a2844b7e9c422d3c10d287c895573f7108da1b3',
   'cloudflare/wrangler-action': 'ebbaa1584979971c8614a24965b4405ff95890e0',
   'docker/setup-qemu-action': '96fe6ef7f33517b61c61be40b68a1882f3264fb8',
-  'android-actions/setup-android': '40fd30fb8d7440372e1316f5d1809ec01dcd3699',
   'actions/setup-node': '820762786026740c76f36085b0efc47a31fe5020',
   'actions/upload-artifact': '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
   'actions/download-artifact': '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
@@ -140,6 +139,8 @@ function node24PinViolations(root: string): string[] {
 
   for (const relativeDirectory of ['.github/workflows', 'android/.github/workflows']) {
     const directory = join(root, relativeDirectory)
+    // The nested Android workflow folder is gone; if one is added back, it is still checked.
+    if (!existsSync(directory)) continue
     for (const name of readdirSync(directory).filter((entry) => /\.ya?ml$/.test(entry))) {
       const relativePath = `${relativeDirectory}/${name}`
       let parsed: ParsedWorkflow

@@ -31,6 +31,10 @@ object Constants {
     val androidAppsDocsUri: Uri = docsUri.buildUpon()
             .appendEncodedPath("user-guide/apps/android")
             .build()
+    /** "Set Up" heading in apps/docs/user-guide/apps/android.md (VitePress slug). */
+    val androidSignInDocsUri: Uri = androidAppsDocsUri.buildUpon().fragment("set-up").build()
+    /** "Choosing a Task App" heading in apps/docs/user-guide/apps/android.md (VitePress slug). */
+    val androidTaskAppDocsUri: Uri = androidAppsDocsUri.buildUpon().fragment("choosing-a-task-app").build()
     val etebaseDashboardPrefix: Uri = Uri.parse("https://dashboard.silentsuite.io/user/partner/")
     val contactUri: Uri = webUri.buildUpon().appendEncodedPath("about/#contact").build()
     val registrationUrl: Uri = webUri.buildUpon().appendEncodedPath("accounts/signup/").build()

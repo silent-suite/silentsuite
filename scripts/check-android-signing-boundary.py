@@ -44,7 +44,6 @@ ROOT_WORKFLOW = WORKFLOW_DIR / "release-android.yml"
 # Unprivileged Android CI. It keeps the same structural policy job and Conscrypt
 # producer, and must never regain a release-producing job.
 ANDROID_CI_WORKFLOW = WORKFLOW_DIR / "build-android.yml"
-ANDROID_SIBLING_WORKFLOW = Path("android/.github/workflows/build.yml")
 # The dispatch-only rehearsal for the release lane's reproducibility gate. It
 # runs the same two builds and the same comparison, holds no signing capability
 # whatsoever, and must never become a second way to produce a release artifact.
@@ -588,7 +587,6 @@ ALLOWED_ATTACHMENT_JOB_KEYS = {
 ALLOWED_RELEASE_STEP_KEYS = {"name", "uses", "with", "run", "env", "if"}
 REQUIRED_TRIGGER_PATHS = {
     ".github/workflows/**",
-    "android/.github/workflows/**",
     "runbooks/android-release.md",
     "scripts/check-android-signing-boundary.py",
     "tests/test_android_*.py",
@@ -1569,12 +1567,9 @@ def check(root: Path) -> list[str]:
     workflow_dir = root / WORKFLOW_DIR
     violations: list[str] = []
     root_path = root / ROOT_WORKFLOW
-    sibling_path = root / ANDROID_SIBLING_WORKFLOW
 
     if not root_path.is_file():
         return [f"missing required workflow: {ROOT_WORKFLOW}"]
-    if not sibling_path.is_file():
-        return [f"missing Android sibling workflow: {ANDROID_SIBLING_WORKFLOW}"]
 
     loaded: dict[Path, dict[str, Any]] = {}
     workflow_paths = sorted((*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml")))
@@ -2219,7 +2214,7 @@ def check(root: Path) -> list[str]:
                 f"{', '.join(sorted(refs_outside_reviewed_env))}"
             )
 
-    for relative in (ROOT_WORKFLOW, ANDROID_CI_WORKFLOW, ANDROID_SIBLING_WORKFLOW):
+    for relative in (ROOT_WORKFLOW, ANDROID_CI_WORKFLOW):
         path = root / relative
         try:
             workflow = load_workflow(path)

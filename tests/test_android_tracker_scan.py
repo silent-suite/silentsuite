@@ -42,10 +42,15 @@ class AndroidTrackerScannerTest(unittest.TestCase):
         fixtures = {path.name for path in (FIXTURES / "positive").iterdir() if path.is_dir()}
         self.assertEqual(fixtures, expected)
         for category in sorted(expected):
-            with self.subTest(category=category):
-                result = self.run_scan(FIXTURES / "positive" / category)
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn(f"[{category}]", result.stdout)
+            # Every payload must fail on its own, so dropping one alternative from a
+            # signature pattern fails here even when the category has other payloads.
+            payloads = sorted(path for path in (FIXTURES / "positive" / category).iterdir() if path.is_file())
+            self.assertTrue(payloads, category)
+            for payload in payloads:
+                with self.subTest(category=category, payload=payload.name):
+                    result = self.run_scan(payload)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn(f"[{category}]", result.stdout)
 
     def test_scans_nested_apk_aab_split_dex_and_native_payloads(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -601,9 +606,15 @@ PROHIBITED [domain] tracker-domain {repo}/android/security/fixtures/tracker-scan
 tracker scan failed: 1 prohibited finding(s)
 """, '', (1, 1, 0, 'fail')),
     "fixture-positive-identifier_api": (2, """\
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-ad-id-permission.txt: android.permission.ACCESS_ADSERVICES_AD_ID
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-adid.txt: android/adservices/adid
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-appsetid.txt: android/adservices/appsetid
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-measurement.txt: android/adservices/measurement
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/adservices-topics.txt: android/adservices/topics
 PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/input.txt: com/android/installreferrer
-tracker scan failed: 1 prohibited finding(s)
-""", '', (1, 1, 0, 'fail')),
+PROHIBITED [identifier_api] identifier-attribution-api {repo}/android/security/fixtures/tracker-scan/positive/identifier_api/play-services-ad-id-permission.txt: com.google.android.gms.permission.AD_ID
+tracker scan failed: 7 prohibited finding(s)
+""", '', (1, 7, 0, 'fail')),
     "fixture-positive-manifest_component": (2, """\
 PROHIBITED [package] tracker-package {repo}/android/security/fixtures/tracker-scan/positive/manifest_component/AndroidManifest.xml: io.sentry
 PROHIBITED [manifest_component] tracker-manifest-component {repo}/android/security/fixtures/tracker-scan/positive/manifest_component/AndroidManifest.xml: io.sentry.android.core.SentryInitProvider

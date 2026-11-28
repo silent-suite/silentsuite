@@ -87,6 +87,7 @@ open class LoginActivity : BaseActivity() {
     private var ordinaryCredentialFocusPending = false
     private var pendingCreationFailureMessage: Int? = null
     private var accountEntryAdmissionPublished = false
+    private val unsyncedNotes = UnsyncedNotesEntry(this)
 
     private val signupResumeObserver = LifecycleEventObserver { _, event ->
         if (event == Lifecycle.Event.ON_RESUME) processSignupContinuation()
@@ -629,7 +630,7 @@ open class LoginActivity : BaseActivity() {
             routeBackOrUp()
             return true
         }
-        if (UnsyncedNotesEntry.opens(this, item)) return true
+        if (unsyncedNotes.opens(item)) return true
         return super.onOptionsItemSelected(item)
     }
 
@@ -646,12 +647,15 @@ open class LoginActivity : BaseActivity() {
 
     fun cancelBeforeAccountCreated() = finish()
 
-    /** Help, and Unsynced Notes in the overflow, in every mode: also when Android's Add account opened the screen. */
+    /**
+     * Help, and Unsynced Notes in the overflow, in every mode: also when Android's Add account opened the screen.
+     * Unsynced Notes hides only while there is certainly nothing on this device to show there ([UnsyncedNotesEntry]).
+     */
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.activity_login, menu)
-        UnsyncedNotesEntry.addTo(menu)
+        unsyncedNotes.addTo(menu)
         return true
     }
 
-    fun showHelp(item: MenuItem) = WebViewActivity.openUrl(this, Constants.helpUri)
+    fun showHelp(item: MenuItem) = WebViewActivity.openUrl(this, Constants.androidSignInDocsUri)
 }

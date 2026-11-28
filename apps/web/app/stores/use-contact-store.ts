@@ -372,16 +372,20 @@ export const useContactStore = create<ContactState & ContactActions>()(
           }
           let skipped = 0
           for (const target of targets) {
+            // A destination that vanished during the read has nothing to match; its cards stay not sent.
+            if (!target.collectionUid || useEtebaseStore.getState().resolveCollectionUid('contacts', target.collectionUid) !== target.collectionUid) continue
             for (const position of target.positions) {
               const uid = newContacts[position]!.uid
               if (!uid || !target.onServer.has(uid)) continue
               outcomes[position] = 'skipped'
               skipped++
-              if (target.collectionUid) uncertainFileImports.delete(uncertainKey(accountEpoch, target.collectionUid, uid))
+              uncertainFileImports.delete(uncertainKey(accountEpoch, target.collectionUid, uid))
             }
           }
           if (skipped > 0) options.onSkipped?.(skipped)
           const total = outcomes.filter((outcome) => outcome !== 'skipped').length
+          // The count drops skipped cards now, not only once the first batch is encrypted.
+          if (skipped > 0) set({ fileImport: { saved: 0, total } })
           let savedBefore = 0
           const now = new Date()
           for (const target of targets) {
@@ -852,12 +856,21 @@ export const useContactStore = create<ContactState & ContactActions>()(
 
 /**
  * #744: this account's sealed favorite was replayed and its exact record acknowledged.
- * A ledger kept only for that queued acceptance retires; a refusal, an unsettled
- * generation or a pending photo keeps it, and sealed custody is not touched here.
+ * A ledger kept only for that queued acceptance retires; an unsettled generation or a
+ * pending photo keeps it, and sealed custody is not touched here. A refused draft
+ * stays shown and refused, but the queue no longer holds work for it, and when the
+ * favorite was written over this context's last server record, a later save or
+ * delete is proved against the record the favorite wrote.
  */
-export function contactSealedFavoriteAcknowledged(id: string): void {
+export function contactSealedFavoriteAcknowledged(id: string, accepted?: { over: string; record: StoredContact }): void {
   const ledger = liveLedger(id)
-  if (!ledger || !ledger.queued || ledger.refused || ledger.unsettled.size > 0) return
+  if (!ledger || !ledger.queued || ledger.unsettled.size > 0) return
+  if (ledger.refused) {
+    if (accepted && ledger.serverBase.revision === accepted.over) ledger.serverBase = accepted.record
+    // The shown save state stays 'refused'.
+    ledger.queued = false
+    return
+  }
   const owner = contactOwners.get(id)
   if (owner && isCurrentAccountEpoch(owner.accountEpoch) && owner.pendingPhotos > 0) return
   contactLedgers.delete(id)

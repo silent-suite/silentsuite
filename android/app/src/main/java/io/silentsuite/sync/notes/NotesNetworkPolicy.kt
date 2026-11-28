@@ -142,4 +142,24 @@ object NotesNetworkPolicy {
         parts += if (decide(explicit = true, settings, account, reading).run) NoticePart.TRY_NOW else NoticePart.SYNC_NOW_NEEDS_WIFI
         return parts
     }
+
+    /** The one sentence the notebook list shows for a [notice]. */
+    enum class NoticeLine {
+        /** Not on Wi-Fi, and a pull down would sync now. */
+        WAITING_FOR_WIFI_TRY_NOW,
+
+        /** Not on Wi-Fi, and Sync now is Wi-Fi only too. */
+        WAITING_FOR_WIFI,
+
+        /** A saved network name refuses every automatic run, on any network (#971). */
+        NETWORK_NAME,
+    }
+
+    /** The sentence for [parts] (from [notice]), or null when the list says nothing. */
+    fun line(parts: List<NoticePart>): NoticeLine? = when {
+        parts.isEmpty() -> null
+        NoticePart.ACCOUNT_NETWORK_NAME in parts -> NoticeLine.NETWORK_NAME
+        NoticePart.TRY_NOW in parts -> NoticeLine.WAITING_FOR_WIFI_TRY_NOW
+        else -> NoticeLine.WAITING_FOR_WIFI
+    }
 }

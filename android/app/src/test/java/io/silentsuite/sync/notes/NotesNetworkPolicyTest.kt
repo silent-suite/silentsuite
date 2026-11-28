@@ -4,6 +4,7 @@ import io.silentsuite.sync.notes.NotesNetworkPolicy.AccountRule
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Allowed
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Blocker
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Connection
+import io.silentsuite.sync.notes.NotesNetworkPolicy.NoticeLine
 import io.silentsuite.sync.notes.NotesNetworkPolicy.NoticePart
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Reading
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Settings
@@ -324,5 +325,29 @@ class NotesNetworkPolicyTest {
             val parts = NotesNetworkPolicy.notice(0, Settings(automatic, Allowed.ANY_NETWORK), account, none)
             assertTrue("$account, automatic $automatic: $parts", parts.isEmpty() || parts.last() == NoticePart.TRY_NOW)
         }
+    }
+
+    @Test fun `the list shows one sentence for each row of the notice table`() {
+        val expected = mapOf(
+            "1" to null,
+            "2" to NoticeLine.NETWORK_NAME,
+            "2, off Wi-Fi" to NoticeLine.NETWORK_NAME,
+            "2, off Wi-Fi, Sync now on Wi-Fi only" to NoticeLine.NETWORK_NAME,
+            "3" to NoticeLine.WAITING_FOR_WIFI_TRY_NOW,
+            "4" to NoticeLine.WAITING_FOR_WIFI,
+            "5" to NoticeLine.WAITING_FOR_WIFI_TRY_NOW,
+            "6" to NoticeLine.WAITING_FOR_WIFI,
+            "7" to NoticeLine.WAITING_FOR_WIFI_TRY_NOW,
+            "8" to NoticeLine.WAITING_FOR_WIFI,
+            "9" to null,
+            "10" to null,
+        )
+        assertEquals("every row has its sentence", noticeRows.map { it.id }.toSet(), expected.keys)
+        for (row in noticeRows) for (automatic in row.automatic) for (syncNow in row.syncNow) for ((account, reading) in row.cells)
+            for (waiting in listOf(0, 2)) {
+                val parts = NotesNetworkPolicy.notice(waiting, Settings(automatic, syncNow), account, reading)
+                assertEquals("row ${row.id}, $automatic/$syncNow, $account, $reading, waiting $waiting",
+                    expected.getValue(row.id), NotesNetworkPolicy.line(parts))
+            }
     }
 }

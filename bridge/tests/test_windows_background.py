@@ -149,7 +149,8 @@ def test_background_starts_windowless_detached_copy_and_returns(bg, capsys):
     out = capsys.readouterr().out
     assert "Closing this window does not stop it" in out
     assert "Process ID: 4242" in out
-    assert "Get-Process silentsuite-bridge* | Stop-Process" in out
+    assert "To stop it, run: Stop-Process -Id 4242" in out
+    assert "Get-Process" not in out
     assert "tray icon" not in out
 
 
@@ -163,6 +164,13 @@ def test_background_keeps_an_explicit_log_file_and_passes_no_tray(bg, monkeypatc
     args, _flags, kwargs = popen.calls[0]
     assert args == BINARY + [wb.CHILD_FLAG, "--no-tray"]
     assert kwargs["env"]["SILENTSUITE_LOG_FILE"] == "D:\\logs\\bridge.log"
+
+
+def test_background_passes_the_server_url_to_the_copy():
+    argv = ["silentsuite-bridge", "--server", "https://dav.example", "--background"]
+
+    assert wb.child_argv(BINARY, argv=argv) == BINARY + [wb.CHILD_FLAG, "--server", "https://dav.example"]
+    assert wb.child_argv(BINARY, argv=["silentsuite-bridge", "--background"]) == BINARY + [wb.CHILD_FLAG]
 
 
 def test_background_retries_without_breakaway_when_the_job_refuses_it(bg):

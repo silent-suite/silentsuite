@@ -1776,12 +1776,9 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     setEmailOwnershipToken(null)
     setAnnualOffer(null)
     formDataRef.current = data
+    // The store saves this server selection once the account exists on it, so a
+    // failed or abandoned signup keeps the previous setting.
     const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
-    if (normalizedUrl) {
-      localStorage.setItem('silentsuite-server-url', normalizedUrl)
-    } else {
-      localStorage.removeItem('silentsuite-server-url')
-    }
 
     const identifier = normalizeEmailForComparison(data.email || '')
     const selfHosted = isSelfHosted || isCustomServer(normalizedUrl)

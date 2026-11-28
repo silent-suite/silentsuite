@@ -372,10 +372,26 @@ function editorHasUnsavedWork(): boolean {
 }
 
 /**
+ * Whether an open editor's save is running and its held record does not hold the
+ * editor's text. Its text may match what was last saved (typed back) and still be
+ * lost: the running save leaves the server on the text it sends.
+ */
+function editorSaveRunsOverTextNotHeld(): boolean {
+  for (const id of [...mountedEditors.keys()]) {
+    const editor = getMountedNoteEditor(id)
+    if (!editor || editor.chainIdle()) continue
+    const typed = editor.draft?.()
+    if (!typed || !recordHolds(id, typed)) return true
+  }
+  return false
+}
+
+/**
  * While held text, a held record, a closing save, a running copy, or an open editor's
  * unsaved typing or running save exists, a leave listener is installed; it asks only
  * when, at that moment, some text exists only in this page (held text or typing its
- * record does not hold, a closing save, a copy).
+ * record does not hold, a closing save, a copy) or a save runs over text its record
+ * does not hold.
  */
 function syncUnloadGuard(): void {
   if (typeof window === 'undefined') return
@@ -383,7 +399,7 @@ function syncUnloadGuard(): void {
     || editorHasUnsavedWork()
   if (needed && !unloadGuard) {
     unloadGuard = (event) => {
-      if (noteCopiesInFlight.size === 0 && noteTextOnlyInPage().size === 0) return
+      if (noteCopiesInFlight.size === 0 && noteTextOnlyInPage().size === 0 && !editorSaveRunsOverTextNotHeld()) return
       event.preventDefault()
       // Older browsers show the prompt only when returnValue is set.
       event.returnValue = ''
