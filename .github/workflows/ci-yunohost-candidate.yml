@@ -1,0 +1,293 @@
+name: CI YunoHost Candidate
+
+# Checks the YunoHost package in self-host/yunohost/silentsuite_ynh against the published
+# v0.5.20-beta images. Nothing is published; every credential is a synthetic per-run value.
+
+on:
+  pull_request:
+    paths:
+      - "self-host/yunohost/**"
+      - "scripts/yunohost-candidate-*"
+      - ".github/workflows/ci-yunohost-candidate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yunohost-candidate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  PACKAGE_DIR: self-host/yunohost/silentsuite_ynh
+  PACKAGE_LINTER_SHA: 8d711afdad74f9af0b6a8ae55192475dcf596557
+  PACKAGE_CHECK_SHA: f7d32cadac3cfced282decede024707fba9e6ec6
+
+jobs:
+  static:
+    name: Lint (package_linter, shellcheck)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Stage the package as its own repository
+        run: |
+          set -euo pipefail
+          staged="$RUNNER_TEMP/silentsuite_ynh"
+          cp -a "$PACKAGE_DIR" "$staged"
+          git -C "$staged" init -q
+          git -C "$staged" add -A
+          git -C "$staged" -c user.name=ci -c user.email=ci@invalid commit -q -m "package at $HEAD_SHA"
+          test "$(git -C "$staged" rev-parse 'HEAD^{tree}')" = "$(git rev-parse "HEAD:$PACKAGE_DIR")"
+          echo "STAGED=$staged" >> "$GITHUB_ENV"
+
+      - name: Run package_linter at a pinned commit
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q python3-jsonschema python3-toml python3-packaging python3-pyparsing python3-six
+          git init -q "$RUNNER_TEMP/package_linter"
+          git -C "$RUNNER_TEMP/package_linter" fetch -q --depth 1 https://github.com/YunoHost/package_linter "$PACKAGE_LINTER_SHA"
+          git -C "$RUNNER_TEMP/package_linter" checkout -q FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/package_linter" rev-parse HEAD)" = "$PACKAGE_LINTER_SHA"
+          # A package that is not listed yet fails exactly two catalogue tests; anything else fails CI.
+          python3 "$RUNNER_TEMP/package_linter/package_linter.py" --json "$STAGED" > "$RUNNER_TEMP/lint.json" || true
+          python3 - "$RUNNER_TEMP/lint.json" <<'PY'
+          import json, sys
+          text = open(sys.argv[1]).read()
+          report = json.loads(text[text.index("{"):])
+          for level in ("critical", "error", "warning", "info"):
+              for name in report.get(level, []):
+                  print(f"{level}: {name}")
+          expected = {"is_in_catalog", "state_is_working"}
+          blocking = [n for n in report.get("critical", []) + report.get("error", [])
+                      if n.rsplit(".", 1)[-1] not in expected]
+          sys.exit(1 if blocking else 0)
+          PY
+
+      - name: Shellcheck
+        run: |
+          shellcheck --shell=bash --external-sources \
+            --exclude=SC1091,SC2154 "$PACKAGE_DIR"/scripts/*
+          shellcheck --external-sources scripts/yunohost-candidate-*.sh
+
+  fetcher:
+    name: Image fetch containment and integrity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Install skopeo and umoci, start a local registry
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q skopeo umoci
+          sudo mkdir -p /var/lib/registry-ci
+          # registry:2.8.3, multi-platform index digest
+          docker run -d -p 127.0.0.1:5000:5000 --name registry -v /var/lib/registry-ci:/var/lib/registry \
+            docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+
+      - name: Fetcher tests
+        run: sudo bash scripts/yunohost-candidate-fetcher-test.sh
+
+  e2e:
+    name: YunoHost end-to-end (${{ matrix.lane }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: yunohost-12-bookworm-stable
+            image: yunohost/bookworm-stable/appci
+          - lane: yunohost-13-trixie-testing
+            image: yunohost/trixie-testing/appci
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install workspace dependencies (patched etebase SDK for the witness)
+        run: pnpm install --frozen-lockfile
+
+      - name: Boot YunoHost in Incus
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q incus
+          sudo incus admin init --minimal
+          sudo iptables -I DOCKER-USER -i incusbr0 -j ACCEPT
+          sudo iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          sudo incus remote add yunohost https://repo.yunohost.org/incus --protocol simplestreams --public
+          sudo incus launch "yunohost:$IMAGE" ynh
+          for _ in $(seq 60); do
+            sudo incus exec ynh -- systemctl is-system-running --wait >/dev/null 2>&1 && break || sleep 3
+          done
+          sudo incus exec ynh -- yunohost --version
+
+      - name: End-to-end run
+        run: bash scripts/yunohost-candidate-e2e.sh
+
+  arm64-trees:
+    name: arm64 image trees under RootDirectory (Debian 12, not YunoHost)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Boot Debian 12 arm64 in Incus
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q incus
+          sudo incus admin init --minimal
+          sudo iptables -I DOCKER-USER -i incusbr0 -j ACCEPT
+          sudo iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          sudo incus launch images:debian/12 ynh
+          for _ in $(seq 60); do
+            sudo incus exec ynh -- systemctl is-system-running --wait >/dev/null 2>&1 && break || sleep 3
+          done
+          sudo incus exec ynh -- sh -c 'apt-get update -q && apt-get install -y -q skopeo umoci curl'
+
+      - name: Fetch, unpack and run both arm64 trees
+        run: |
+          set -euo pipefail
+          sudo incus file push -r "$PACKAGE_DIR" ynh/root/
+          sudo incus file push scripts/yunohost-candidate-arm64-trees.sh ynh/root/arm64-trees.sh
+          sudo incus exec ynh -- bash /root/arm64-trees.sh /root/silentsuite_ynh
+
+  package-check:
+    name: YunoHost package_check smoke (pinned)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Set up Incus and pinned package_check with a pinned nested linter
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q incus lynx jq btrfs-progs python3-jsonschema python3-toml \
+            python3-packaging python3-pyparsing python3-six python3-pycurl python3-pip python3-bs4
+          sudo incus admin init --minimal
+          sudo iptables -I DOCKER-USER -i incusbr0 -j ACCEPT
+          sudo iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          sudo usermod -aG incus-admin "$USER"
+          pc="$RUNNER_TEMP/package_check"
+          git init -q "$pc"
+          git -C "$pc" fetch -q --depth 1 https://github.com/YunoHost/package_check "$PACKAGE_CHECK_SHA"
+          git -C "$pc" checkout -q FETCH_HEAD
+          test "$(git -C "$pc" rev-parse HEAD)" = "$PACKAGE_CHECK_SHA"
+          # On a failed test package_check uploads the YunoHost log to paste.yunohost.org
+          # (lib/tests_coordination.sh). Nothing from this CI is published: remove that call.
+          sed -i 's/^\([[:space:]]*\)RUN_INSIDE_LXC .*log_share(.*$/\1: # log upload removed by SilentSuite CI/' "$pc/lib/tests_coordination.sh"
+          bash -n "$pc/lib/tests_coordination.sh"
+          # The summary script imports imgkit (not packaged for Ubuntu) only to export a PNG,
+          # which it skips without wkhtmltoimage. An empty module lets it write its JSON.
+          printf '# Stand-in: PNG export is unused here (no wkhtmltoimage).\n' > "$pc/lib/imgkit.py"
+          if grep -rn "log_share(" "$pc/lib" "$pc/package_check.sh"; then exit 1; fi
+          # package_check always runs `git fetch origin && git reset --hard origin/main` in
+          # ./package_linter (lib/common.sh fetch_or_upgrade_package_linter). Point origin at
+          # a local mirror whose only ref is main = the pinned commit.
+          mirror="$RUNNER_TEMP/package_linter_mirror.git"
+          git init -q --bare "$mirror"
+          git init -q "$pc/package_linter"
+          git -C "$pc/package_linter" fetch -q https://github.com/YunoHost/package_linter "$PACKAGE_LINTER_SHA"
+          git -C "$pc/package_linter" checkout -q FETCH_HEAD
+          git -C "$pc/package_linter" push -q "$mirror" "HEAD:refs/heads/main"
+          git -C "$pc/package_linter" remote add origin "$mirror"
+          test "$(git --git-dir="$mirror" for-each-ref --format='%(refname)')" = "refs/heads/main"
+          test "$(git -C "$pc/package_linter" rev-parse HEAD)" = "$PACKAGE_LINTER_SHA"
+
+      - name: Stage the package as its own repository
+        run: |
+          set -euo pipefail
+          staged="$RUNNER_TEMP/silentsuite_ynh"
+          cp -a "$PACKAGE_DIR" "$staged"
+          git -C "$staged" init -q
+          git -C "$staged" add -A
+          git -C "$staged" -c user.name=ci -c user.email=ci@invalid commit -q -m "package at $HEAD_SHA"
+          test "$(git -C "$staged" rev-parse 'HEAD^{tree}')" = "$(git rev-parse "HEAD:$PACKAGE_DIR")"
+
+      - name: package_check (install, upgrade, backup/restore, remove)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/package_check"
+          # package_check looks for a local alias named like this; the remote now publishes
+          # the image as yunohost/bookworm-stable/appci.
+          sudo incus remote add yunohost https://repo.yunohost.org/incus --protocol simplestreams --public
+          sudo incus image copy yunohost:yunohost/bookworm-stable/appci local: --alias yunohost-bookworm-stable-appci
+          # GitHub-hosted runners drop ICMP, and package_check tests connectivity with ping.
+          # Stand-in for that one check only: an HTTPS request to the host it pings.
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\nfor h; do :; done\nexec curl -fsS -o /dev/null --max-time 10 "https://$h/"\n' > "$RUNNER_TEMP/bin/ping"
+          chmod +x "$RUNNER_TEMP/bin/ping"
+          sg incus-admin -c "PATH=$RUNNER_TEMP/bin:\$PATH ./package_check.sh $RUNNER_TEMP/silentsuite_ynh" || true
+          test "$(git -C package_linter rev-parse HEAD)" = "$PACKAGE_LINTER_SHA"
+          # package_check exits 0 even when tests fail: judge its own result summary.
+          # Its nested linter test fails on the two catalogue findings of an unlisted app;
+          # the lint job above checks everything else.
+          python3 - results_0.json <<'PY'
+          import json, sys
+          text = open(sys.argv[1]).read()
+          try:
+              tests = json.loads(text)["tests"]
+          except ValueError:
+              print(text[:2000])
+              sys.exit(1)
+          for t in tests:
+              print(f"{t['test_type']} {t['test_arg'] or ''}: {t['main_result']}")
+          required = {"TEST_INSTALL", "TEST_UPGRADE", "TEST_BACKUP_RESTORE"}
+          judged = [t for t in tests if t["test_type"] != "TEST_PACKAGE_LINTER"]
+          missing = required - {t["test_type"] for t in judged}
+          failed = [t for t in judged if t["main_result"] != "success"]
+          if missing or failed:
+              print(f"missing: {sorted(missing)}; failed: {len(failed)}")
+              sys.exit(1)
+          PY

@@ -1,0 +1,31 @@
+{
+  "buildArgs": {
+    "NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED": "false",
+    "NEXT_PUBLIC_ETEBASE_SERVER_URL": "",
+    "NEXT_PUBLIC_LOCAL_CACHE_ENABLED": "false",
+    "NEXT_PUBLIC_OWNER_REGISTRATION": "true",
+    "NEXT_PUBLIC_SELF_HOSTED": "true",
+    "NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED": "false"
+  },
+  "platforms": [
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "schemaVersion": 1,
+  "server": {
+    "amd64Digest": "sha256:74e078a5d01b565152db6abe5ecb3ed7a3148055c8835e7128e636ef53bc5253",
+    "arm64Digest": "sha256:b7fdd0494cd709366c7648bfa1976721ef12829af44a56ab5a0c8ede789266cb",
+    "expectedRevision": "821d06f9fb7c0c2d3339a9776e6dc1725462144c",
+    "imageRepository": "ghcr.io/silent-suite/silentsuite-server",
+    "indexDigest": "sha256:6a5ab47d21feeed4fc05379258e8c2686e1fa67138dbd6570900eea732b0c7bb"
+  },
+  "sourceCommit": "821d06f9fb7c0c2d3339a9776e6dc1725462144c",
+  "tag": "v0.5.20-beta",
+  "web": {
+    "amd64Digest": "sha256:3793c9e037c26d7b7e396cafd903362047aa8b7e2c6c6479eaa3d78d93bd0ef1",
+    "arm64Digest": "sha256:f67dab2687f3fb3632606ce695cdeb770e61870ee45cb4039042b2f600b3c7d7",
+    "expectedRevision": "821d06f9fb7c0c2d3339a9776e6dc1725462144c",
+    "imageRepository": "ghcr.io/silent-suite/silentsuite-web-selfhost",
+    "indexDigest": "sha256:5156f5d9b67db5c7a6dcdf51c603b104e4c3ec6e2789ad2a6552431fd66e8088"
+  }
+}
