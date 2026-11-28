@@ -8,7 +8,7 @@ import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate, weekStartIndex, weekdayLabels } from '@/app/lib/date'
-import { expandGridEventsForRange } from '../lib/calendar-grid-events'
+import { expandGridEventsForRange, isDetachedCancellation } from '../lib/calendar-grid-events'
 
 const FALLBACK_CALENDAR_COLOR = '#10b981'
 const MAX_DOTS_PER_DAY = 4
@@ -69,6 +69,7 @@ function addEventDots(
     }
   }
 
+  if (isDetachedCancellation(event)) return
   if (!event.recurrenceRule) {
     addSpan(event.startDate, event.endDate)
     return

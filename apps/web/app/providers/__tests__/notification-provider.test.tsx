@@ -231,6 +231,18 @@ describe('NotificationProvider schedules zone-correct alarms for a UTC-anchored 
     view.unmount()
   })
 
+  it('skips the reminder of a detached cancelled occurrence the calendar hides', async () => {
+    vi.setSystemTime(new Date('2026-11-17T08:00:00Z'))
+    const occurrence = (status: string) => deserializeCalendarEvent(['BEGIN:VEVENT', `UID:detached-${status}`, 'RECURRENCE-ID:20261117T150000Z',
+      `STATUS:${status}`, 'DTSTART:20261117T150000Z', 'DTEND:20261117T160000Z',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT15M', 'END:VALARM', 'END:VEVENT'].join('\r\n'))
+    state.events = [occurrence('CANCELLED'), occurrence('CONFIRMED')]
+    const view = render(<NotificationProvider>{null}</NotificationProvider>)
+    await flushAsync()
+    expect(scheduleMessages().at(-1)?.map(a => a.id)).toEqual([`detached-CONFIRMED_${ms('2026-11-17T15:00:00Z')}_-PT15M`])
+    view.unmount()
+  })
+
   it('does not turn an email alarm into a browser notification', async () => {
     vi.setSystemTime(new Date('2026-03-09T12:00:00Z'))
     state.events = [deserializeCalendarEvent(SERIES_ICS.replace('ACTION:DISPLAY', 'ACTION:EMAIL'))]

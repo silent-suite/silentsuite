@@ -166,6 +166,12 @@ export function overriddenOccurrence(master: CalendarEvent, instance: Date): Cal
   return undefined
 }
 
+/** A cancelled occurrence stored on its own (RECURRENCE-ID, no RRULE): it hides a slot and shows nothing itself. */
+export function isDetachedCancellation(event: CalendarEvent): boolean {
+  return event.status?.toUpperCase() === 'CANCELLED' && !event.recurrenceRule
+    && event.unknownProperties?.some(line => /^RECURRENCE-ID[;:]/i.test(line)) === true
+}
+
 function expandEvents(
   events: CalendarEvent[],
   displayRange: DateRange,
@@ -176,8 +182,7 @@ function expandEvents(
   let droppedCount = 0
 
   for (const event of events) {
-    if (event.status?.toUpperCase() === 'CANCELLED' && !event.recurrenceRule
-      && event.unknownProperties?.some(line => /^RECURRENCE-ID[;:]/i.test(line))) continue
+    if (isDetachedCancellation(event)) continue
     // A floating event is shown at its wall clock in the display zone, so its range is that zone's.
     const floating = event.floating === true && !event.allDay
     const range = floating && displayZone
