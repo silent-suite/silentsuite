@@ -212,6 +212,20 @@ function syncTargetId(id: string): string | Promise<string> {
   return saving.then((itemUid) => itemUid ?? id)
 }
 
+/** True when a create of `tempId` is held in the current account's offline queue. */
+async function isCreateQueued(tempId: string): Promise<boolean> {
+  const guard = captureOfflineQueueAccountGuard(useEtebaseStore.getState())
+  if (!guard) return false
+  try {
+    const { readOutstanding } = await import('@/app/lib/offline-queue')
+    const outstanding = await readOutstanding({ collectionType: 'calendar', itemUid: tempId }, guard)
+    return outstanding.some((entry) => entry.type === 'create')
+  } catch {
+    // An unreadable queue proves nothing: the create stays unconfirmed.
+    return false
+  }
+}
+
 /** Sync a single event to Etebase (used by create/update helpers) */
 async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update', tempId?: string, sourceCalendarId?: string): Promise<string | null> {
   const etebase = useEtebaseStore.getState()
@@ -377,16 +391,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
 
     // Not acknowledged. A create admitted to the offline queue is durable local custody awaiting
     // replay, so the temp event stays; anything else may or may not exist remotely.
-    const guard = captureOfflineQueueAccountGuard(useEtebaseStore.getState())
-    if (guard) {
-      try {
-        const { readOutstanding } = await import('@/app/lib/offline-queue')
-        const outstanding = await readOutstanding({ collectionType: 'calendar', itemUid: tempId }, guard)
-        if (outstanding.some((entry) => entry.type === 'create')) return event
-      } catch {
-        // An unreadable queue proves nothing: the create stays unconfirmed.
-      }
-    }
+    if (await isCreateQueued(tempId)) return event
     return withdraw(true)
   },
 
@@ -505,16 +510,27 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         const targetId = typeof target === 'string' ? target : await target
         if (!isCurrentAccountEpoch(accountEpoch)) return
 
-        // Sync both changes to Etebase
-        await syncEventToEtebase({ ...updatedMaster, id: targetId }, 'update', undefined, master.calendarId)
-        copyItemUid = await syncEventToEtebase(copy, 'create')
+        // The copy goes first: if it is neither saved nor queued, the series stays as it was
+        // rather than losing the occurrence; a failed series write after it shows the occurrence
+        // twice, not never. Like a new event, the copy is queued under its temporary id.
+        copyItemUid = await syncEventToEtebase(copy, 'create', copy.id)
         if (copyItemUid) {
           set((state) => ({
             events: state.events.map((e) =>
               e.id === copy.id ? { ...e, id: copyItemUid! } : e,
             ),
           }))
+        } else if (useEtebaseStore.getState().account && !(await isCreateQueued(copy.id))) {
+          if (!isCurrentAccountEpoch(accountEpoch)) return
+          set((state) => ({
+            events: state.events
+              .filter((e) => e.id !== copy.id)
+              .map((e) => (e.updated === updatedMaster.updated && (e.id === id || e.id === targetId) ? { ...master, id: e.id } : e)),
+          }))
+          return
         }
+        if (!isCurrentAccountEpoch(accountEpoch)) return
+        await syncEventToEtebase({ ...updatedMaster, id: targetId }, 'update', undefined, master.calendarId)
       } finally {
         settleCopy(copyItemUid)
       }

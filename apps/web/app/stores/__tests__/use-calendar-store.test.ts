@@ -1853,3 +1853,66 @@ describe('useCalendarStore edits while the create is still being saved', () => {
     expect(await getAll()).toHaveLength(0)
   })
 })
+
+describe('useCalendarStore scoped edit whose copy cannot be saved', () => {
+  const instanceDate = new Date('2026-06-03T09:00:00Z')
+  const range = { start: new Date('2026-06-01T00:00:00Z'), end: new Date('2026-06-05T23:59:59Z') }
+  const starts = (events: CalendarEvent[]) => expandEventsForRange(events, range).map((event) => event.startDate.toISOString())
+
+  beforeEach(() => {
+    resetStore()
+    toastMock.showErrorToast.mockReset()
+  })
+
+  it.each([
+    ['this', 'refused', () => etebaseMock.state.createItem.mockResolvedValue(null)],
+    ['this', 'rejected', () => etebaseMock.state.createItem.mockRejectedValue(new Error('boom'))],
+    ['this_and_future', 'refused', () => etebaseMock.state.createItem.mockResolvedValue(null)],
+    ['this_and_future', 'rejected', () => etebaseMock.state.createItem.mockRejectedValue(new Error('boom'))],
+  ] as const)('a "%s" edit whose copy create is %s leaves the series as it was', async (scope, _how, failCreate) => {
+    const master = makeRecurringEvent()
+    etebaseMock.state.account = {}
+    etebaseMock.state.itemCache = new Map([[master.id, {}]])
+    etebaseMock.state.updateItem.mockResolvedValue(undefined)
+    failCreate()
+    useCalendarStore.setState({ events: [master] })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Moved' }, scope, instanceDate)
+    errorSpy.mockRestore()
+
+    expect(etebaseMock.state.updateItem).not.toHaveBeenCalled()
+    expect(useCalendarStore.getState().events).toEqual([master])
+    expect(starts(useCalendarStore.getState().events)).toContain(instanceDate.toISOString())
+  })
+
+  it('control: a copy held in the offline queue still updates the series', async () => {
+    await resetRealOfflineQueue()
+    offlineAccount()
+    const master = makeRecurringEvent()
+    useCalendarStore.setState({ events: [master] })
+
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Moved' }, 'this', instanceDate)
+
+    const events = useCalendarStore.getState().events
+    expect(events).toHaveLength(2)
+    expect(events.find((e) => e.id === master.id)!.exceptions).toEqual([instanceDate])
+    const queued = await getAll(queueGuard(TEST_FINGERPRINT))
+    expect(queued.map((entry) => entry.type).sort()).toEqual(['create', 'update'])
+  })
+
+  it('control: a saved copy updates the series with the new exception', async () => {
+    const master = makeRecurringEvent()
+    etebaseMock.state.account = {}
+    etebaseMock.state.itemCache = new Map([[master.id, {}]])
+    etebaseMock.state.updateItem.mockResolvedValue(undefined)
+    etebaseMock.state.createItem.mockResolvedValue('remote-copy')
+    useCalendarStore.setState({ events: [master] })
+
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Moved' }, 'this', instanceDate)
+
+    expect(etebaseMock.state.updateItem).toHaveBeenCalledTimes(1)
+    expect(etebaseMock.state.updateItem.mock.calls[0]![2]).toContain('EXDATE')
+    expect(useCalendarStore.getState().events.map((e) => e.id)).toEqual([master.id, 'remote-copy'])
+  })
+})
