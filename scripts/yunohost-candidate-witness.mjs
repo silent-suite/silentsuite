@@ -7,8 +7,8 @@
 //                         compare its sha256 with the state, store the fresh auth token
 //   write-loop --state FILE ACKS STOP
 //                         keep writing small items into the witness collection until the file STOP
-//                         exists (failures while the server is down are expected); append each
-//                         acknowledged item's uid and sha256 to ACKS
+//                         exists (failures while the server is down are expected); a write counts
+//                         as acknowledged once the server reads it back, and goes to ACKS
 //   verify-acks --state FILE ACKS
 //                         every acknowledged item from ACKS must still exist with the same content
 //
@@ -145,19 +145,32 @@ async function writeLoop(file, acks, stop) {
   const itemManager = collectionManager.getItemManager(collection)
   const deadline = Date.now() + 30 * 60_000
   let acknowledged = 0
+  let unconfirmed = 0
   while (!existsSync(stop) && Date.now() < deadline) {
     const content = randomBytes(1024)
+    let item
     try {
-      const item = await itemManager.create({ type: 'text/calendar', name: 'loop.ics', mtime: Date.now() }, new Uint8Array(content))
+      item = await itemManager.create({ type: 'text/calendar', name: 'loop.ics', mtime: Date.now() }, new Uint8Array(content))
       await itemManager.batch([item])
-      appendFileSync(acks, `${item.uid} ${sha256(content)} ${Date.now()}\n`, { mode: 0o600 })
-      acknowledged += 1
     } catch {
-      // The server is stopped during part of the upgrade: an unacknowledged write is fine.
+      // The server is stopped during part of the upgrade: a refused write is fine.
+      item = undefined
+    }
+    if (item) {
+      // Acknowledged means the SilentSuite server reads it back. While YunoHost has the app
+      // removed during a rollback, SSOwat answers its URLs with a portal redirect, which the
+      // SDK follows and does not report as an error; such a write is "unconfirmed".
+      try {
+        await itemManager.fetch(item.uid)
+        appendFileSync(acks, `${item.uid} ${sha256(content)} ${Date.now()}\n`, { mode: 0o600 })
+        acknowledged += 1
+      } catch {
+        unconfirmed += 1
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
-  console.log(`INFO write loop: ${acknowledged} acknowledged writes`)
+  console.log(`INFO write loop: ${acknowledged} acknowledged writes, ${unconfirmed} unconfirmed`)
 }
 
 async function verifyAcks(file, acks) {
