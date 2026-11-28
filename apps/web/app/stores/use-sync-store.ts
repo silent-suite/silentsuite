@@ -332,11 +332,6 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       // Refresh counts to ensure UI is accurate after sync
       const { pendingQueueCount: pc, failedQueueCount: fc, heldQueueCount: hc } = await readQueueCounts(guard)
       assertCurrentAccountEpoch(guard.accountEpoch)
-      // The engine reported a refused token during this cycle: nothing synced.
-      if (useEtebaseStore.getState().restoreBlocked) {
-        set({ syncStatus: 'error', error: 'Sync error occurred', pendingQueueCount: pc, failedQueueCount: fc, heldQueueCount: hc })
-        return
-      }
       set({
         syncStatus: 'synced',
         lastSyncedAt: new Date(),

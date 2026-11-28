@@ -235,15 +235,6 @@ async function startSyncEngine(
     serverUrl,
     pollIntervalMs: 30_000,
   })
-  // The server refused this session's token (revoked or expired): nothing
-  // syncs until the user signs in again, so show the existing unlock prompt.
-  // Local data and queued edits stay as they are.
-  engine.onAuthFailure?.(() => {
-    if (!isCurrentAccountEpoch(accountEpoch)) return
-    const current = useEtebaseStore.getState().syncEngine
-    if (current && current !== engine) return
-    useEtebaseStore.setState({ restoreBlocked: true })
-  })
 
   try {
     return await trackAndStartSyncEngine(engine, account, collections, accountEpoch, diagnostics)
@@ -2718,8 +2709,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         set((state) => ({
           domainLoadState: { ...state.domainLoadState, ...failedState },
           isInitialized: true,
-          // A refused token needs a new sign-in; any other failure can be retried.
-          restoreBlocked: core.isUnauthorizedError(err),
+          restoreBlocked: false,
         }))
         for (const [key] of COLLECTION_DEFINITIONS) {
           await options?.onDomainLoaded?.({

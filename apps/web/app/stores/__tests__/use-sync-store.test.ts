@@ -156,20 +156,6 @@ describe('useSyncStore', () => {
     expect(preferencesSyncMock.pushNow).not.toHaveBeenCalled()
   })
 
-  it('reports an error, not synced, when the sync engine reported a refused token during the cycle', async () => {
-    const syncNow = vi.fn(async () => { (etebaseMock.state as any).restoreBlocked = true })
-    etebaseMock.state.syncEngine = { syncNow }
-    try {
-      useSyncStore.setState({ syncStatus: 'synced', isOnline: true, error: null })
-      useSyncStore.getState().simulateSyncCycle()
-      await vi.waitFor(() => expect(useSyncStore.getState().syncStatus).toBe('error'))
-      expect(syncNow).toHaveBeenCalledTimes(1)
-    } finally {
-      etebaseMock.state.syncEngine = null
-      delete (etebaseMock.state as any).restoreBlocked
-    }
-  })
-
   it('never age-purges unconfirmed or checkpointed queue entries during sync', async () => {
     vi.mocked(getStaleEntries).mockResolvedValueOnce([{
       id: 'old-unconfirmed', type: 'move', collectionType: 'calendar',

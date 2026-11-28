@@ -18,7 +18,6 @@ const engineControl = vi.hoisted(() => ({
   startGate: null as Promise<void> | null,
   startError: null as Error | null,
   onStarted: null as (() => void) | null,
-  refuseTokenOnStart: false,
 }))
 const coreMock = vi.hoisted(() => {
   class FakeSyncEngine {
@@ -28,20 +27,9 @@ const coreMock = vi.hoisted(() => {
     onStokenAdvance = vi.fn()
     onChange = vi.fn(() => vi.fn())
     onStatusChange = vi.fn(() => vi.fn())
-    authFailureHandlers: (() => void)[] = []
-    onAuthFailure = vi.fn((handler: () => void) => { this.authFailureHandlers.push(handler); return vi.fn() })
-    status = 'offline'
-    getStatus = vi.fn(() => this.status)
     start = vi.fn(async () => {
       if (engineControl.startGate) await engineControl.startGate
       if (engineControl.startError) throw engineControl.startError
-      if (engineControl.refuseTokenOnStart) {
-        // The real engine ends a refused cycle in 'error' and reports the auth failure.
-        this.status = 'error'
-        for (const handler of this.authFailureHandlers) handler()
-      } else {
-        this.status = 'synced'
-      }
       engineControl.onStarted?.()
     })
     stop = vi.fn()
@@ -88,7 +76,6 @@ import { useAuthStore } from '../use-auth-store'
 import { useTaskStore } from '../use-task-store'
 import { SyncProvider } from '@/app/providers/sync-provider'
 import { PartialLoadBanner } from '@/app/components/partial-load-banner'
-import { RestoreBlockedBanner } from '@/app/components/restore-blocked-banner'
 
 vi.setConfig({ testTimeout: 15_000 })
 
@@ -105,7 +92,6 @@ type ListPlan = Record<string, (options?: { stoken?: string }) => Promise<ListPa
 const collection = (uid: string, name = uid) => ({ uid, isDeleted: false, getMeta: () => ({ name }) })
 const page = (data: any[]): ListPage => ({ data, stoken: 'end', done: true })
 const serverError = () => new Error('collection list 500')
-const refusedToken = () => Object.assign(new Error('Invalid token.'), { name: 'UnauthorizedError' })
 
 /** Fake Etebase SDK account: only the collection manager surface core touches. */
 function fakeAccount(plan: ListPlan) {
@@ -160,44 +146,6 @@ describe('useEtebaseStore collection discovery error state', () => {
     engineControl.startGate = null
     engineControl.startError = null
     engineControl.onStarted = null
-    engineControl.refuseTokenOnStart = false
-  })
-
-  it('asks the user to unlock again, keeping queued edits, when discovery is refused with a rejected token', async () => {
-    fakeAccount({ ...existingPlan(), [CALENDAR]: async () => { throw refusedToken() } })
-    await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: 'tasks-1', itemUid: 'task-1' }, queueGuard())
-
-    await useEtebaseStore.getState().initialize()
-
-    expect(useEtebaseStore.getState().restoreBlocked).toBe(true)
-    expect((await getAll(queueGuard())).map((entry) => entry.itemUid)).toEqual(['task-1'])
-  })
-
-  it('reports an error, not synced, and shows the unlock prompt when the first sync cycle is refused', async () => {
-    fakeAccount(existingPlan())
-    engineControl.refuseTokenOnStart = true
-    useAuthStore.setState({ isAuthenticated: true })
-    await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: 'tasks-1', itemUid: 'task-1' }, queueGuard())
-
-    render(<SyncProvider><RestoreBlockedBanner /></SyncProvider>)
-    await waitFor(() => expect(useEtebaseStore.getState().isInitialized).toBe(true))
-    await waitFor(() => expect(useSyncStore.getState().syncStatus).not.toBe('syncing'))
-
-    expect(useSyncStore.getState().syncStatus).toBe('error')
-    expect(useEtebaseStore.getState().restoreBlocked).toBe(true)
-    expect(screen.getByRole('link', { name: /unlock now/i })).toHaveAttribute('href', expect.stringContaining('/login?reason=unlock'))
-    expect((await getAll(queueGuard())).map((entry) => entry.itemUid)).toEqual(['task-1'])
-  })
-
-  it('ignores an auth failure from an engine that is no longer the published one', async () => {
-    fakeAccount(existingPlan())
-    await useEtebaseStore.getState().initialize()
-    const first = engineControl.instances[0]
-    useEtebaseStore.setState({ syncEngine: { stop: vi.fn() } as any })
-
-    for (const handler of first.authFailureHandlers) handler()
-
-    expect(useEtebaseStore.getState().restoreBlocked).toBe(false)
   })
 
   it('marks every visible domain failed and reports each terminal domain when a restored discovery page fails', async () => {
