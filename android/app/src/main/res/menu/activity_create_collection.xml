@@ -10,9 +10,8 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
-        android:icon="@drawable/ic_save_light"
         android:onClick="onCreateCollection"
-        android:title="@string/create_collection_create"
+        android:title="@string/create_collection_submit"
         app:showAsAction="always" />
 
 </menu>

@@ -6,7 +6,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 
 const mocks = vi.hoisted(() => ({ session: null as string | null, proof: vi.fn(), login: vi.fn(), signup: vi.fn(), push: vi.fn(), recordStep: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: mocks.push }), useSearchParams: () => new URLSearchParams('setup_intent=setup-test&redirect_status=succeeded') }))
-vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => mocks.recordStep, signupStepFor: () => null }))
+vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, trackInPageCheckoutReturned: vi.fn(), createSignupStepRecorder: () => mocks.recordStep, signupStepFor: () => null }))
 vi.mock('../components/step-create-vault', () => ({ StepCreateVault: ({ onComplete }: { onComplete: () => void }) => <button onClick={onComplete}>Complete vault</button> }))
 vi.mock('../components/step-create-paid-account', () => ({ StepCreatePaidAccount: () => <div>Create new account step</div> }))
 vi.mock('@/app/lib/secure-storage', () => ({
@@ -49,7 +49,11 @@ describe('completed historical redirect session recovery', () => {
     sessionStorage.setItem(key, JSON.stringify(snapshot))
     render(<StrictMode><SignupSuccessPage /></StrictMode>)
     expect(screen.queryByText('Complete vault')).not.toBeInTheDocument()
-    fireEvent.click(await screen.findByText('Complete vault'))
+    const completeVault = await screen.findByText('Complete vault')
+    // account_created is recorded in an effect after the vault screen renders; under load it
+    // can flush after a too-early click, so wait for it like a real user would.
+    await waitFor(() => expect(mocks.recordStep).toHaveBeenCalledWith('account_created'))
+    fireEvent.click(completeVault)
     expect(useAuthStore.getState().isAuthenticated).toBe(true)
     expect(mocks.push).toHaveBeenCalledWith('/')
     // A card signup that returns here after 3DS finishes the funnel on this page.

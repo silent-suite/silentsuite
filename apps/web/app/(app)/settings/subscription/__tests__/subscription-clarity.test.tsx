@@ -6,6 +6,7 @@ import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
 import type { AnnualOffer } from '@/app/lib/billing-v2'
 import SubscriptionPage from '../page'
+import { ReadOnlyBanner } from '@/app/components/read-only-overlay'
 
 vi.mock('next/dynamic', () => ({ default: () => function MockStripePaymentForm() { return <div data-testid="stripe-payment-form" /> } }))
 vi.mock('@silentsuite/ui', () => ({
@@ -15,6 +16,7 @@ vi.mock('@silentsuite/ui', () => ({
 }))
 vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test', ETEBASE_SERVER_URL: 'https://server.example.test' }))
 vi.mock('@/app/lib/date', () => ({ formatDate: (date: Date) => date.toISOString().slice(0, 10) }))
+vi.mock('next/navigation', () => ({ usePathname: () => '/settings/subscription' }))
 
 const DAY = 86_400_000
 const future = (days: number) => new Date(Date.now() + days * DAY).toISOString()
@@ -159,6 +161,32 @@ describe('subscription card clarity', () => {
     expect(within(card()).getByRole('button', { name: 'Reactivate' })).toBeInTheDocument()
   })
 
+  it('says an active plan with Access until will not charge, and Renews on stays without it', async () => {
+    const until = future(200)
+    route({ renewalDate: until, accountNotice: null, billingDate: { kind: 'access_until', at: until } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Access until')).toBeInTheDocument()
+    expect(within(card()).getByText("It won't renew automatically, so you won't be charged.")).toBeInTheDocument()
+    cleanup()
+
+    route({ renewalDate: until, accountNotice: null, billingDate: { kind: 'renews', at: until } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Renews on')).toBeInTheDocument()
+    expect(screen.queryByText(/won't be charged/)).not.toBeInTheDocument()
+  })
+
+  it('does not repeat the no-charge line under the cancel-at-period-end notice', async () => {
+    const until = future(20)
+    route({ renewalDate: until, cancelAtPeriodEnd: true, accountNotice: null, billingDate: { kind: 'access_until', at: until } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Access until')).toBeInTheDocument()
+    expect(within(card()).getByText(/will be cancelled at the end of the current period/)).toBeInTheDocument()
+    expect(screen.queryByText(/won't be charged/)).not.toBeInTheDocument()
+  })
+
   it('shows Access until and never First payment for a cancelled card trial', async () => {
     const trialEnd = future(12)
     route({
@@ -211,7 +239,7 @@ describe('subscription card clarity', () => {
     render(<SubscriptionPage />)
     await screen.findByText('Plan')
     const section = card()
-    expect(within(section).getByText('Your trial has ended.')).toBeInTheDocument()
+    expect(within(section).getByText('Your free trial ended.')).toBeInTheDocument()
     expect(screen.queryByText('Trialing')).not.toBeInTheDocument()
     expect(screen.queryByText('Next billing')).not.toBeInTheDocument()
     expect(within(section).getByText('Ended on')).toBeInTheDocument()
@@ -233,6 +261,41 @@ describe('subscription card clarity', () => {
     expect(screen.queryByText(day(endedTrialAt))).not.toBeInTheDocument()
   })
 
+  it('shows an ended trial without a Billing notice as ended, not Trialing (SIGNUP-01)', async () => {
+    route({ ...endedTrial, accountNotice: undefined, billingDate: null, hostedAccess: 'unknown' })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Trial ended')).toBeInTheDocument()
+    expect(within(card()).getByText(`Your free trial ended on ${day(endedTrialAt)}.`)).toBeInTheDocument()
+    expect(screen.queryByText('Trialing')).not.toBeInTheDocument()
+    expect(screen.queryByText('Your data is safe and read-only.')).not.toBeInTheDocument()
+  })
+
+  it('treats a past trial end date as ended even without trialExpired', async () => {
+    route({ ...endedTrial, accountNotice: undefined, billingDate: null, capabilities: { ...capabilities, canStartPaidSubscription: true } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Trial ended')).toBeInTheDocument()
+    expect(screen.queryByText('Trialing')).not.toBeInTheDocument()
+  })
+
+  // Review fix SIGNUP-04/08: one copy of the read-only line and export link for both shapes.
+  it('keeps the read-only banner when the card has no ended notice, and drops it when the card shows one', async () => {
+    route({ status: 'none', plan: null, renewalDate: null, accountNotice: null, capabilities: { ...capabilities, canReactivate: true } })
+    const first = render(<><ReadOnlyBanner /><SubscriptionPage /></>)
+    await screen.findByText('No Subscription')
+    expect(screen.getByText(/Your data is safe and read-only\./)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Export data' })).toBeInTheDocument()
+    first.unmount()
+
+    route(endedTrial)
+    render(<><ReadOnlyBanner /><SubscriptionPage /></>)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Your data is safe and read-only.')).toBeInTheDocument()
+    expect(screen.getAllByText(/Your data is safe and read-only\./)).toHaveLength(1)
+    expect(screen.getAllByRole('link', { name: /export/i })).toHaveLength(1)
+  })
+
   it('says plainly when paid access has ended', async () => {
     const endedAt = past(3)
     route({
@@ -241,8 +304,130 @@ describe('subscription card clarity', () => {
     })
     render(<SubscriptionPage />)
     await screen.findByText('Plan')
-    expect(within(card()).getByText('Your subscription has ended.')).toBeInTheDocument()
+    expect(within(card()).getByText('Your subscription ended.')).toBeInTheDocument()
+    expect(within(card()).getByRole('button', { name: 'Reactivate' })).toBeInTheDocument()
+  })
+
+  // SIGNUP-04: the ended wording and action follow the history Billing's fields show.
+  it.each([
+    ['a seven-day trial that ran out', {
+      status: 'expired', trialPath: '7day', renewalDate: null,
+      trial: { active: false, endsAt: past(20), daysRemaining: null },
+    }, 'Your free trial ended.', 'Subscribe'],
+    ['a card trial cancelled before its first charge', {
+      status: 'cancelled', trialPath: '30day', renewalDate: past(20),
+      trial: { active: false, endsAt: past(20), daysRemaining: null },
+    }, 'Your free trial ended.', 'Subscribe'],
+    ['a paid year after a trial', {
+      status: 'expired', trialPath: '30day', renewalDate: past(3),
+      trial: { active: false, endsAt: past(400), daysRemaining: null },
+    }, 'Your subscription ended.', 'Reactivate'],
+    ['a pay-now subscription', {
+      status: 'cancelled', trialPath: 'immediate', renewalDate: past(3),
+      trial: { active: false, endsAt: null, daysRemaining: null },
+    }, 'Your subscription ended.', 'Reactivate'],
+  ])('words %s from its history', async (_label, subscription, title, action) => {
+    route({
+      ...subscription, accountNotice: { kind: 'access_ended', endedAt: null }, billingDate: { kind: 'ended', at: null },
+      capabilities: { ...capabilities, canReactivate: true, canStartPaidSubscription: true },
+    })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText(title)).toBeInTheDocument()
+    expect(within(card()).getByRole('button', { name: action })).toBeInTheDocument()
+  })
+
+  it('shows the card for a prepaid cryptocurrency account whose trialPath is crypto_annual', async () => {
+    route({ status: 'active', trialPath: 'crypto_annual' })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Early Adopter')).toBeInTheDocument()
+    expect(screen.queryByText('Unable to load subscription details.')).not.toBeInTheDocument()
+  })
+
+  // Shape from Billing's status route: a trialing account with an active trial and its stored trialPath.
+  const activeTrialWithPath = (trialPath: string) => ({
+    status: 'trialing', trialPath, renewalDate: null,
+    trial: { active: true, endsAt: future(10), daysRemaining: 10 },
+    capabilities: { ...capabilities, trialActive: true },
+  })
+
+  it('shows no trial type for an active trial whose path is crypto_annual', async () => {
+    route(activeTrialWithPath('crypto_annual'))
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(screen.queryByText('Trial type')).not.toBeInTheDocument()
+    expect(screen.queryByText('Paid + 14-day bonus')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['immediate', 'Paid + 14-day bonus'],
+    ['30day', '30-day trial'],
+  ])('keeps the trial type label for the known %s path', async (trialPath, label) => {
+    route(activeTrialWithPath(trialPath))
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText(label)).toBeInTheDocument()
+  })
+
+  it('says a past-due payment failed and what Subscribe does (SIGNUP-05)', async () => {
+    route({ status: 'past_due', capabilities: { ...capabilities, canStartPaidSubscription: true } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText("Your last payment didn't go through. Subscribe to start a new yearly plan.")).toBeInTheDocument()
     expect(within(card()).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+  })
+
+  const pastDueWithFlowRead = (flowReply: () => unknown) => {
+    route({ status: 'past_due', capabilities: { ...capabilities, canStartPaidSubscription: true } })
+    const routed = vi.mocked(fetch)
+    const plain = routed.getMockImplementation()!
+    routed.mockImplementation(async (url, init) => String(url).startsWith('https://billing.test/subscription/payment-flows/current')
+      ? flowReply() as Response
+      : plain(url, init))
+  }
+
+  it('says Subscribe opens the cryptocurrency payment already started once the open flow is confirmed', async () => {
+    const cryptoFlow = {
+      flowKind: 'btcpay_annual', createdAt: '2026-11-20T10:00:00.000Z', cancellable: true,
+      checkoutUrl: null, status: 'pending_provider_flow', authorityId: null, disclosure: null,
+    }
+    pastDueWithFlowRead(() => ({ ok: true, json: async () => ({ flow: cryptoFlow }) }))
+    render(<SubscriptionPage />)
+    await screen.findByText('You have a cryptocurrency payment in progress.')
+    expect(within(card()).getByText("Your last payment didn't go through. Subscribe to open the cryptocurrency payment you already started.")).toBeInTheDocument()
+    expect(within(card()).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+  })
+
+  it.each([
+    ['failed', () => ({ ok: false, status: 503, json: async () => ({}) })],
+    ['pending', () => new Promise(() => {})],
+  ])('keeps the new-plan sentence while the open-flow read is %s', async (_state, flowReply) => {
+    pastDueWithFlowRead(flowReply)
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('https://billing.test/subscription/payment-flows/current'))).toBe(true))
+    expect(within(card()).getByText("Your last payment didn't go through. Subscribe to start a new yearly plan.")).toBeInTheDocument()
+    expect(screen.queryByText('You have a cryptocurrency payment in progress.')).not.toBeInTheDocument()
+  })
+
+  it('names no action for a past-due payment when Billing offers none', async () => {
+    route({ status: 'past_due' })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText("Your last payment didn't go through.")).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Subscribe' })).not.toBeInTheDocument()
+  })
+
+  it('offers Subscribe, not Reactivate, to a pay-now account that never paid', async () => {
+    route({
+      status: 'none', trialPath: 'immediate', renewalDate: null, accountNotice: null, billingDate: null,
+      capabilities: { ...capabilities, canReactivate: true, canStartPaidSubscription: true },
+    })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reactivate' })).not.toBeInTheDocument()
   })
 
   it('puts the seven-day countdown and the add-card action inside the card', async () => {
@@ -262,7 +447,7 @@ describe('subscription card clarity', () => {
   it('omits the price but keeps the action when the signed offer cannot be read', async () => {
     const reads = route(endedTrial, () => ({ ok: false, status: 503, json: async () => ({ detail: 'unavailable' }) }))
     render(<SubscriptionPage />)
-    await screen.findByText('Plan')
+    await screen.findByRole('heading', { name: 'Subscription' })
     await waitFor(() => expect(reads.offerReads()).toBe(1))
     await act(async () => { await Promise.resolve() })
     expect(screen.queryByText(/per year/)).not.toBeInTheDocument()
@@ -274,7 +459,7 @@ describe('subscription card clarity', () => {
     const pending = new Promise(resolve => { release = resolve })
     const reads = route(endedTrial, () => pending)
     render(<SubscriptionPage />)
-    await screen.findByText('Plan')
+    await screen.findByRole('heading', { name: 'Subscription' })
     await waitFor(() => expect(reads.offerReads()).toBe(1))
     act(() => { bumpAccountEpoch() })
     release({ ok: true, json: async () => offerResponse })
@@ -303,6 +488,27 @@ describe('subscription card clarity', () => {
     await act(async () => { await Promise.resolve() })
     expect(screen.queryByRole('button', { name: /choose payment|subscribe/i })).not.toBeInTheDocument()
     expect(reads.offerReads()).toBe(0)
+  })
+
+  it('names the plan from the offer that prices it, never the stored monthly plan (SIGNUP-03)', async () => {
+    route({ ...endedTrial, plan: 'standard_monthly', planLabel: 'Standard Monthly', billingInterval: 'monthly', earlyAdopter: true })
+    render(<SubscriptionPage />)
+    expect(await screen.findByText(price)).toBeInTheDocument()
+    const section = card()
+    expect(within(section).getByText('Plan')).toBeInTheDocument()
+    expect(within(section).getByText('Early Adopter')).toBeInTheDocument()
+    expect(screen.queryByText(/monthly/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Billing')).not.toBeInTheDocument()
+  })
+
+  it('shows no stored plan name next to a purchase action when the offer cannot be read', async () => {
+    const reads = route({ ...endedTrial, plan: 'standard_monthly', planLabel: 'Standard Monthly', billingInterval: 'monthly' },
+      () => ({ ok: false, status: 503, json: async () => ({}) }))
+    render(<SubscriptionPage />)
+    await waitFor(() => expect(reads.offerReads()).toBe(1))
+    await act(async () => { await Promise.resolve() })
+    expect(within(card()).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+    expect(screen.queryByText(/monthly/i)).not.toBeInTheDocument()
   })
 
   it('hides the Billing row when the plan name already says annual', async () => {

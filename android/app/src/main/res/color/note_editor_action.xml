@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The note editor's Undo and Redo icons: dimmed while the action cannot be used, in both themes. -->
+<!-- The note editor's Undo and Redo icons sit on the navy action bar: white, and 38% while the action
+     cannot be used, in both themes. -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:state_enabled="false" android:color="@color/semantic_disabled_content" />
-    <item android:color="@color/semantic_on_surface" />
+    <item android:state_enabled="false" android:alpha="0.38" android:color="@color/semantic_on_system_bar" />
+    <item android:color="@color/semantic_on_system_bar" />
 </selector>

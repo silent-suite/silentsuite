@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { StrictMode, useSyncExternalStore } from 'react'
 import type { CalendarEvent } from '@silentsuite/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CalendarGrid } from '../CalendarGrid'
 
 const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
@@ -353,6 +353,36 @@ describe('CalendarGrid timed-event integration', () => {
     })
   })
 
+  it('registers the current-time plugin next to the events service, in the display timezone', () => {
+    mocks.calendar.$app.config.timezone.value = 'UTC'
+    mocks.preferencesState.defaultTimezone = 'Europe/Berlin'
+    render(<CalendarGrid events={[]} />)
+
+    const plugins = mocks.latestConfig?.plugins as Array<{ name?: string; set?: unknown }>
+    expect(plugins).toHaveLength(2)
+    expect(plugins[0].set).toBe(mocks.setEvents)
+    expect(plugins[1].name).toBe('currentTime')
+    expect(mocks.latestConfig?.timezone).toBe('Europe/Berlin')
+    expect(packageJson.dependencies['@schedule-x/current-time']).toBe('4.3.1')
+  })
+
+  it('redraws the current-time line when the display timezone changes', async () => {
+    mocks.calendar.$app.config.timezone.value = 'UTC'
+    const { rerender } = render(<CalendarGrid events={[]} />)
+    const plugin = (mocks.latestConfig?.plugins as Array<Record<string, any>>)
+      .find((p) => p.name === 'currentTime')!
+    plugin.$app = mocks.calendar.$app
+    const redraw = vi.spyOn(plugin, 'onTimezoneChange').mockImplementation(() => {})
+
+    mocks.preferencesState.defaultTimezone = 'Asia/Tokyo'
+    rerender(<CalendarGrid events={[]} />)
+
+    await waitFor(() => {
+      expect(mocks.calendar.$app.config.timezone.value).toBe('Asia/Tokyo')
+      expect(redraw).toHaveBeenCalled()
+    })
+  })
+
   it('suppresses mouse and touch gesture side effects for projected segments', () => {
     const { container, target, eventElement: projectedEvent } = renderGestureHarness(true)
     const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
@@ -600,6 +630,36 @@ describe('CalendarGrid slot clicks', () => {
     act(() => createdWith({ epochMilliseconds: Date.parse('2026-07-13T10:10:00.000Z') }))
     expect(first).not.toHaveBeenCalled()
     expect(latest).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ startDate: new Date('2026-07-13T10:00:00.000Z'), allDay: false }))
+  })
+
+  describe('snaps to 30 minutes in the calendar timezone, not the browser one', () => {
+    const browserTz = process.env.TZ
+    beforeEach(() => { process.env.TZ = 'UTC' })
+    afterEach(() => {
+      if (browserTz === undefined) delete process.env.TZ
+      else process.env.TZ = browserTz
+    })
+
+    it.each([
+      // Kathmandu is UTC+5:45: 09:10 and 09:20 there snap to 09:00 and 09:30 Kathmandu time.
+      ['Asia/Kathmandu', '2026-07-13T03:25:00.000Z', '2026-07-13T03:15:00.000Z'],
+      ['Asia/Kathmandu', '2026-07-13T03:35:00.000Z', '2026-07-13T03:45:00.000Z'],
+      ['Asia/Kolkata', '2026-07-13T03:40:00.000Z', '2026-07-13T03:30:00.000Z'],
+      ['UTC', '2026-07-13T09:20:00.000Z', '2026-07-13T09:30:00.000Z'],
+    ])('%s: a click at %s starts at %s', (timeZone, clicked, expected) => {
+      mocks.preferencesState.defaultTimezone = timeZone
+      const onSlotClick = vi.fn()
+      render(<CalendarGrid events={[]} onSlotClick={onSlotClick} />)
+      const click = mocks.latestConfig!.callbacks.onClickDateTime as (dt: { epochMilliseconds: number }) => void
+
+      act(() => click({ epochMilliseconds: Date.parse(clicked) }))
+
+      const start = new Date(expected)
+      expect(onSlotClick).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        startDate: start,
+        endDate: new Date(start.getTime() + 3_600_000),
+      }))
+    })
   })
 })
 

@@ -237,7 +237,7 @@ export function RecurrencePicker({ value, onChange, disabled = false, allDay, ti
           <button
             type="button"
             onClick={() => setShowCustom((v) => !v)}
-            className="text-xs text-[rgb(var(--primary))] hover:underline"
+            className="text-xs text-[rgb(var(--primary-text))] hover:underline"
           >
             {showCustom ? 'Simple' : 'Custom'}
           </button>

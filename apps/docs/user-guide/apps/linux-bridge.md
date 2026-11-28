@@ -102,7 +102,7 @@ Common checks:
 - Use the full account-specific URL shown by the dashboard, such as `http://localhost:37358/your@email.com/`.
 - The bridge and DAV app must run on the same computer because the bridge listens on localhost by default.
 - Check the dashboard sync log before troubleshooting the desktop app.
-- If the tray icon is missing on GNOME, install or enable the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/). The bridge can still run without a visible tray icon.
+- The bridge downloads have no tray icon. Use the dashboard to check the status.
 
 ## Uninstall
 

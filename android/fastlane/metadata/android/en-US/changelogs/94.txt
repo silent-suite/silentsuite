@@ -1,1 +1,0 @@
-* Hopefully really fix issue with temporarily disappearing tasks/events

@@ -42,4 +42,14 @@ describe.each(['verified-no-card', 'payment-confirmed'] as const)('password visi
     }
     expect(container.querySelectorAll('input[type="text"]')).toHaveLength(0)
   })
+
+  it('warns under the password field that a lost password cannot be recovered', () => {
+    render(<StepCreatePaidAccount email="user@example.com" onNext={vi.fn()} continuation={continuation} />)
+
+    const hint = screen.getByText(
+      "We can't reset this password. If you lose it, your data can't be recovered. Store it in a password manager.",
+    )
+    expect(hint.id).toBe('paid-signup-password-hint')
+    expect(screen.getByLabelText(/^Password$/).getAttribute('aria-describedby')).toBe('paid-signup-password-hint')
+  })
 })

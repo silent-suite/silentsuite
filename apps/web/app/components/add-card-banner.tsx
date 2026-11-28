@@ -27,7 +27,7 @@ export default function AddCardBanner({ daysRemaining, onChoosePayment }: AddCar
               </p>
             )}
             <p className="text-xs text-[rgb(var(--muted))]">
-              Review your server-owned annual payment options and get 14 bonus days. If you do nothing, your account becomes read-only when the trial ends.
+              Choose an annual payment option and get 14 bonus days. If you do nothing, your account becomes read-only when the trial ends.
             </p>
           </div>
         </div>

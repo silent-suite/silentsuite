@@ -5,6 +5,7 @@ const state = vi.hoisted(() => ({
   events: [] as unknown[],
   contacts: [] as unknown[],
   tasks: [] as unknown[],
+  readOnly: false,
 }))
 
 vi.mock('@/app/stores/use-calendar-store', () => ({
@@ -16,6 +17,9 @@ vi.mock('@/app/stores/use-contact-store', () => ({
 vi.mock('@/app/stores/use-task-store', () => ({
   useTaskStore: (selector: (value: { tasks: unknown[] }) => unknown) => selector({ tasks: state.tasks }),
 }))
+vi.mock('@/app/stores/use-auth-store', () => ({
+  useAuthStore: (selector: (value: { isReadOnly: () => boolean }) => unknown) => selector({ isReadOnly: () => state.readOnly }),
+}))
 
 import { OnboardingChecklist } from '../OnboardingChecklist'
 
@@ -25,6 +29,7 @@ describe('OnboardingChecklist', () => {
     state.events = []
     state.contacts = []
     state.tasks = []
+    state.readOnly = false
   })
 
   it('keeps optional mobile setup out of onboarding completion', () => {
@@ -96,5 +101,18 @@ describe('OnboardingChecklist', () => {
     await waitFor(() => {
       expect(screen.queryByText('Get started')).not.toBeInTheDocument()
     })
+  })
+
+  it('stays hidden while the account is read-only, without dismissing it', () => {
+    state.readOnly = true
+    const rendered = render(<OnboardingChecklist />)
+
+    expect(screen.queryByText('Get started')).not.toBeInTheDocument()
+    expect(screen.queryByText('Import your calendar')).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('silentsuite-onboarding-checklist') ?? '{}').dismissed).toBe(false)
+
+    state.readOnly = false
+    rendered.rerender(<OnboardingChecklist />)
+    expect(screen.getByText('Get started')).toBeInTheDocument()
   })
 })

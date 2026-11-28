@@ -14,9 +14,8 @@ const hostedAndroid = read(resolve(docsRoot, 'user-guide/apps/android.md'))
 const hostedIos = read(resolve(docsRoot, 'user-guide/apps/ios.md'))
 const hostedFaq = read(resolve(docsRoot, 'user-guide/faq.md'))
 const appLogoNotices = read(resolve(docsRoot, 'app-logo-notices.md'))
-const siblingFaq = read(resolve(repoRoot, 'docs/user-guide/faq.md'))
-const siblingGettingStarted = read(resolve(repoRoot, 'docs/user-guide/getting-started.md'))
-const siblingGuideIndex = read(resolve(repoRoot, 'docs/user-guide/README.md'))
+const hostedGettingStarted = read(resolve(docsRoot, 'user-guide/getting-started.md'))
+const hostedGuideIndex = read(resolve(docsRoot, 'user-guide/index.md'))
 const rootReadme = read(resolve(repoRoot, 'README.md'))
 const settingsMobile = read(resolve(repoRoot, 'apps/web/app/(app)/settings/mobile/page.tsx'))
 const settingsDesktop = read(resolve(repoRoot, 'apps/web/app/(app)/settings/desktop/page.tsx'))
@@ -288,8 +287,9 @@ test('current docs and Settings expose iOS only as unsupported roadmap work', ()
   assert.match(hostedIos, /## Planned/)
   assert.match(hostedIos, /scope and timing haven't been decided/)
   assert.match(hostedIos, /does not support iOS native sync yet/)
-  assert.match(settingsMobile, /On the roadmap, coming soon/)
-  assert.match(settingsMobile, /iOS is not currently supported\./)
+  assert.match(settingsMobile, /Native app planned/)
+  assert.match(settingsMobile, /iOS isn&apos;t supported yet, and the app&apos;s scope and timing haven&apos;t been decided\./)
+  assert.doesNotMatch(settingsMobile, /coming soon/i)
 
   for (const path of inventory) {
     const content = read(path)
@@ -354,9 +354,8 @@ test('Android documentation links the official F-Droid package', () => {
   for (const [label, content] of [
     ['hosted Android guide', hostedAndroid],
     ['hosted FAQ', hostedFaq],
-    ['sibling FAQ', siblingFaq],
-    ['sibling getting started', siblingGettingStarted],
-    ['sibling guide index', siblingGuideIndex],
+    ['hosted getting started', hostedGettingStarted],
+    ['hosted guide index', hostedGuideIndex],
     ['root README', rootReadme],
     ['Settings → Mobile', settingsMobile],
   ]) {
@@ -437,7 +436,7 @@ test('QR target classifier rejects APK claims and permits guide plus separate AP
 })
 
 test('Settings QR descriptions use the canonical guide and never claim an APK target', () => {
-  for (const content of [siblingFaq, siblingGettingStarted, siblingGuideIndex]) {
+  for (const content of [hostedFaq, hostedGettingStarted, hostedGuideIndex]) {
     assert.match(content, /https:\/\/docs\.silentsuite\.io\/user-guide\/apps\/android/)
   }
 

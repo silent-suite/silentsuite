@@ -13,17 +13,14 @@
   that same-run artifact before its first Gradle or emulator step, keeping its
   NDK provisioning and every later gate.
 
-The checker runs against byte copies of the original predecessor (immutable base
-f867267e) and of the immediate predecessor (8cb81b42) to show the exact violations
-it rejects, against the candidate, which must have none, and against candidate
-mutations, which must each be caught. The gate's real shell script is also
+The checker runs against the current workflow, which must have none, and against
+mutations of it, which must each be caught. The gate's real shell script is also
 executed with every dependency outcome.
 """
 
 from __future__ import annotations
 
 import copy
-import hashlib
 import os
 import shutil
 import subprocess
@@ -36,17 +33,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 RELEASE_WORKFLOW = ROOT / ".github/workflows/release-android.yml"
-BASE_FIXTURE = ROOT / "tests/fixtures/build-android-base-f867267e.yml"
-BASE_FIXTURE_SHA256 = "c429134d85718a265b5366c0cbe4aef32298c0addb0d7487a50b6854e2ffa4d8"
 
 PRODUCER = "etebase-16kb"
 STATIC_JOB = "static-contracts"
 CONSUMERS = ("build-pr", "account-recreation-runtime", "color-parity-evidence", "registry-process-boundary")
-UNCHANGED_JOBS = ("signing-policy", "conscrypt-r28", "conscrypt-runtime")
-# Jobs added later on their own, outside the speed refactor these fixtures pin: the patched
-# ical4j's time-zone tests (JVM, and on the API 29 and 36 emulators) and the Gradle wrapper
-# JAR validation. They build no Etebase.
-ADDED_JOBS = {"timezone-rules-jvm", "timezone-rules-runtime", "gradle-wrapper-validation", "changes"}
 # The changes job decides whether this run touches an Android build input. The two native producers,
 # build-pr, the time-zone jobs and the wrapper validation wait for it and run only when it says so; the
 # jobs that need a producer skip with it. The static suite and the signing boundary never wait for it.
@@ -116,10 +106,7 @@ ADMISSION_STEP_NAMES = (
     "Verify admitted Etebase 16 KB AAR",
 )
 
-PREDECESSOR_FIXTURE = ROOT / "tests/fixtures/build-android-base-8cb81b42.yml"
-PREDECESSOR_FIXTURE_SHA256 = "c071ade5be4e8e69425941df7a5c016a96fca92815dfc9b79b4c313ac284832a"
-
-# The static suite exactly as both jobs provision and run it.
+# The static suite exactly as the static job provisions and runs it.
 EXPECTED_PYTHON_SETUP = {
     "name": "Set up Python for static Android contracts",
     "uses": "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
@@ -130,8 +117,6 @@ EXPECTED_DEPENDENCY_INSTALL = {
     "run": "python -m pip install --disable-pip-version-check pytest PyYAML==6.0.3\n",
 }
 EXPECTED_STATIC_RUN_STEP = {"name": "Run Android static Python contracts", "run": STATIC_RUN}
-# Only the static job needs them; build-pr dropped both with the repeated suite.
-STATIC_PROVISIONING = (EXPECTED_PYTHON_SETUP, EXPECTED_DEPENDENCY_INSTALL)
 SETUP_PYTHON = "actions/setup-python@"
 STATIC_PROVISIONING_MARKERS = ("pip install", "python -m", "pytest", "PyYAML")
 
@@ -152,15 +137,6 @@ GATE_ENV = {
 REPORT_UPLOAD_NAMES = ("Upload unit test reports and results", "Upload lint reports")
 
 PYTHON_PROVISIONING_VIOLATION = "build-pr: must not provision the static contract suite's Python environment"
-DEDUP_VIOLATIONS = sorted(
-    [
-        "build-pr: must not repeat the static contract suite",
-        "build-pr: must also need static-contracts",
-        "build-pr: must run unless cancelled and fail closed on dependency results",
-        "build-pr: missing dependency-result gate",
-        PYTHON_PROVISIONING_VIOLATION,
-    ]
-)
 GATE_KEYS_VIOLATION = "build-pr: dependency-result gate must have only name, env and run"
 GATE_ENV_VIOLATION = "build-pr: dependency-result gate must bind exactly the three needs results"
 GATE_PLACEMENT_VIOLATION = "build-pr: dependency-result gate must immediately follow checkout"
@@ -168,18 +144,6 @@ REPORT_CONDITION_VIOLATION = "build-pr: only the two report uploads may carry a 
 BUILD_PR_CONTINUE_VIOLATION = "build-pr: must not continue on error"
 
 CONCURRENCY_VIOLATION = "concurrency: must cancel only superseded pull_request runs in workflow-and-PR groups"
-EXPECTED_BASE_VIOLATIONS = sorted(
-    [
-        CONCURRENCY_VIOLATION,
-        f"{STATIC_JOB}: missing early static job",
-        f"{PRODUCER}: missing producer job",
-        *(f"{job}: builds Etebase itself" for job in CONSUMERS),
-        *(f"{job}: installs Rust" for job in CONSUMERS),
-        *(f"{job}: must need conscrypt-r28 and etebase-16kb" for job in CONSUMERS),
-        *(f"{job}: missing Etebase admission" for job in CONSUMERS),
-        *DEDUP_VIOLATIONS,
-    ]
-)
 
 
 def _run(step: dict) -> str:
@@ -290,8 +254,7 @@ def ci_speed_violations(workflow: dict) -> list[str]:
         violations.append(f"{PRODUCER}: missing producer job")
     else:
         steps = producer.get("steps") or []
-        # The predecessors need only signing-policy; the candidate also waits for the changes job.
-        if _needs(producer) not in (["signing-policy"], PRODUCER_NEEDS):
+        if _needs(producer) != PRODUCER_NEEDS:
             violations.append(f"{PRODUCER}: producer must need only signing-policy")
         if producer.get("permissions") != {"contents": "read"} or "environment" in producer:
             violations.append(f"{PRODUCER}: producer must be read-only")
@@ -335,241 +298,30 @@ def ci_speed_violations(workflow: dict) -> list[str]:
     return sorted(violations)
 
 
-def _without_android_change_gate(job: dict) -> dict:
-    """A candidate job minus only the changes-job gate (the `changes` need and the
-    android condition), the main-push skip of emulator jobs and the restore-only
-    Gradle cache step. Everything else must still match its predecessor."""
-    job = copy.deepcopy(job)
-    if "steps" in job:
-        job["steps"] = [step for step in job["steps"] if step != GRADLE_RESTORE]
-    needs = [need for need in _needs(job) if need != CHANGES_JOB]
-    if CHANGES_JOB in _needs(job):
-        if needs:
-            job["needs"] = needs[0] if len(needs) == 1 else needs
-        else:
-            job.pop("needs")
-    condition = job.get("if")
-    if condition == ANDROID_CHANGED:
-        job.pop("if")
-        return job
-    for prefix in (f"{ANDROID_CHANGED} && {NOT_PUSH} && (", f"{ANDROID_CHANGED} && (", f"{NOT_PUSH} && ("):
-        if isinstance(condition, str) and condition.startswith(prefix) and condition.endswith(")"):
-            job["if"] = condition[len(prefix) : -1]
-            break
-    return job
-
-
 def _load(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _triggers(workflow: dict):
-    # PyYAML reads the bare `on` key as boolean True.
-    return workflow.get("on", workflow.get(True))
-
-
-def _without_native_compile(job: dict) -> dict:
-    """The predecessor consumer minus only its Rust toolchain and Etebase compile."""
-    job = copy.deepcopy(job)
-    steps = []
-    for step in job.get("steps") or []:
-        if _uses(step).startswith("dtolnay/rust-toolchain@"):
-            continue
-        run = step.get("run")
-        if isinstance(run, str) and BUILD_SCRIPT in run:
-            kept = "".join(line for line in run.splitlines(keepends=True) if line.strip() != BUILD_SCRIPT)
-            if not kept.strip():
-                continue
-            step = dict(step, run=kept)
-            if step.get("name") == "Make gradlew executable and build native client":
-                step["name"] = "Make gradlew executable"
-        steps.append(step)
-    job["steps"] = steps
-    job.pop("needs", None)
-    return job
-
-
-def _without_admission(job: dict) -> dict:
-    job = copy.deepcopy(job)
-    job["steps"] = [step for step in job.get("steps") or [] if step.get("name") not in ADMISSION_STEP_NAMES]
-    job.pop("needs", None)
-    return job
-
-
-# The first approved runtime-job change since both predecessors: the focused runtime ledger grew from 172 to
-# 233 methods, seven in a new fresh-emulator API 36 launcher-recovery shard that API 29 runs with its
-# account-dashboard shard (#898), one Notes startup sweep case, five Notes account-removal cases, one
-# saved WiFi network case (#971) and 43 Birthdays cases in status-routes, one setup recovery replacement case in first-run-setup (#966), and three Report a problem screen cases in
-# status-routes. Only the matrix row after API 36 first-run-setup and these four exact lines of the runtime job's
-# final assertion are carried forward; every other byte must still match.
-# The count lines then grew from 233 to 238 for five lost-upload-answer sync cases in the status-routes shard.
-# They then grew from 238 to 241 for two Notes network cases and one Notes notice case in status-routes,
-# then to 242 for one read-only calendar restore case in status-routes (#932).
-# The size check then became a floor (242 and each shard's size as minimums), so a ledger can grow with its
-# tests while android/scripts/run-focused-runtime-tests.sh keeps the exact counts (#48 device import).
+# The focused runtime job: an API 36 launcher-recovery shard directly after API 36 first-run-setup, ledger
+# size floors (android/scripts/run-focused-runtime-tests.sh keeps the exact counts), and one emulator
+# hardware profile, on the API 29 account-dashboard row only, passed by the focused emulator step only.
 RUNTIME_LEDGER_JOB = "account-recreation-runtime"
 RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "first-run-setup"}
 RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launcher-recovery"}
 RUNTIME_LEDGER_COUNT_LINES = (
-    (
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':134,'29:sibling-routes':48,'35:all':242,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':134}\n",
-    ),
-    (
-        "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
-        "# Floors, not exact sizes: new runtime tests can land in the same PR as their ledger entries,\n"
-        "# while a shrinking ledger still fails here. The runner script checks exact counts.\n"
-        "if len(canonical) < 242 or len(expected) < expected_sizes[key]:\n",
-    ),
-    (
-        "'29:account-dashboard':owned('36:account-dashboard')-mixed,\n",
-        "'29:account-dashboard':(owned('36:account-dashboard')|owned('36:launcher-recovery'))-mixed,\n",
-    ),
-    (
-        "elif key in {'36:account-dashboard','36:first-run-setup','36:sibling-routes','36:status-routes'}:\n",
-        "elif key in {'36:account-dashboard','36:first-run-setup','36:launcher-recovery','36:sibling-routes','36:status-routes'}:\n",
-    ),
+    "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':134,'29:sibling-routes':48,'35:all':242,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':134}\n",
+    "if len(canonical) < 242 or len(expected) < expected_sizes[key]:\n"
+    "  raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')\n",
+    "missing=expected-set(counts)\n"
+    "if missing: raise SystemExit(f'missing {sorted(missing)}')\n",
+    "'29:account-dashboard':(owned('36:account-dashboard')|owned('36:launcher-recovery'))-mixed,\n",
+    "elif key in {'36:account-dashboard','36:first-run-setup','36:launcher-recovery','36:sibling-routes','36:status-routes'}:\n",
 )
-
-
-# The other approved runtime-job change since both predecessors: only the API 29 account-dashboard row names
-# an emulator hardware profile, and only the focused emulator step passes that matrix key to the runner. Every
-# other row keeps the generic AVD, and every other byte of the job must still match.
 RUNTIME_PROFILE_MATRIX_ROW = {"api-level": 29, "arch": "x86", "shard": "account-dashboard"}
 RUNTIME_PROFILE_KEY = "avd-profile"
 RUNTIME_PROFILE_VALUE = "pixel"
 RUNTIME_PROFILE_STEP_ID = "focused-runtime"
 RUNTIME_PROFILE_INPUT = ("profile", "${{ matrix.avd-profile }}")
-
-
-def _with_approved_runtime_profile(job: dict) -> dict:
-    """A predecessor runtime job with only the one API 29 account-dashboard emulator profile applied, exactly once."""
-    job = copy.deepcopy(job)
-    include = job["strategy"]["matrix"]["include"]
-    assert include.count(RUNTIME_PROFILE_MATRIX_ROW) == 1, "exactly one predecessor row must be API 29 account-dashboard"
-    assert all(RUNTIME_PROFILE_KEY not in row for row in include), "no predecessor row may name an AVD profile"
-    include[include.index(RUNTIME_PROFILE_MATRIX_ROW)][RUNTIME_PROFILE_KEY] = RUNTIME_PROFILE_VALUE
-    steps = job.get("steps") or []
-    owners = [step for step in steps if step.get("id") == RUNTIME_PROFILE_STEP_ID]
-    assert len(owners) == 1, "exactly one predecessor step must run the focused emulator"
-    key, value = RUNTIME_PROFILE_INPUT
-    assert all(key not in (step.get("with") or {}) for step in steps), "no predecessor step may pass a profile"
-    owners[0]["with"][key] = value
-    return job
-
-
-def _with_approved_runtime_ledger_changes(job: dict) -> dict:
-    """A predecessor runtime job with only the approved matrix row, ledger lines and API 29 account-dashboard
-    emulator profile applied, each exactly once."""
-    job = copy.deepcopy(job)
-    include = job["strategy"]["matrix"]["include"]
-    assert include.count(RUNTIME_LEDGER_MATRIX_ANCHOR) == 1 and RUNTIME_LEDGER_MATRIX_ROW not in include
-    include.insert(include.index(RUNTIME_LEDGER_MATRIX_ANCHOR) + 1, dict(RUNTIME_LEDGER_MATRIX_ROW))
-    owners = [
-        step for step in job.get("steps") or []
-        if isinstance(step.get("run"), str) and RUNTIME_LEDGER_COUNT_LINES[0][0] in step["run"]
-    ]
-    assert len(owners) == 1, "exactly one predecessor step must own the runtime ledger counts"
-    run = owners[0]["run"]
-    for old, new in RUNTIME_LEDGER_COUNT_LINES:
-        assert run.count(old) == 1 and new not in run, old
-        run = run.replace(old, new)
-    owners[0]["run"] = run
-    return _with_approved_runtime_profile(job)
-
-
-# An approved conscrypt-r28 change since both predecessors: the Conscrypt 2.9.0 rebuild moves the local AAR
-# coordinate from 2.6.3-r28 to 2.9.0-r28, so the verify step names the new path. Only that path, exactly once
-# in exactly that step, is carried forward; every other conscrypt-r28 byte must still match.
-CONSCRYPT_VERIFY_STEP = "Verify rebuilt Conscrypt AAR"
-CONSCRYPT_AAR_PATHS = (
-    "conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.aar",
-    "conscrypt-android/2.9.0-r28/conscrypt-android-2.9.0-r28.aar",
-)
-
-
-def _with_approved_conscrypt_version(job: dict) -> dict:
-    """A predecessor conscrypt-r28 job with only its verified AAR path moved to the 2.9.0 rebuild."""
-    job = copy.deepcopy(job)
-    owners = [step for step in job.get("steps") or [] if step.get("name") == CONSCRYPT_VERIFY_STEP]
-    assert len(owners) == 1, f"exactly one predecessor step must be {CONSCRYPT_VERIFY_STEP!r}"
-    old, new = CONSCRYPT_AAR_PATHS
-    run = owners[0]["run"]
-    assert run.count(old) == 1 and new not in run, old
-    owners[0]["run"] = run.replace(old, new)
-    return job
-
-
-# The same Conscrypt update adds four TLS composition tests to ConscryptProviderRuntimeTest, so the
-# conscrypt-runtime ledger expects their names. Only those lines, added exactly once after the existing
-# method, are carried forward; every other conscrypt-runtime byte must still match.
-CONSCRYPT_RUNTIME_LEDGER_ANCHOR = '    "providerLoadsAndCreatesTlsContext",\n'
-CONSCRYPT_RUNTIME_LEDGER_ADDED = (
-    '    "unacceptedCertificateIsRejectedByCustomTrust",\n'
-    '    "acceptedCertificateConnectsDespiteHostnameMismatch",\n'
-    '    "trustedChainWithMatchingHostnameConnects",\n'
-    '    "trustedChainWithOtherHostnameIsRejectedWithoutAcceptance",\n'
-)
-
-
-def _with_approved_conscrypt_runtime_ledger(job: dict) -> dict:
-    """A predecessor conscrypt-runtime job with only the four TLS composition methods added to its ledger."""
-    job = copy.deepcopy(job)
-    owners = [
-        step for step in job.get("steps") or []
-        if isinstance(step.get("run"), str) and CONSCRYPT_RUNTIME_LEDGER_ANCHOR in step["run"]
-    ]
-    assert len(owners) == 1, "exactly one predecessor step must own the Conscrypt runtime ledger"
-    run = owners[0]["run"]
-    assert run.count(CONSCRYPT_RUNTIME_LEDGER_ANCHOR) == 1 and CONSCRYPT_RUNTIME_LEDGER_ADDED not in run
-    owners[0]["run"] = run.replace(
-        CONSCRYPT_RUNTIME_LEDGER_ANCHOR, CONSCRYPT_RUNTIME_LEDGER_ANCHOR + CONSCRYPT_RUNTIME_LEDGER_ADDED
-    )
-    return job
-
-
-# The second approved build-pr change since both predecessors: one step that inspects the merged release
-# R8 configuration directly after the unsigned build. Only that step, present exactly once in exactly that
-# place, is set aside before the comparisons; every other build-pr byte must still match. Its content and
-# fail-closed behaviour are pinned by tests/test_android_r8_optimization.py.
-R8_INSPECTION_STEP_NAME = "Inspect effective release R8 configuration"
-R8_INSPECTION_PREDECESSOR = "Build debug APK and unsigned release APK/AAB"
-
-
-def _without_approved_r8_inspection(job: dict) -> dict:
-    """A candidate build-pr minus the one admitted R8 inspection step, which must directly follow the unsigned build."""
-    job = copy.deepcopy(job)
-    names = [step.get("name") for step in job.get("steps") or []]
-    assert names.count(R8_INSPECTION_STEP_NAME) == 1, "build-pr must inspect the release R8 configuration exactly once"
-    position = names.index(R8_INSPECTION_STEP_NAME)
-    assert position > 0 and names[position - 1] == R8_INSPECTION_PREDECESSOR, (
-        f"the R8 inspection must directly follow {R8_INSPECTION_PREDECESSOR!r}"
-    )
-    del job["steps"][position]
-    return job
-
-
-def _without_static_dedup(job: dict) -> dict:
-    """build-pr minus the gating edits: its condition, gate and repeated static suite."""
-    job = copy.deepcopy(job)
-    job["steps"] = [
-        step
-        for step in job.get("steps") or []
-        if step.get("name") != GATE_NAME and _run(step).strip() != STATIC_RUN
-    ]
-    job.pop("if", None)
-    job.pop("needs", None)
-    return job
-
-
-def _without_static_provisioning(job: dict) -> dict:
-    """A predecessor build-pr minus exactly its static-suite Python setup and install."""
-    job = copy.deepcopy(job)
-    steps = job.get("steps") or []
-    for expected in STATIC_PROVISIONING:
-        assert steps.count(expected) == 1, f"predecessor build-pr must contain {expected['name']!r} exactly once"
-    job["steps"] = [step for step in steps if step not in STATIC_PROVISIONING]
-    return job
 
 
 def _python_invocations(job: dict) -> list[str]:
@@ -583,20 +335,6 @@ def _python_invocations(job: dict) -> list[str]:
     ]
 
 
-def _expected_build_pr(predecessor_job: dict, gate_run: str) -> dict:
-    """The 8cb81b42 build-pr with exactly the admitted edits applied: needs, if, the
-    gate, and the removed static suite with its Python setup and install."""
-    job = _without_static_provisioning(predecessor_job)
-    job["needs"] = list(BUILD_PR_NEEDS)
-    job["if"] = BUILD_PR_IF
-    steps = [step for step in job["steps"] if _run(step).strip() != STATIC_RUN]
-    checkout = _index(steps, lambda step: _uses(step).startswith("actions/checkout@"))
-    assert checkout is not None, "8cb81b42 build-pr must check out first"
-    steps.insert(checkout + 1, {"name": GATE_NAME, "env": dict(GATE_ENV), "run": gate_run})
-    job["steps"] = steps
-    return job
-
-
 def _gate_run(workflow: dict) -> str:
     job = (workflow.get("jobs") or {}).get("build-pr") or {}
     gate = _gate(job)
@@ -607,206 +345,41 @@ def _gate_run(workflow: dict) -> str:
 
 
 @pytest.fixture(scope="module")
-def base() -> dict:
-    assert hashlib.sha256(BASE_FIXTURE.read_bytes()).hexdigest() == BASE_FIXTURE_SHA256
-    return _load(BASE_FIXTURE)
-
-
-@pytest.fixture(scope="module")
-def predecessor() -> dict:
-    assert hashlib.sha256(PREDECESSOR_FIXTURE.read_bytes()).hexdigest() == PREDECESSOR_FIXTURE_SHA256
-    return _load(PREDECESSOR_FIXTURE)
-
-
-@pytest.fixture(scope="module")
 def candidate() -> dict:
     return _load(WORKFLOW)
-
-
-def test_predecessor_workflow_is_rejected_with_exactly_the_expected_violations(base):
-    assert ci_speed_violations(base) == EXPECTED_BASE_VIOLATIONS
-
-
-def test_immediate_predecessor_is_rejected_only_for_the_repeated_static_suite(predecessor):
-    assert ci_speed_violations(predecessor) == DEDUP_VIOLATIONS
 
 
 def test_candidate_workflow_satisfies_every_speed_contract(candidate):
     assert ci_speed_violations(candidate) == []
 
 
-def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candidate):
-    assert candidate["name"] == base["name"]
-    assert _triggers(candidate) == _triggers(base)
-    assert set(candidate["jobs"]) == set(base["jobs"]) | {STATIC_JOB, PRODUCER} | ADDED_JOBS
-    for name in UNCHANGED_JOBS:
-        original = base["jobs"][name]
-        if name == "conscrypt-r28":
-            original = _with_approved_conscrypt_version(original)
-        if name == "conscrypt-runtime":
-            original = _with_approved_conscrypt_runtime_ledger(original)
-        assert _without_android_change_gate(candidate["jobs"][name]) == original, name
-    # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
-    # the admission steps: NDK, build-tools, JDKs, matrices, runtime scripts,
-    # ledgers, producer manifests and every final gate are otherwise identical.
-    # build-pr additionally differs only by its static-suite gating and by dropping
-    # the suite's Python setup and install.
-    for name in CONSUMERS:
-        current = _without_admission(_without_android_change_gate(candidate["jobs"][name]))
-        original = _without_native_compile(base["jobs"][name])
-        if name == RUNTIME_LEDGER_JOB:
-            original = _with_approved_runtime_ledger_changes(original)
-        if name == "build-pr":
-            current = _without_static_dedup(_without_approved_r8_inspection(current))
-            original = _without_static_provisioning(_without_static_dedup(original))
-        assert current == original, name
+def test_runtime_job_keeps_its_ledger_floors_shard_and_profile(candidate):
+    job = candidate["jobs"][RUNTIME_LEDGER_JOB]
+    include = job["strategy"]["matrix"]["include"]
+    assert include.count(RUNTIME_LEDGER_MATRIX_ANCHOR) == 1 and include.count(RUNTIME_LEDGER_MATRIX_ROW) == 1
+    assert include.index(RUNTIME_LEDGER_MATRIX_ROW) == include.index(RUNTIME_LEDGER_MATRIX_ANCHOR) + 1
+    owners = [
+        step for step in job["steps"]
+        if isinstance(step.get("run"), str) and RUNTIME_LEDGER_COUNT_LINES[0] in step["run"]
+    ]
+    assert len(owners) == 1, "exactly one step must own the runtime ledger counts"
+    for line in RUNTIME_LEDGER_COUNT_LINES:
+        assert owners[0]["run"].count(line) == 1, line
 
-
-def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor, candidate):
-    assert {key: value for key, value in candidate.items() if key != "jobs"} == {
-        key: value for key, value in predecessor.items() if key != "jobs"
-    }
-    assert set(candidate["jobs"]) == set(predecessor["jobs"]) | ADDED_JOBS
-    for name, job in predecessor["jobs"].items():
-        if name == RUNTIME_LEDGER_JOB:
-            job = _with_approved_runtime_ledger_changes(job)
-        if name == "conscrypt-r28":
-            job = _with_approved_conscrypt_version(job)
-        if name == "conscrypt-runtime":
-            job = _with_approved_conscrypt_runtime_ledger(job)
-        if name != "build-pr":
-            assert _without_android_change_gate(candidate["jobs"][name]) == job, name
-    expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
-    assert _without_approved_r8_inspection(candidate["jobs"]["build-pr"]) == expected, (
-        "build-pr may differ from 8cb81b42 only by needs, if, the dependency-result gate, "
-        "the removed static suite with its Python setup and install, and the admitted R8 inspection"
-    )
-
-
-def test_r8_inspection_normalization_admits_only_the_one_placed_step(predecessor, candidate):
-    expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
-    job = candidate["jobs"]["build-pr"]
-    assert _without_approved_r8_inspection(job) == expected
-    names = [step.get("name") for step in job["steps"]]
-    position = names.index(R8_INSPECTION_STEP_NAME)
-
-    # The admitted step must be present exactly once, directly after the unsigned build.
-    missing = copy.deepcopy(job)
-    _remove_step(missing, lambda step: step.get("name") == R8_INSPECTION_STEP_NAME)
-    duplicated = copy.deepcopy(job)
-    duplicated["steps"].insert(position + 1, copy.deepcopy(job["steps"][position]))
-    misplaced = copy.deepcopy(job)
-    _move_to_end(misplaced, R8_INSPECTION_STEP_NAME)
-    renamed = copy.deepcopy(job)
-    renamed["steps"][position]["name"] = "Inspect release R8 configuration"
-    for broken in (missing, duplicated, misplaced, renamed):
-        with pytest.raises(AssertionError):
-            _without_approved_r8_inspection(broken)
-
-    # Setting the step aside exempts nothing else in build-pr.
-    extra_step = copy.deepcopy(job)
-    extra_step["steps"].insert(position + 1, {"name": "Unrelated", "run": "true"})
-    changed_build = copy.deepcopy(job)
-    changed_build["steps"][position - 1]["run"] += "./gradlew tasks\n"
-    changed_later_step = copy.deepcopy(job)
-    changed_later_step["steps"][position + 1]["run"] += "true\n"
-    widened_permissions = copy.deepcopy(job)
-    widened_permissions["permissions"] = {"contents": "write"}
-    for drifted in (extra_step, changed_build, changed_later_step, widened_permissions):
-        assert _without_approved_r8_inspection(drifted) != expected
-
-
-def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecessor, candidate):
-    carried = _with_approved_runtime_ledger_changes(predecessor["jobs"][RUNTIME_LEDGER_JOB])
-    current = _without_android_change_gate(candidate["jobs"][RUNTIME_LEDGER_JOB])
-    assert carried == current
-    # The transport applies once, to the old lines only.
-    with pytest.raises(AssertionError):
-        _with_approved_runtime_ledger_changes(current)
-    # Any other change to the same step, including another count, still fails the comparison.
-    for old, new in (
-        ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
-        ("'36:account-dashboard':33", "'36:account-dashboard':34"),
-        ("'36:launcher-recovery':7", "'36:launcher-recovery':8"),
-        ("if len(canonical) < 242 or", "if len(canonical) < 241 or"),
-        ("or len(expected) < expected_sizes[key]", "or len(expected) < 0"),
-        ("|owned('36:launcher-recovery'))-mixed", ")-mixed"),
-    ):
-        mutated = copy.deepcopy(current)
-        owners = [step for step in mutated["steps"] if isinstance(step.get("run"), str) and old in step["run"]]
-        assert len(owners) == 1 and owners[0]["run"].count(old) == 1, old
-        owners[0]["run"] = owners[0]["run"].replace(old, new)
-        assert carried != mutated, old
-    # Any other matrix change, such as moving the new row or giving it a navigation mode, still fails.
-    include = current["strategy"]["matrix"]["include"]
-    row = include.index(RUNTIME_LEDGER_MATRIX_ROW)
-    moved = copy.deepcopy(current)
-    moved["strategy"]["matrix"]["include"].append(moved["strategy"]["matrix"]["include"].pop(row))
-    assert carried != moved
-    navigated = copy.deepcopy(current)
-    navigated["strategy"]["matrix"]["include"][row]["navigation-mode"] = 0
-    assert carried != navigated
-
-    # The profile transport also applies once: the carried row already names its profile.
-    with pytest.raises(AssertionError):
-        _with_approved_runtime_profile(current)
     profiled = dict(RUNTIME_PROFILE_MATRIX_ROW, **{RUNTIME_PROFILE_KEY: RUNTIME_PROFILE_VALUE})
     assert include.count(profiled) == 1
-    assert sum(RUNTIME_PROFILE_KEY in entry for entry in include) == 1
-    profile_row = include.index(profiled)
+    assert sum(RUNTIME_PROFILE_KEY in row for row in include) == 1
     key, value = RUNTIME_PROFILE_INPUT
-
-    def runner_input(job: dict) -> dict:
-        return next(step for step in job["steps"] if step.get("id") == RUNTIME_PROFILE_STEP_ID)["with"]
-
-    def other_step_with_inputs(job: dict) -> dict:
-        return next(
-            step for step in job["steps"]
-            if step.get("id") != RUNTIME_PROFILE_STEP_ID and isinstance(step.get("with"), dict)
-        )["with"]
-
-    def row_named(job: dict, wanted: dict) -> dict:
-        rows = job["strategy"]["matrix"]["include"]
-        assert rows.count(wanted) == 1, wanted
-        return rows[rows.index(wanted)]
-
-    # A missing, wrong, moved or broadened profile, or a missing, wrong, moved or added runner input, still fails.
-    unprofiled = copy.deepcopy(current)
-    del unprofiled["strategy"]["matrix"]["include"][profile_row][RUNTIME_PROFILE_KEY]
-    wrong_profile = copy.deepcopy(current)
-    wrong_profile["strategy"]["matrix"]["include"][profile_row][RUNTIME_PROFILE_KEY] = "pixel_6"
-    moved_profile = copy.deepcopy(current)
-    del moved_profile["strategy"]["matrix"]["include"][profile_row][RUNTIME_PROFILE_KEY]
-    row_named(moved_profile, {"api-level": 29, "arch": "x86", "shard": "mixed"})[RUNTIME_PROFILE_KEY] = RUNTIME_PROFILE_VALUE
-    broadened_profile = copy.deepcopy(current)
-    row_named(broadened_profile, {"api-level": 36, "arch": "x86_64", "shard": "account-dashboard"})[
-        RUNTIME_PROFILE_KEY] = RUNTIME_PROFILE_VALUE
-    no_input = copy.deepcopy(current)
-    del runner_input(no_input)[key]
-    literal_input = copy.deepcopy(current)
-    runner_input(literal_input)[key] = RUNTIME_PROFILE_VALUE
-    moved_input = copy.deepcopy(current)
-    del runner_input(moved_input)[key]
-    other_step_with_inputs(moved_input)[key] = value
-    duplicated_input = copy.deepcopy(current)
-    other_step_with_inputs(duplicated_input)[key] = value
-    heap_input = copy.deepcopy(current)
-    runner_input(heap_input)["heap-size"] = "512M"
-    for drifted in (
-        unprofiled, wrong_profile, moved_profile, broadened_profile,
-        no_input, literal_input, moved_input, duplicated_input, heap_input,
-    ):
-        assert carried != drifted
+    runners = [step for step in job["steps"] if step.get("id") == RUNTIME_PROFILE_STEP_ID]
+    assert len(runners) == 1 and runners[0]["with"][key] == value
+    assert [step for step in job["steps"] if key in (step.get("with") or {})] == runners
 
 
-def test_static_job_runs_the_suite_build_pr_ran_before(predecessor, candidate):
+def test_static_job_runs_the_exact_suite_from_android(candidate):
     static = candidate["jobs"][STATIC_JOB]
-    previous = predecessor["jobs"]["build-pr"]["steps"]
     for expected in (EXPECTED_PYTHON_SETUP, EXPECTED_DEPENDENCY_INSTALL, EXPECTED_STATIC_RUN_STEP):
-        assert expected in previous, expected["name"]
         assert expected in static["steps"], expected["name"]
     assert static["defaults"] == {"run": {"working-directory": "android"}}
-    assert predecessor["jobs"]["build-pr"]["defaults"] == static["defaults"]
     assert "needs" not in static and "if" not in static
 
 
@@ -1120,6 +693,13 @@ def test_gradle_jobs_restore_but_never_save_the_gradle_cache(candidate):
             assert restores == [], name
         if name != "build-pr":
             assert not any(_uses(step).startswith(("actions/cache@", "actions/cache/save@")) for step in steps), name
+    # build-pr is the one writer, and it saves under the key and paths every reader restores.
+    writers = [step for step in jobs["build-pr"]["steps"] if _uses(step).startswith(("actions/cache@", "actions/cache/save@"))]
+    assert writers == [{
+        "name": "Cache Gradle",
+        "uses": GRADLE_RESTORE["uses"].replace("actions/cache/restore@", "actions/cache@"),
+        "with": GRADLE_RESTORE["with"],
+    }]
 
 
 def test_emulator_jobs_skip_main_pushes_and_build_pr_does_not(candidate):

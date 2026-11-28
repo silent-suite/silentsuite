@@ -181,3 +181,35 @@ private fun presentation(
     title: PostLoginSetupPresentation.Title,
     body: PostLoginSetupPresentation.Body,
 ) = PostLoginSetupPresentation(stage, title, body)
+
+/** Access shown next to each integration on the Android apps step. */
+enum class IntegrationAccess { ALLOWED, NOT_ALLOWED }
+
+/** Null while access hasn't been asked yet, or when there is no task app to ask for. */
+fun integrationAccessFor(
+    evidence: PostLoginSetupOrchestrator.PermissionEvidence?,
+): IntegrationAccess? = when (evidence) {
+    PostLoginSetupOrchestrator.PermissionEvidence.GRANTED -> IntegrationAccess.ALLOWED
+    PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED,
+    PostLoginSetupOrchestrator.PermissionEvidence.DENIED_BLOCKED_RETURNED ->
+        IntegrationAccess.NOT_ALLOWED
+    else -> null
+}
+
+/** Integrations the denied or blocked message names, in screen order. */
+fun integrationsNamedFor(
+    condition: PostLoginSetupPresentationCondition,
+    permissions: Map<
+        PostLoginSetupOrchestrator.Integration,
+        PostLoginSetupOrchestrator.PermissionEvidence
+    >,
+): List<PostLoginSetupOrchestrator.Integration> {
+    val named = when (condition) {
+        PostLoginSetupPresentationCondition.PERMISSION_BLOCKED ->
+            PostLoginSetupOrchestrator.PermissionEvidence.DENIED_BLOCKED_RETURNED
+        PostLoginSetupPresentationCondition.PERMISSION_DENIED ->
+            PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED
+        else -> return emptyList()
+    }
+    return PostLoginSetupOrchestrator.Integration.values().filter { permissions[it] == named }
+}

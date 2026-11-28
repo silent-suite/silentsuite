@@ -24,7 +24,6 @@ BRIDGE_WORKFLOW = Path(".github/workflows/release-bridge.yml")
 BRIDGE_BUILD_WORKFLOW = Path(".github/workflows/build-bridge.yml")
 SERVER_WORKFLOW = Path(".github/workflows/release-server-image.yml")
 READINESS_WORKFLOW = Path(".github/workflows/release-readiness.yml")
-SIBLING_WORKFLOW = Path("android/.github/workflows/build.yml")
 CONSCRYPT_BUILD_SCRIPT = Path("android/scripts/build-conscrypt-android-r28.sh")
 IDENTITY_HELPER = Path("scripts/verify-release-identity.sh")
 ATTACHMENT_HELPER = Path("scripts/attach-umbrella-release-assets.sh")
@@ -70,8 +69,6 @@ def run_checker(root: Path) -> subprocess.CompletedProcess[str]:
 def fixture_root(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     shutil.copytree(ROOT / ".github", root / ".github")
-    (root / SIBLING_WORKFLOW).parent.mkdir(parents=True)
-    shutil.copy2(ROOT / SIBLING_WORKFLOW, root / SIBLING_WORKFLOW)
     (root / CONSCRYPT_BUILD_SCRIPT).parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / CONSCRYPT_BUILD_SCRIPT, root / CONSCRYPT_BUILD_SCRIPT)
     # The control plane executes these with network and API access, so the
@@ -809,8 +806,8 @@ def test_later_negative_path_pattern_cannot_disable_policy_trigger(tmp_path: Pat
     root = fixture_root(tmp_path)
     mutate(
         root / CI_WORKFLOW,
-        "      - 'android/.github/workflows/**'\n  workflow_dispatch:\n",
-        "      - 'android/.github/workflows/**'\n      - '!.github/workflows/**'\n  workflow_dispatch:\n",
+        "      - '.github/workflows/**'\n  workflow_dispatch:\n",
+        "      - '.github/workflows/**'\n      - '!.github/workflows/**'\n  workflow_dispatch:\n",
     )
     assert_rejected(run_checker(root), "pull_request.paths must not contain negative patterns")
 
@@ -1407,19 +1404,6 @@ def test_mutable_action_in_the_release_lane_is_rejected(tmp_path: Path) -> None:
         "actions/checkout@v7",
     )
     assert_rejected(run_checker(root), "action must be pinned to a full commit SHA: actions/checkout@v7")
-
-
-def test_mutable_action_in_android_sibling_workflow_is_rejected(tmp_path: Path) -> None:
-    root = fixture_root(tmp_path)
-    mutate(
-        root / SIBLING_WORKFLOW,
-        "android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699",
-        "android-actions/setup-android@v4",
-    )
-    assert_rejected(
-        run_checker(root),
-        "android/.github/workflows/build.yml action must be pinned to a full commit SHA",
-    )
 
 
 def test_a_foreign_credential_in_the_signing_job_is_rejected(tmp_path: Path) -> None:

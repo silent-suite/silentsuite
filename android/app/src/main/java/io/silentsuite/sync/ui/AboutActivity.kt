@@ -28,6 +28,7 @@ import io.silentsuite.sync.BuildConfig
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.ui.report.ReportProblemActivity
 import com.google.android.material.tabs.TabLayout
 import ezvcard.Ezvcard
 import kotlinx.coroutines.Dispatchers
@@ -74,9 +75,21 @@ class AboutActivity : BaseActivity() {
 
         @SuppressLint("SetTextI18n")
         override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
-            val info = components[requireArguments().getInt(KEY_POSITION)]
+            val position = requireArguments().getInt(KEY_POSITION)
+            val info = components[position]
 
             val v = inflater.inflate(R.layout.about_component, container, false)
+
+            // Help first on the SilentSuite page; component licences stay below and in the other tabs.
+            if (position == 0) {
+                v.findViewById<View>(R.id.help_actions).visibility = View.VISIBLE
+                v.findViewById<View>(R.id.help_user_guide).setOnClickListener {
+                    WebViewActivity.openUrl(requireContext(), Constants.androidAppsDocsUri)
+                }
+                v.findViewById<View>(R.id.help_report_problem).setOnClickListener {
+                    startActivity(ReportProblemActivity.newIntent(requireContext()))
+                }
+            }
 
             var tv = v.findViewById<View>(R.id.title) as TextView
             tv.text = info.title + if (info.version != null) " " + info.version else ""
@@ -140,7 +153,7 @@ class AboutActivity : BaseActivity() {
 
         private val components = arrayOf(ComponentInfo(
                 App.appName, BuildConfig.VERSION_NAME, Constants.webUri.toString(),
-                "Silent Suite",
+                "SilentSuite",
                 R.string.about_license_info_no_warranty, "gpl-3.0-standalone.html"
         ), ComponentInfo(
                 "AmbilWarna", null, "https://github.com/yukuku/ambilwarna",

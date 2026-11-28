@@ -7,7 +7,7 @@ import {
   signupStepFor,
   signupStepPayloadFor,
 } from '../commercial-funnel-analytics'
-import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_STEPS } from '@/app/lib/public-analytics'
+import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildInPageCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_STEPS } from '@/app/lib/public-analytics'
 
 const annualOffer = {
   planId: 'early_annual' as const,
@@ -43,6 +43,9 @@ describe('commercial funnel analytics transport boundary', () => {
     const returned = buildCheckoutReturnedPayload('returned', 'stripe')
     expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup/success'), returned, 'true')).toBe(true)
     expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup'), returned, 'true')).toBe(false)
+    const inPage = buildInPageCheckoutReturnedPayload('stripe')
+    expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup'), inPage, 'true')).toBe(true)
+    expect(shouldSendCommercialAnalytics(new URL('https://app.silentsuite.io/signup/success'), inPage, 'true')).toBe(false)
   })
 
   it('sends a route-bound beacon payload', async () => {
@@ -72,6 +75,21 @@ describe('commercial funnel analytics transport boundary', () => {
     sendCommercialEvent(buildPlanSelectedPayload(annualOffer), beacon, fetcher, new URL('https://app.silentsuite.io/signup'), 'true')
     expect(beacon).toHaveBeenCalledTimes(1)
     expect(fetcher).toHaveBeenCalledWith('/api/event', expect.objectContaining({ method: 'POST', keepalive: true }))
+  })
+
+  it('swallows a rejected keepalive fetch', async () => {
+    const rejection = Promise.reject(new TypeError('offline'))
+    const fetcher = vi.fn(() => rejection)
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      sendCommercialEvent(buildPlanSelectedPayload(annualOffer), () => false, fetcher as unknown as typeof fetch, new URL('https://app.silentsuite.io/signup'), 'true')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
   })
 
   it('sends nothing when the commercial flag is off', () => {
@@ -125,5 +143,30 @@ describe('signup step events', () => {
     const record = createSignupStepRecorder(send)
     for (const step of ['plan_shown', null, 'plan_shown', 'email_verified', 'plan_shown', 'completed'] as const) record(step)
     expect(send.mock.calls.map(([step]) => step)).toEqual(['plan_shown', 'email_verified', 'completed'])
+  })
+})
+
+describe('in-page checkout outcome', () => {
+  async function freshTracker() {
+    vi.resetModules()
+    return (await import('../commercial-funnel-analytics')).trackInPageCheckoutReturned
+  }
+
+  it('sends once per document, only on /signup', async () => {
+    const track = await freshTracker()
+    const send = vi.fn()
+    track('btcpay', '/signup/pending-payment', send)
+    expect(send).not.toHaveBeenCalled()
+    track('btcpay', '/signup', send)
+    track('stripe', '/signup', send)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith(buildInPageCheckoutReturnedPayload('btcpay'))
+  })
+
+  it('never throws when the sender fails', async () => {
+    const track = await freshTracker()
+    const send = vi.fn(() => { throw new TypeError('sendBeacon refused') })
+    expect(() => track('stripe', '/signup', send)).not.toThrow()
+    expect(send).toHaveBeenCalledTimes(1)
   })
 })

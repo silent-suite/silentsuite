@@ -85,6 +85,33 @@ describe('unfoldLines', () => {
     expect(parseVCard(`BEGIN:VCARD\r\nFN:b\r\nNOTE;ENCODING=QUOTED-PRINTABLE:${qp}41\r\nEND:VCARD`, { strictTextEncoding: true }).note!.length).toBeGreaterThan(1_000_000);
     expect(performance.now() - started).toBeLessThan(2000);
   });
+
+  it('unfolds a property header folded 50,000 times in bounded time', () => {
+    // Each header segment ends in '=', which makes the line ask whether the header declares QP.
+    const folded = `BEGIN:VCARD\r\nX-A;X-P=${'\r\n a='.repeat(50_000)}:v\r\nEND:VCARD`;
+    const softBreaks = `BEGIN:VCARD\r\nX-A;ENCODING=QUOTED-PRINTABLE;X-P=${'\r\na='.repeat(50_000)}:v\r\nEND:VCARD`;
+    const started = performance.now();
+    expect(unfoldLines(folded)).toBe(`BEGIN:VCARD\nX-A;X-P=${'a='.repeat(50_000)}:v\nEND:VCARD`);
+    expect(unfoldLines(softBreaks)).toBe(`BEGIN:VCARD\nX-A;ENCODING=QUOTED-PRINTABLE;X-P${'a'.repeat(50_000)}=:v\nEND:VCARD`);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  it('matches the previous implementation on generated headers', () => {
+    const pieces = [';', '=', '"', ':', 'a', 'ENCODING', 'encoding', 'QUOTED-PRINTABLE', 'quoted-printable', ','];
+    let seed = 1;
+    const next = (n: number) => { seed = (seed * 1103515245 + 12345) % 2 ** 31; return seed % n; };
+    for (let run = 0; run < 3000; run++) {
+      const lines = ['BEGIN:VCARD'];
+      for (let l = 0; l < 4; l++) {
+        let line = next(3) === 0 ? ' ' : '';
+        for (let k = next(6); k >= 0; k--) line += pieces[next(pieces.length)];
+        lines.push(line);
+      }
+      lines.push('END:VCARD');
+      const text = lines.join('\r\n');
+      expect(unfoldLines(text)).toBe(legacyUnfold(text));
+    }
+  });
 });
 
 describe('isVCardBoundary', () => {

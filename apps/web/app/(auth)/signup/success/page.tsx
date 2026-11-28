@@ -22,6 +22,7 @@ function SignupSuccessInner() {
   const searchParams = useSearchParams()
   const completeSignup = useAuthStore((s) => s.completeSignup)
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
+  const etebaseAccountReady = useAuthStore((s) => s.pendingSignup?.etebaseAccountReady === true)
   const finalizePaidSignup = useAuthStore((s) => s.finalizePaidSignup)
   const recoverCompletedSignupSession = useAuthStore((s) => s.recoverCompletedSignupSession)
   const restoreSignupStateFromRedirect = useAuthStore((s) => s.restoreSignupStateFromRedirect)
@@ -146,7 +147,7 @@ function SignupSuccessInner() {
             <p className="text-xs text-[rgb(var(--muted))]">One last account step before your vault setup.</p>
           </div>
         </div>
-        <StepCreatePaidAccount email={restoredEmail} continuation="payment-return" onNext={handlePaidAccountComplete} />
+        <StepCreatePaidAccount email={restoredEmail} continuation="payment-return" onNext={handlePaidAccountComplete} accountReady={etebaseAccountReady} />
         <Button onClick={() => router.push('/signup?recovery=payment')} className="w-full">Open payment recovery</Button>
       </div>
     )
@@ -173,7 +174,7 @@ function SignupSuccessInner() {
         {showReturnFallback && returnTo && (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
             <p className="font-medium">Browser did not reopen the Android app automatically.</p>
-            <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+            <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary-text))] underline">
               Tap here to return to Android
             </a>
           </div>
@@ -195,9 +196,9 @@ function SignupSuccessInner() {
           Payment confirmation required
         </h2>
         <p className="text-sm leading-relaxed text-[rgb(var(--muted))]">
-          This return does not confirm payment. Open payment recovery to check the original
-          signup. If recovery details are missing or expired, use the original signup tab
-          or contact support. Do not start another payment.
+          This page can&apos;t tell whether your payment went through. Open payment recovery to
+          check your signup. If that doesn&apos;t work, go back to the tab where you signed up or
+          contact support. Don&apos;t start another payment.
         </p>
       </div>
       <Button onClick={() => router.push('/signup?recovery=payment')} className="w-full">

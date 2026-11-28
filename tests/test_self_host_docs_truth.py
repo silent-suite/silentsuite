@@ -21,7 +21,7 @@ COMPOSE = ROOT / "self-host" / "docker-compose.yml"
 SELF_HOSTING = ROOT / "self-host" / "SELF-HOSTING.md"
 INSTALLER = ROOT / "self-host" / "install.sh"
 
-TREES = ("docs", "apps/docs")
+TREES = ("apps/docs",)
 
 
 def page(tree: str, name: str) -> Path:
@@ -142,8 +142,7 @@ def test_the_reference_page_states_the_pi_caveat_rather_than_a_claim():
 
 @pytest.mark.parametrize("tree", TREES)
 def test_the_self_hosting_index_does_not_promise_a_cross_version_update(tree: str):
-    index = "README.md" if tree == "docs" else "index.md"
-    text = read(tree, index)
+    text = read(tree, "index.md")
     assert "How to update to new versions" not in text
     assert "cross-version updates are not supported yet" in text
 

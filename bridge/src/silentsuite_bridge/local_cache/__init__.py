@@ -13,12 +13,12 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from contextlib import contextmanager
 from functools import wraps
 
-import msgpack
 import peewee as pw
 import vobject
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
@@ -315,6 +315,40 @@ def clear_cached_user(username, db_path=None):
         return _clear_cached_user_locked(username, db_path)
 
 
+def list_cached_users():
+    """Return usernames that still have rows in the local cache.
+
+    Read-only: never creates the cache file, its tables or the global proxy.
+    """
+    with _cache_database_init_lock:
+        database = getattr(db.database_proxy, "obj", None)
+        if database is not None:
+            with db.atomic_connection():
+                if not database.table_exists(models.User._meta.table_name):
+                    return []
+                return sorted(
+                    user.username
+                    for user in models.User.select(models.User.username)
+                )
+        path = config.DATABASE_FILE
+        if not os.path.exists(path):
+            return []
+        with _private_umask():
+            connection = sqlite3.connect(path, timeout=5.0)
+        try:
+            table = models.User._meta.table_name
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone() is None:
+                return []
+            return sorted(
+                row[0] for row in connection.execute(f'SELECT username FROM "{table}"')
+            )
+        finally:
+            connection.close()
+
+
 def clear_unconfigured_cached_users(configured_users, db_path=None):
     """Clear orphaned account caches left by an interrupted deferred removal."""
     configured = {(user or "").strip() for user in configured_users}
@@ -404,14 +438,6 @@ def _extract_uid(vobject_item):
         if child is not None and hasattr(child, "uid"):
             return child.uid.value if hasattr(child.uid, "value") else str(child.uid)
     raise ValueError(f"Cannot extract UID from vobject item: {vobject_item.name}")
-
-
-def msgpack_encode(content):
-    return msgpack.packb(content, use_bin_type=True)
-
-
-def msgpack_decode(content):
-    return msgpack.unpackb(content, raw=False)
 
 
 def batch(iterable, n=1):
@@ -961,9 +987,6 @@ class Etebase:
         else:
             self._init_db(db_path)
 
-    def reinit(self):
-        self._set_db(self._database)
-
     def _set_db(self, database):
         self._database = database
         db.database_proxy.initialize(database)
@@ -1327,10 +1350,6 @@ class Etebase:
         return self.user.collections.where(
             models.CollectionEntity.dirty | models.CollectionEntity.new
         )
-
-    def collection_list_is_dirty(self):
-        changed = list(self._collection_list_dirty_get())
-        return len(changed) > 0
 
     def push_collection_list(self):
         """Upload changed collections, one failure not blocking the others.
@@ -2019,12 +2038,6 @@ class Etebase:
             & ~(models.ItemEntity.id << quarantined_local_items)
         )
 
-    def collection_is_dirty(self, uid):
-        with db.atomic_connection():
-            cache_col = models.CollectionEntity.get(local_user=self.user, uid=uid)
-            changed = list(self._collection_dirty_get(cache_col))
-            return len(changed) > 0
-
     def push_collection(self, uid):
         """Upload pending item changes without overwriting newer server data.
 
@@ -2294,10 +2307,6 @@ class Etebase:
                 )
             except models.CollectionEntity.DoesNotExist as e:
                 raise DoesNotExist(e)
-
-    def clear_user(self):
-        clear_cached_user(self.username)
-        self.user = None
 
 
 class Collection:

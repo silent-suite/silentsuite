@@ -32,9 +32,14 @@
         <item name="cornerSize">24dp</item>
     </style>
 
+    <!-- Sentence-case buttons: MaterialComponents capitalises button text by default. -->
+    <style name="TextAppearance.AppTheme.Button" parent="TextAppearance.MaterialComponents.Button">
+        <item name="android:textAllCaps">false</item>
+    </style>
+
     <style name="AppTheme.Dialog.Button" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
         <item name="android:textColor">@color/button_secondary_text</item>
-        <item name="android:textAllCaps">true</item>
+        <item name="android:textAllCaps">false</item>
     </style>
 
 
@@ -67,7 +72,7 @@
         <item name="android:layout_height">48dp</item>
         <item name="android:layout_marginStart">8dp</item>
         <item name="android:layout_marginEnd">8dp</item>
-        <item name="android:textAllCaps">true</item>
+        <item name="android:textAllCaps">false</item>
         <item name="android:fontFamily">sans-serif-medium</item>
     </style>
 
@@ -100,7 +105,7 @@
         <item name="android:layout_height">48dp</item>
         <item name="android:paddingLeft">16dp</item>
         <item name="android:paddingRight">16dp</item>
-        <item name="android:textAllCaps">true</item>
+        <item name="android:textAllCaps">false</item>
         <item name="android:textColor">@color/buttontext</item>
         <item name="android:fontFamily">sans-serif-medium</item>
     </style>
@@ -232,6 +237,19 @@
         <item name="background">@color/semantic_system_bar</item>
         <item name="backgroundStacked">@color/semantic_system_bar</item>
         <item name="backgroundSplit">@color/semantic_system_bar</item>
+    </style>
+
+    <!-- AppTheme.Material3 window action bar: the same navy bar as AppTheme. The Material3 title
+         uses colorOnSurface, which actionBarTheme does not change, so it is set white here. -->
+    <style name="Widget.AppTheme.Material3.WindowActionBar" parent="Widget.Material3.ActionBar.Solid">
+        <item name="background">@color/semantic_system_bar</item>
+        <item name="backgroundStacked">@color/semantic_system_bar</item>
+        <item name="backgroundSplit">@color/semantic_system_bar</item>
+        <item name="titleTextStyle">@style/TextAppearance.AppTheme.Material3.WindowActionBar.Title</item>
+    </style>
+
+    <style name="TextAppearance.AppTheme.Material3.WindowActionBar.Title" parent="TextAppearance.Material3.ActionBar.Title">
+        <item name="android:textColor">@color/semantic_on_system_bar</item>
     </style>
 
     <!-- Dashboard top bar overlay, scoped to that toolbar: white action/overflow icons and drawer

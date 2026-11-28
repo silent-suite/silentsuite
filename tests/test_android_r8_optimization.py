@@ -127,11 +127,13 @@ def test_resource_shrinking_stays_off():
 
 def test_build_pr_inspects_effective_release_r8_configuration():
     step = inspection_step()
-    ordered = list(build_pr_steps())
+    workflow = yaml.load(ANDROID_CI_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    ordered = [entry.get("name") for entry in workflow["jobs"]["build-pr"]["steps"]]
+    assert ordered.count(INSPECTION_STEP) == 1, "build-pr must inspect the release R8 configuration exactly once"
     position = ordered.index(INSPECTION_STEP)
-    # It reads what the release build just produced and stages it into the
-    # privacy evidence that the existing tracker upload publishes.
-    assert ordered.index(RELEASE_BUILD_STEP) < position
+    # It reads what the release build just produced, directly after it, and stages it
+    # into the privacy evidence that the existing tracker upload publishes.
+    assert position > 0 and ordered[position - 1] == RELEASE_BUILD_STEP
     assert position < ordered.index("Upload tracker verification evidence")
     run = step["run"]
     assert "set -euo pipefail" in run

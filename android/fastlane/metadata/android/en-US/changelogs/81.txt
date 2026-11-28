@@ -1,2 +1,0 @@
-* Fixed contacts import
-* Make it easier to report import errors

@@ -58,7 +58,8 @@ class UnsyncedNotesContractTest {
     @Test fun `the Unsynced Notes screens reach the stores only on the IO dispatcher`() {
         val fragment = code(File(ui, "UnsyncedNotesFragment.kt"))
         val calls = storeCall.findAll(fragment).toList()
-        assertEquals("the hub row's read, the screen's read, its discard and its read of one store again",
+        assertEquals("the read the hub row and the sign-in item share, the screen's read, its discard and its read " +
+            "of one store again",
             listOf("UnsyncedNotesStores.read", "UnsyncedNotesStores.read", "UnsyncedNotesStores.discard",
                 "UnsyncedNotesStores.reread"),
             calls.map { it.groupValues[1] + "." + it.groupValues[4] })
@@ -88,17 +89,18 @@ class UnsyncedNotesContractTest {
         val menu = body(login, "override fun onCreateOptionsMenu(menu: Menu): Boolean {")
         assertTrue(menu, menu.contains(
             "menuInflater.inflate(R.menu.activity_login, menu)\n" +
-                "        UnsyncedNotesEntry.addTo(menu)\n        return true"))
+                "        unsyncedNotes.addTo(menu)\n        return true"))
         assertFalse("in every mode, Android's Add account included", menu.contains("authenticatorMode") ||
             menu.contains("if ("))
         val selected = body(login, "override fun onOptionsItemSelected(item: MenuItem): Boolean {")
-        val opens = selected.indexOf("if (UnsyncedNotesEntry.opens(this, item)) return true")
+        val opens = selected.indexOf("if (unsyncedNotes.opens(item)) return true")
         assertTrue("after Up, before the default", opens > selected.indexOf("android.R.id.home") &&
             opens < selected.indexOf("return super.onOptionsItemSelected(item)"))
 
         val entry = code(File(ui, "UnsyncedNotesEntry.kt"))
-        assertTrue(entry.contains("menu.add(Menu.NONE, ITEM_ID, Menu.NONE, R.string.settings_unsynced_notes)"))
-        assertTrue(entry.contains(".setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)"))
+        assertTrue(entry.contains(
+            "menu.add(Menu.NONE, ITEM_ID, Menu.NONE, R.string.settings_unsynced_notes).apply {\n" +
+            "            setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)\n            isVisible = shown\n        }"))
         assertTrue(entry.contains("activity.startActivity(AppSettingsActivity.newUnsyncedNotesIntent(activity))"))
         // Help's item has no id, so 0; resource ids and android.R.id.home are 0x01000000 and above.
         assertTrue(UnsyncedNotesEntry.ITEM_ID in 1 until 0x01000000)
@@ -123,13 +125,39 @@ class UnsyncedNotesContractTest {
         assertEquals("the first override of that name is onCreate itself", setup.indexOf("override fun onCreate("),
             onCreate)
         val menu = setup.indexOf("override fun onCreateOptionsMenu(menu: Menu): Boolean {\n" +
-            "        UnsyncedNotesEntry.addTo(menu)\n        return true\n    }")
+            "        unsyncedNotes.addTo(menu)\n        return true\n    }")
         val selected = setup.indexOf("override fun onOptionsItemSelected(item: MenuItem): Boolean =\n" +
-            "        UnsyncedNotesEntry.opens(this, item) || super.onOptionsItemSelected(item)")
+            "        unsyncedNotes.opens(item) || super.onOptionsItemSelected(item)")
         assertTrue("below onCreate", onCreate in 0 until menu && onCreate < selected)
         val render = setup.substringAfter("private fun render(", "").substringBefore("\n    private fun")
         assertTrue(render.isNotEmpty())
-        assertFalse("outside render", render.contains("UnsyncedNotesEntry") || render.contains("Menu"))
+        assertFalse("outside render", render.contains("unsyncedNotes") || render.contains("Menu"))
         assertEquals("no extra of its own", 2, Regex("putExtra\\(").findAll(setup).count())
+    }
+
+    @Test fun `the item hides only while the hub row's rule finds nothing, and shows until a read answers`() {
+        val entry = code(File(ui, "UnsyncedNotesEntry.kt"))
+        assertTrue("shown until a read answers", entry.contains("private var shown = true"))
+        assertTrue("read again on every resume", entry.contains(
+            "if (event == Lifecycle.Event.ON_RESUME) refresh()"))
+        assertTrue("a read that throws shows it", Regex(
+            """UnsyncedNotesFragment\.anythingToShow\(app\)\s*\} catch \(e: CancellationException\) \{\s*throw e\s*""" +
+                """\} catch \(e: Exception\) \{\s*true\s*\}""").containsMatchIn(entry))
+        assertEquals("one place sets it after a read", listOf("shown = anything"),
+            Regex("""(?m)^\s+(shown = .*)$""").findAll(entry).map { it.groupValues[1] }.toList())
+
+        // The same rule as the Settings hub row, from the same read.
+        val fragment = code(File(ui, "UnsyncedNotesFragment.kt"))
+        val anything = body(fragment, "internal suspend fun anythingToShow(app: Context): Boolean {", "        ")
+        assertTrue(anything, anything.contains("val (listing, removal) = readHub(app)") && anything.contains(
+            "return summary != null || UnsyncedNotesDiscardPolicy.hubRemoval(summary, removal) != null"))
+        val hub = body(fragment, "internal fun refreshHubRow(fragment: Fragment, row: Preference) {", "        ")
+        assertTrue(hub, hub.contains("val (listing, removal) = readHub(app)") &&
+            hub.contains("row.isVisible = summary != null || removalOnly != null"))
+
+        for (name in listOf("setup/LoginActivity.kt", "setup/PostLoginSetupActivity.kt")) {
+            assertTrue(name, setupSource(name.removePrefix("setup/"))
+                .contains("private val unsyncedNotes = UnsyncedNotesEntry(this)"))
+        }
     }
 }

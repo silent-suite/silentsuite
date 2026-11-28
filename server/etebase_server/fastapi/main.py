@@ -1,3 +1,4 @@
+import logging
 import os
 import typing as t
 
@@ -19,6 +20,12 @@ from .routers.invitation import invitation_incoming_router, invitation_outgoing_
 from .routers.member import member_router
 from .routers.owner import owner_router
 from .routers.websocket import websocket_router
+
+
+def log_signup_mode() -> None:
+    # The mode name only (open, registration-token, owner, hosted-pass), never a configured value.
+    # WARNING so it shows without a logging configuration.
+    logging.getLogger("etebase_server.fastapi").warning("signup mode: %s", settings.ETEBASE_SIGNUP_MODE)
 
 
 def create_application(prefix="", middlewares=[]):
@@ -77,6 +84,8 @@ def create_application(prefix="", middlewares=[]):
     @app.on_event("startup")
     async def on_startup() -> None:
         from .redis import redisw
+
+        log_signup_mode()
 
         await redisw.setup()
 

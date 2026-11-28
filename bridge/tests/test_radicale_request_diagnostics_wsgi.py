@@ -101,7 +101,7 @@ def app(tmp_path, monkeypatch):
     return Application(bridge_main.build_radicale_configuration())
 
 
-def _request(app, method="PROPFIND", authorization=None):
+def _request(app, method="PROPFIND", authorization=None, path=PRINCIPAL_PATH):
     captured = {}
 
     def start_response(status, headers):
@@ -110,7 +110,7 @@ def _request(app, method="PROPFIND", authorization=None):
     errors = io.StringIO()
     environ = {
         "REQUEST_METHOD": method,
-        "PATH_INFO": PRINCIPAL_PATH,
+        "PATH_INFO": path,
         "QUERY_STRING": "",
         "SCRIPT_NAME": "",
         "HTTP_HOST": "127.0.0.1:37358",
@@ -235,6 +235,21 @@ def test_same_process_auth_journey_reports_one_bounded_result_per_request(app, s
     _assert_private_values_absent(sink, errors)
 
 
+def test_dashboard_page_load_is_reported_as_a_dashboard_request(app, sink):
+    status, errors = _request(app, method="GET", path="/.web/")
+
+    status_code = status.split(" ", 1)[0]
+    _assert_in_order(
+        sink.lines,
+        [
+            "INFO Dashboard request received (method=GET)",
+            f"INFO Dashboard request completed (method=GET status={status_code})",
+        ],
+    )
+    assert not [line for line in sink.lines if "DAV request" in line]
+    _assert_private_values_absent(sink, errors)
+
+
 def test_unlisted_method_is_reported_without_its_name(app, sink):
     status, errors = _request(
         app, method="MARKERMETHOD", authorization=_basic_auth(PASSWORD)
@@ -299,7 +314,7 @@ def test_exception_stack_and_extra_fields_never_reach_a_sink(sink):
 
     assert sink.lines == [
         "WARNING Radicale failure",
-        "INFO Radicale diagnostic suppressed",
+        "DEBUG Radicale diagnostic suppressed",
     ]
     for record in sink.records:
         assert not hasattr(record, "marker_field")

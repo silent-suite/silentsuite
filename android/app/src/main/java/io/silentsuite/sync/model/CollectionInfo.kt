@@ -15,7 +15,6 @@ import java.io.Serializable
  *
  * The primary purpose of this class is to hold the Type enum used throughout
  * the codebase. The metadata fields (uid, displayName, etc.) are legacy holdovers
- * used by a few remaining legacy UI screens (CreateCollectionActivity, EditCollectionActivity)
  * and will be removed in Story A1.3.
  */
 class CollectionInfo : Serializable {

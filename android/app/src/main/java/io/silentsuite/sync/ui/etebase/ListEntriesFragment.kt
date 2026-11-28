@@ -70,7 +70,11 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
                     restored = true
                 }
 
-                emptyTextView!!.text = getString(emptyTextRes(requireContext(), col.collectionType))
+                // Only the deleted-contacts recovery list is created with arguments.
+                emptyTextView!!.text = getString(
+                    if (CollectionLifecycleIdentity.from(arguments) != null) R.string.journal_entries_list_empty_deleted_contacts
+                    else emptyTextRes(requireContext(), col.collectionType)
+                )
             }
         }
 
@@ -218,7 +222,10 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
             arguments = identity.toBundle()
         }
 
-        /** The rest of the line after [prefix]; the last line may have no line break after it. */
+        /**
+         * The rest of the line after [prefix], without its line break (LF or CRLF, as iCalendar and
+         * vCard use); the last line may have no line break after it.
+         */
         @VisibleForTesting
         internal fun getLine(content: String?, prefix: String): String? {
             val text = content ?: return null
@@ -226,7 +233,7 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
             if (start < 0) return null
             val from = start + prefix.length
             val end = text.indexOf("\n", from).let { if (it < 0) text.length else it }
-            return text.substring(from, end)
+            return text.substring(from, end).removeSuffix("\r")
         }
 
         fun setItemView(v: View, collectionType: String, item: CachedItem) {

@@ -37,6 +37,23 @@ const config: Config = {
           950: '#022c22',
         },
       },
+      // Text only: the light emerald/red shades fail 4.5:1 as text on the light
+      // theme, so text-emerald-400/500/600 and text-red-400/500/600 resolve to
+      // theme-aware tokens from globals.css (emerald-700/red-700 on light,
+      // emerald-400/red-400 on dark). Backgrounds, borders and rings keep the
+      // stock palette.
+      textColor: {
+        emerald: {
+          400: 'rgb(var(--primary-text) / <alpha-value>)',
+          500: 'rgb(var(--primary-text) / <alpha-value>)',
+          600: 'rgb(var(--primary-text) / <alpha-value>)',
+        },
+        red: {
+          400: 'rgb(var(--danger-text) / <alpha-value>)',
+          500: 'rgb(var(--danger-text) / <alpha-value>)',
+          600: 'rgb(var(--danger-text) / <alpha-value>)',
+        },
+      },
       fontFamily: {
         sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],
       },

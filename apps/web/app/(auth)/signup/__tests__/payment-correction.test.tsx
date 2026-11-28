@@ -7,7 +7,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => '/signup' }))
 vi.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'dark', setTheme: vi.fn() }) }))
-vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
+vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, trackInPageCheckoutReturned: vi.fn(), createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
 vi.mock('@/app/lib/secure-storage', () => ({ secureGet: vi.fn(), secureSet: vi.fn(), secureRemove: vi.fn(), secureClear: vi.fn(), migrateFromLocalStorage: vi.fn() }))
 const email = 'recovery@example.test'
 const requestKey = '5fd4d86d-34de-4b82-9a66-9598ddf6e02f'
@@ -35,7 +35,8 @@ it.each(['cancel', 'current'] as const)('retires refreshed signup checkpoints af
     fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
   }
   await screen.findByRole('heading', { name: 'Verify email to choose a payment method' })
-  expect(screen.getByText(/no longer has valid email verification and signed signup terms/)).toBeVisible()
+  expect(screen.getByText('Payment cancelled. Please verify your email again to continue.')).toBeVisible()
+  expect(screen.queryByText(/expired/i)).not.toBeInTheDocument()
   expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBeUndefined()
   expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).toBeNull()
   expect(sessionStorage.getItem('silentsuiteSignup:payment-journey')).toBe('retired')

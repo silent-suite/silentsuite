@@ -15,15 +15,17 @@ import type { CalendarEvent, DateFormat, VAlarm } from '@silentsuite/core'
 import { resolveTimeZone, buildAlarmTrigger, eventOccurrenceWallClock, gapWallClock, occurrenceEnd, parseAlarmTriggerMinutes, validStartWallClock } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
-import { formatDate } from '@/app/lib/date'
+import { dateFormatExample, formatDate, formatEventDateInput, parseEventDateInput } from '@/app/lib/date'
 import { canWriteCollection, findItemCollection } from '@/app/lib/collection-access'
 import { Globe } from 'lucide-react'
 import {
   formatDateForInputInZone,
   formatTimeForInputInZone,
+  deviceTimezone,
   instantFromWallClock,
   resolveUserTimezone,
   shortTimezoneLabel,
+  timezoneOptions,
 } from '@/app/lib/tz'
 import { inclusiveAllDayEndDate } from '../lib/all-day'
 import { overriddenOccurrence } from '../lib/calendar-grid-events'
@@ -136,73 +138,7 @@ export function parseEventTimeInput(input: string, timeFormat: string): string |
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
 }
 
-function effectiveDateFormat(dateFormat: DateFormat): Exclude<DateFormat, 'system'> {
-  return dateFormat === 'system' ? 'YYYY-MM-DD' : dateFormat
-}
-
-export function dateFormatExample(dateFormat: DateFormat): string {
-  return formatEventDateInput('2026-06-09', dateFormat)
-}
-
-export function formatEventDateInput(isoDate: string, dateFormat: DateFormat): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate)
-  if (!match) return isoDate
-  const [, y, m, d] = match
-
-  switch (effectiveDateFormat(dateFormat)) {
-    case 'DD/MM/YYYY':
-      return `${d}/${m}/${y}`
-    case 'MM/DD/YYYY':
-      return `${m}/${d}/${y}`
-    case 'DD.MM.YYYY':
-      return `${d}.${m}.${y}`
-    case 'YYYY/MM/DD':
-      return `${y}/${m}/${d}`
-    case 'YYYY-MM-DD':
-      return `${y}-${m}-${d}`
-  }
-}
-
-function isValidIsoDate(y: number, m: number, d: number): boolean {
-  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false
-  if (y < 1 || m < 1 || m > 12 || d < 1 || d > 31) return false
-  const date = new Date(y, m - 1, d)
-  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d
-}
-
-export function parseEventDateInput(input: string, dateFormat: DateFormat): string | null {
-  const value = input.trim()
-  if (!value) return null
-
-  const format = effectiveDateFormat(dateFormat)
-  const separator = format.includes('.') ? '\\.' : format.includes('/') ? '/' : '-'
-  const match = new RegExp(`^(\\d{1,4})${separator}(\\d{1,2})${separator}(\\d{1,4})$`).exec(value)
-  if (!match) return null
-
-  const a = Number(match[1])
-  const b = Number(match[2])
-  const c = Number(match[3])
-  let y: number
-  let m: number
-  let d: number
-
-  switch (format) {
-    case 'DD/MM/YYYY':
-    case 'DD.MM.YYYY':
-      d = a; m = b; y = c
-      break
-    case 'MM/DD/YYYY':
-      m = a; d = b; y = c
-      break
-    case 'YYYY/MM/DD':
-    case 'YYYY-MM-DD':
-      y = a; m = b; d = c
-      break
-  }
-
-  if (y < 1000 || !isValidIsoDate(y, m, d)) return null
-  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-}
+export { dateFormatExample, formatEventDateInput, parseEventDateInput }
 
 const PRESET_ALARM_MINUTES = ['0', '5', '15', '30', '60', '1440'] as const
 
@@ -391,6 +327,9 @@ export function EventDialog({
   // ---------------------------------------------------------------------------
 
   const isEdit = mode === 'edit' && !!event
+  // A floating event's times are its stored wall clock, which the app keeps in the device zone, so
+  // the form reads and writes them there: they match what the calendar shows in its display zone.
+  const floatingZone = isEdit && event.floating && !event.allDay ? deviceTimezone() : undefined
   const isRecurring = isEdit && !!event.recurrenceRule
   // Delete and save go by whether the event is recurring now: another device may have made it
   // recurring, or single, since the dialog opened.
@@ -430,7 +369,7 @@ export function EventDialog({
   const initialFormTz: string | undefined = initialIsAllDay
     ? undefined
     : isEdit
-      ? (event.timezone ?? userTz)
+      ? (event.timezone ?? floatingZone ?? userTz)
       : userTz
 
   // ---------------------------------------------------------------------------
@@ -485,11 +424,11 @@ export function EventDialog({
   )
   // Active TZ for form fields and subtitle: undefined for all-day (local-midnight)
   // semantics, otherwise the picker's value.
-  const formTz: string | undefined = allDay ? undefined : timezone
+  // A floating event keeps its wall clock until its zone is changed (which makes it zoned).
+  const inputZone = floatingZone && timezone === (event?.timezone ?? defaultTimezone) ? floatingZone : timezone
+  const formTz: string | undefined = allDay ? undefined : inputZone
   const formatTime = makeFormatTime(timeFormat !== '24h', formTz ?? userTz)
-  const allTimezones = (() => {
-    try { return Intl.supportedValuesOf('timeZone') } catch { return ['UTC'] }
-  })()
+  const allTimezones = timezoneOptions(timezone)
 
   useEffect(() => {
     setStartTimeInput(formatEventTimeInput(startTime, timeFormat))
@@ -567,15 +506,20 @@ export function EventDialog({
   useFocusTrap(dialogRef)
 
   // ---------------------------------------------------------------------------
-  // Auto-focus title input on mount
+  // Initial focus: the title for a new event; the dialog itself for an
+  // existing one, so a stray keystroke can't edit its title.
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    // Short delay to ensure the dialog animation has started
+    // Short delay to ensure the dialog animation has started. It also runs
+    // after the focus trap's own first-input focus, so it decides the result.
     const timer = setTimeout(() => {
-      titleRef.current?.focus()
+      if (isEdit) dialogRef.current?.focus()
+      else titleRef.current?.focus()
     }, 50)
     return () => clearTimeout(timer)
+    // Initial focus only: mode does not change while the dialog is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -608,8 +552,8 @@ export function EventDialog({
       return new Date(y, m - 1, d, 0, 0, 0, 0)
     }
     const [h, min] = time.split(':').map(Number)
-    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(timezone) ?? 'UTC')
-  }, [allDay, timezone])
+    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(inputZone) ?? 'UTC')
+  }, [allDay, inputZone])
 
   const endFromInputs = useCallback((dateIso: string, time: string): Date => {
     const [y, m, d] = dateIso.split('-').map(Number)
@@ -620,8 +564,8 @@ export function EventDialog({
       return new Date(y, m - 1, d + 1, 0, 0, 0, 0)
     }
     const [h, min] = time.split(':').map(Number)
-    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(timezone) ?? 'UTC')
-  }, [allDay, timezone])
+    return instantFromWallClock(y, m, d, h, min, resolveTimeZone(inputZone) ?? 'UTC')
+  }, [allDay, inputZone])
 
   const buildStartDate = useCallback(
     (): Date => startFromInputs(startDate, startTime),
@@ -1030,7 +974,8 @@ export function EventDialog({
           role="dialog"
           aria-label={isManagedEvent ? 'Birthday' : isEdit ? 'Edit event' : 'New event'}
           aria-modal="true"
-          className="flex h-full w-full flex-col overflow-hidden bg-[rgb(var(--background))] text-[rgb(var(--foreground))] shadow-2xl shadow-black/25 pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[88vh] sm:w-full sm:max-w-2xl sm:rounded-3xl sm:border sm:border-[rgb(var(--border))] dark:shadow-black/60"
+          tabIndex={-1}
+          className="flex h-full w-full flex-col overflow-hidden focus:outline-none bg-[rgb(var(--background))] text-[rgb(var(--foreground))] shadow-2xl shadow-black/25 pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[88vh] sm:w-full sm:max-w-2xl sm:rounded-3xl sm:border sm:border-[rgb(var(--border))] dark:shadow-black/60"
         >
           {/* Mobile drag handle / swipe indicator */}
           <div className="flex justify-center bg-[rgb(var(--background))] pt-2 sm:hidden" aria-hidden="true">
@@ -1062,7 +1007,7 @@ export function EventDialog({
               <button
                 onClick={() => void handleSave()}
                 disabled={!canSave || saving || !canWrite}
-                className={`shrink-0 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-950/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
+                className={`shrink-0 rounded-full bg-emerald-700 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-950/20 transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
                 title={!canWriteAccount ? 'Subscription required' : !calendarWritable ? 'This calendar is read-only' : undefined}
               >
                 {saving ? 'Saving…' : 'Done'}
@@ -1208,7 +1153,7 @@ export function EventDialog({
                       <div>
                         <input
                           type="text"
-                          inputMode="numeric"
+                          inputMode="text"
                           placeholder={datePlaceholder}
                           value={startDateInput}
                           onChange={handleStartDateChange}
@@ -1248,7 +1193,7 @@ export function EventDialog({
                       <div>
                         <input
                           type="text"
-                          inputMode="numeric"
+                          inputMode="text"
                           placeholder={datePlaceholder}
                           value={endDateInput}
                           onChange={handleEndDateChange}
@@ -1311,7 +1256,6 @@ export function EventDialog({
                         aria-label="Event timezone"
                         className={`min-w-0 flex-1 ${compactFieldClass} ${disabledClass}`}
                       >
-                        {!allTimezones.includes(timezone) && <option value={timezone}>{timezone}</option>}
                         {allTimezones.map((tz) => (
                           <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
                         ))}

@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deserializeTask, type Task } from '@silentsuite/core'
 import TasksPage from '../page'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
@@ -9,6 +9,7 @@ import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
+import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 
 // #295: saving a task from the mobile editor must not rewrite dates the user did not touch.
 // This renders the real Tasks page and editor on the real task store (updateTask and its date
@@ -378,5 +379,55 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
       expect(updateItem).not.toHaveBeenCalled()
       expect(stored()).toMatchObject({ title: 'Timed task', description: REMOTE.description, status: 'completed' })
     })
+  })
+})
+
+describe('Task editor dates follow the date-format preference (WEB-21)', () => {
+  let updateItem: ReturnType<typeof acknowledgedAccount>
+
+  beforeEach(() => {
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useEtebaseStore.setState((state) => ({ domainLoadState: { ...state.domainLoadState, tasks: 'loaded' } }))
+    useAuthStore.setState({ canWrite: () => true } as never)
+    useTaskListStore.setState({
+      lists: [{ id: 'tasks-a', name: 'Work', color: '#3b82f6', visible: true, accessLevel: 2 }],
+      activeListId: 'tasks-a',
+    })
+    useTaskStore.setState(useTaskStore.getInitialState(), true)
+    updateItem = acknowledgedAccount()
+    useLabelSuggestionsStore.setState({ recordUsage: vi.fn(async () => {}) } as never)
+    usePreferencesStore.setState({ dateFormat: 'DD.MM.YYYY' })
+  })
+
+  afterEach(() => {
+    usePreferencesStore.setState({ dateFormat: 'system' })
+  })
+
+  it('shows date-only dates in the preferred format and saves a typed one', async () => {
+    seedTask(['DTSTART;VALUE=DATE:20260530', 'DUE;VALUE=DATE:20260601'])
+    renderWithIntl(<TasksPage />)
+    const dialog = openEditor()
+
+    expect(within(dialog).getByLabelText('Start date')).toHaveValue('30.05.2026')
+    const due = within(dialog).getByLabelText('Due date')
+    expect(due).toHaveValue('01.06.2026')
+
+    fireEvent.change(due, { target: { value: '5.6.2026' } })
+    const { saved } = await saveAndReadContent(dialog, updateItem)
+    expect(saved.due_ical).toEqual({ kind: 'date', value: '20260605' })
+    expect(saved.start_ical).toEqual({ kind: 'date', value: '20260530' })
+  })
+
+  it('blocks Save while a typed date is not valid', () => {
+    seedTask(['DUE;VALUE=DATE:20260601'])
+    renderWithIntl(<TasksPage />)
+    const dialog = openEditor()
+
+    fireEvent.change(within(dialog).getByLabelText('Due date'), { target: { value: '2026-06-05' } })
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Use 09.06.2026 format')
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+
+    fireEvent.change(within(dialog).getByLabelText('Due date'), { target: { value: '05.06.2026' } })
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeEnabled()
   })
 })

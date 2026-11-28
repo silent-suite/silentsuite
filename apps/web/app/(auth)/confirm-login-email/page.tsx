@@ -72,7 +72,7 @@ export default function ConfirmLoginEmailPage() {
         <p>Your login email is now <strong>{result.newLogin}</strong>. Use it next time you sign in.</p>
         <p className="text-[rgb(var(--muted))]">{contactLine(result.contactState)}</p>
         <p className="text-[rgb(var(--muted))]">{DEVICE_NOTE}</p>
-        <Link href="/" className="inline-block text-[rgb(var(--primary))] underline">Open SilentSuite</Link>
+        <Link href="/" className="inline-block text-[rgb(var(--primary-text))] underline">Open SilentSuite</Link>
       </div>
     )
   } else if (result?.kind === 'expired') {
@@ -95,7 +95,7 @@ export default function ConfirmLoginEmailPage() {
           type="button"
           onClick={() => { void confirm() }}
           disabled={busy}
-          className="w-full rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+          className="w-full rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
         >
           {busy ? 'Confirming...' : 'Confirm change'}
         </button>

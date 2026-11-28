@@ -7,15 +7,11 @@
  */
 
 ext {
-    kotlin_version = '2.2.20'
-    gradle_version = '8.11.1'
     compileSdkVersion = 36
-    buildToolsVersion = '36.0.0'
     // AGP 8.11 supports desugar_jdk_libs 2.1.x (AGP 8.0+ is required). Keep
     // every desugaring consumer on one runtime API surface: Fragment 1.4.1
     // calls DesugarCollections.synchronizedMap(), which 1.1.x lacks.
     desugarJdkLibsVersion = '2.1.5'
-    keeperVersion = '0.16.1'
 
     // cert4android is app-internal and shares SilentSuite's API-29 product floor.
     // Keep the Material 1.13-compatible AndroidX/test cohort explicit so resolved
