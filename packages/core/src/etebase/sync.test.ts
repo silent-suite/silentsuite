@@ -839,4 +839,89 @@ describe('SyncEngine', () => {
       engine.stop();
     });
   });
+
+  // ── Rejected token ──
+
+  describe('rejected token (401)', () => {
+    function unauthorized() {
+      const err = new Error('Invalid token.');
+      err.name = 'UnauthorizedError';
+      return err;
+    }
+
+    it('ends the cycle in error, not synced, when the collection fetch is refused', async () => {
+      const { account, mockCollectionManager, mockItemManager } = createMockAccount();
+      mockCollectionManager.fetch.mockRejectedValue(unauthorized());
+
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+      const statuses: SyncStatus[] = [];
+      engine.onStatusChange((s) => statuses.push(s));
+      const authFailures = vi.fn();
+      engine.onAuthFailure(authFailures);
+
+      // @ts-expect-error - mock account doesn't fully implement Etebase.Account
+      await engine.start(account);
+
+      expect(engine.getStatus()).toBe('error');
+      expect(statuses).not.toContain('synced');
+      expect(authFailures).toHaveBeenCalledTimes(1);
+      expect(mockItemManager.list).not.toHaveBeenCalled();
+      engine.stop();
+    });
+
+    it('reports a refused item list from syncNow as an auth failure', async () => {
+      const { account, mockItemManager } = createMockAccount();
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+      engine.setStoken('col-1', 'stoken-0');
+      // @ts-expect-error - mock
+      await engine.start(account);
+      expect(engine.getStatus()).toBe('synced');
+
+      const authFailures = vi.fn();
+      engine.onAuthFailure(authFailures);
+      mockItemManager.list.mockRejectedValue(unauthorized());
+      await engine.syncNow();
+
+      expect(engine.getStatus()).toBe('error');
+      expect(authFailures).toHaveBeenCalledTimes(1);
+      engine.stop();
+    });
+
+    it('stops retrying a refused token until a manual sync succeeds', async () => {
+      const { account, mockCollectionManager, mockItemManager } = createMockAccount();
+      mockCollectionManager.fetch.mockRejectedValue(unauthorized());
+      const engine = new SyncEngine(defaultOptions({ pollIntervalMs: 60_000 }));
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(mockCollectionManager.fetch).toHaveBeenCalledTimes(1);
+
+      mockCollectionManager.fetch.mockResolvedValue({ uid: 'col-1' });
+      await engine.syncNow();
+      expect(engine.getStatus()).toBe('synced');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockItemManager.list).toHaveBeenCalledTimes(2);
+      engine.stop();
+    });
+
+    it('still treats other collection fetch failures as a missing collection', async () => {
+      const { account, mockCollectionManager } = createMockAccount();
+      mockCollectionManager.fetch.mockRejectedValue(new Error('Not found'));
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+      const authFailures = vi.fn();
+      engine.onAuthFailure(authFailures);
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+
+      expect(engine.getStatus()).toBe('synced');
+      expect(authFailures).not.toHaveBeenCalled();
+      engine.stop();
+    });
+  });
 });

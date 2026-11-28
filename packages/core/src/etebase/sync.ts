@@ -20,6 +20,15 @@ export interface StokenAdvanceEvent {
 
 type StokenAdvanceHandler = (event: StokenAdvanceEvent) => void;
 
+/**
+ * True when the sync server refused the account's token (HTTP 401), e.g.
+ * after the session was revoked or expired. Retrying cannot fix it; the user
+ * has to sign in again.
+ */
+export function isUnauthorizedError(err: unknown): boolean {
+  return (err as { name?: unknown } | null)?.name === 'UnauthorizedError';
+}
+
 interface TrackedCollection {
   collectionType: CollectionType;
   collectionUid: string;
@@ -48,6 +57,9 @@ export class SyncEngine {
   private changeHandlers: Set<SyncEventHandler> = new Set();
   private statusHandlers: Set<StatusChangeHandler> = new Set();
   private stokenAdvanceHandlers: Set<StokenAdvanceHandler> = new Set();
+  private authFailureHandlers: Set<() => void> = new Set();
+  /** Set while the server refuses the token; polling stays off until a sync succeeds. */
+  private authFailed = false;
   private reconnectAttempt = 0;
   private isDestroyed = false;
   private paused = false;
@@ -70,6 +82,7 @@ export class SyncEngine {
     this.account = account;
     this.isDestroyed = false;
     this.reconnectAttempt = 0;
+    this.authFailed = false;
     this.setStatus('syncing');
 
     try {
@@ -173,6 +186,18 @@ export class SyncEngine {
   }
 
   /**
+   * Subscribe to auth failures: a sync cycle ended because the server
+   * refused the account's token. The status is 'error' and polling stops
+   * until a later sync succeeds. Returns an unsubscribe function.
+   */
+  onAuthFailure(handler: () => void): () => void {
+    this.authFailureHandlers.add(handler);
+    return () => {
+      this.authFailureHandlers.delete(handler);
+    };
+  }
+
+  /**
    * Manually trigger a sync cycle.
    */
   async syncNow(): Promise<void> {
@@ -182,6 +207,10 @@ export class SyncEngine {
       await this.syncAll();
       this.setStatus('synced');
       this.reconnectAttempt = 0;
+      if (this.authFailed) {
+        this.authFailed = false;
+        this.schedulePoll();
+      }
     } catch (err) {
       this.handleSyncError(err);
     }
@@ -265,6 +294,7 @@ export class SyncEngine {
     );
 
     // Log individual collection failures without blocking others
+    let unauthorized: unknown = null;
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       if (result && result.status === 'rejected') {
@@ -272,8 +302,11 @@ export class SyncEngine {
           `[SyncEngine] Failed to sync collection ${collections[i]?.collectionUid}:`,
           result.reason,
         );
+        if (isUnauthorizedError(result.reason)) unauthorized = result.reason;
       }
     }
+    // A refused token fails every collection: the cycle did not sync.
+    if (unauthorized) throw unauthorized;
   }
 
   private async syncCollection(tracked: TrackedCollection): Promise<void> {
@@ -284,7 +317,8 @@ export class SyncEngine {
     let collection: Etebase.Collection;
     try {
       collection = await collectionManager.fetch(tracked.collectionUid);
-    } catch {
+    } catch (err) {
+      if (isUnauthorizedError(err)) throw err;
       // Collection may not exist yet
       return;
     }
@@ -304,7 +338,7 @@ export class SyncEngine {
           stoken: tracked.stoken ?? undefined,
         })) as { data: Etebase.Item[]; stoken: string | null; done: boolean };
       } catch (err) {
-        if (tracked.stoken !== null && this.isStokenStaleError(err)) {
+        if (tracked.stoken !== null && !isUnauthorizedError(err) && this.isStokenStaleError(err)) {
           console.warn(
             `[SyncEngine] Stoken rejected for ${tracked.collectionUid}, falling back to full fetch`,
           );
@@ -381,7 +415,7 @@ export class SyncEngine {
   }
 
   private schedulePoll(): void {
-    if (this.isDestroyed || this.paused) return;
+    if (this.isDestroyed || this.paused || this.authFailed) return;
 
     this.pollTimer = setTimeout(() => {
       this.syncNow()
@@ -402,8 +436,26 @@ export class SyncEngine {
     }, this.options.pollIntervalMs);
   }
 
-  private handleSyncError(_err: unknown): void {
+  private handleSyncError(err: unknown): void {
     this.setStatus('error');
+
+    if (isUnauthorizedError(err)) {
+      // Retrying a refused token cannot succeed: stop polling and let the
+      // app ask the user to sign in again.
+      this.authFailed = true;
+      if (this.pollTimer) {
+        clearTimeout(this.pollTimer);
+        this.pollTimer = null;
+      }
+      for (const handler of this.authFailureHandlers) {
+        try {
+          handler();
+        } catch {
+          // Don't let subscriber errors break the engine
+        }
+      }
+      return;
+    }
 
     if (this.isDestroyed) return;
 

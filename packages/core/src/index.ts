@@ -78,7 +78,7 @@ export type {
 } from './etebase/sharing.js';
 
 // Sync engine
-export { SyncEngine } from './etebase/sync.js';
+export { SyncEngine, isUnauthorizedError } from './etebase/sync.js';
 export type { StokenAdvanceEvent } from './etebase/sync.js';
 
 // Calendar event model

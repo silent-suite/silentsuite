@@ -177,8 +177,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         }
         assertCurrentAccountEpoch(accountEpoch)
 
-        setSyncStatus('synced')
-        setLastSynced(new Date())
+        // A refused token leaves nothing synced: report the error, not success.
+        const etebase = useEtebaseStore.getState()
+        if (etebase.restoreBlocked || etebase.syncEngine?.getStatus?.() === 'error') {
+          setSyncStatus('error')
+          setError('Sync error occurred')
+        } else {
+          setSyncStatus('synced')
+          setLastSynced(new Date())
+        }
         safeLogSyncTiming('initial-sync-complete', initStartedAt)
         if (replayed > 0) useSyncStore.getState().simulateSyncCycle()
       } catch (err) {
