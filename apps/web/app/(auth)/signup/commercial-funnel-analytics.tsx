@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_PAYMENT_RETURN_PATHS, SIGNUP_PAYMENT_RETURN_STEPS, type CommercialEventPayload, type SignupStep } from '@/app/lib/public-analytics'
+import { buildCheckoutInitiatedPayload, buildCheckoutReturnedPayload, buildInPageCheckoutReturnedPayload, buildPlanSelectedPayload, buildSignupStepPayload, SIGNUP_PAYMENT_RETURN_PATHS, SIGNUP_PAYMENT_RETURN_STEPS, type CommercialEventPayload, type SignupStep } from '@/app/lib/public-analytics'
 import type { AnnualOffer } from '@/app/lib/billing-v2'
 
 // Same-origin relay (app/api/event/route.ts); the browser never contacts the analytics host.
@@ -18,7 +18,8 @@ export function sendCommercialEvent(payload: CommercialEventPayload, beacon = na
   if (!shouldSendCommercialAnalytics(location, payload, enabled)) return
   const body = JSON.stringify(payload)
   if (beacon && beacon(ANALYTICS_RELAY_ENDPOINT, new Blob([body], { type: 'application/json' }))) return
-  void fetcher(ANALYTICS_RELAY_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true })
+  // A failed measurement is not an error the visitor or the error reporter should see.
+  void Promise.resolve(fetcher(ANALYTICS_RELAY_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true })).catch(() => undefined)
 }
 
 export function CheckoutReturnAnalytics({ outcome, paymentMethod }: { outcome: 'returned' | 'cancelled' | 'failed' | 'pending'; paymentMethod: 'stripe' | 'btcpay' | 'unknown' }) {
@@ -28,6 +29,21 @@ export function CheckoutReturnAnalytics({ outcome, paymentMethod }: { outcome: '
 }
 export function trackPlanSelected(offer: AnnualOffer) { sendCommercialEvent(buildPlanSelectedPayload(offer)) }
 export function trackCheckoutInitiated(offer: AnnualOffer, paymentMethod: 'stripe' | 'btcpay') { sendCommercialEvent(buildCheckoutInitiatedPayload(offer, paymentMethod)) }
+let inPageCheckoutReturnedSent = false
+/**
+ * A checkout that finished on /signup itself: a card confirmed in Stripe's
+ * dialog, or a Bitcoin settlement seen by polling. Sent at most once per
+ * document, and a failing sender never interrupts the paid signup.
+ */
+export function trackInPageCheckoutReturned(paymentMethod: 'stripe' | 'btcpay', pathname = window.location.pathname, send: (payload: CommercialEventPayload) => void = sendCommercialEvent) {
+  if (inPageCheckoutReturnedSent || pathname !== '/signup') return
+  inPageCheckoutReturnedSent = true
+  try {
+    send(buildInPageCheckoutReturnedPayload(paymentMethod))
+  } catch {
+    // Measurement only.
+  }
+}
 
 /**
  * Builds the step event for the page it is recorded on: any step on /signup,

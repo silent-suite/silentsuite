@@ -171,7 +171,7 @@ class LoginCredentialsChangeFragment : DialogFragment() {
 
         override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
             return MaterialAlertDialogBuilder(requireActivity())
-                    .setTitle(R.string.setting_up_encryption)
+                    .setTitle(R.string.login_failed_title)
                     .setIcon(R.drawable.ic_error_dark)
                     .setMessage(requireArguments().getInt(KEY_MESSAGE_RES))
                     .setNeutralButton(R.string.login_view_logs) { _, _ ->

@@ -96,7 +96,7 @@ export default function AuthLayout({
               <span className="h-8 w-8 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
             </div>
             <span className="font-semibold text-lg tracking-[-0.04em] transition-colors">
-              <span className="text-emerald-500">app.</span><span className={isDark ? 'text-white' : 'text-gray-900'}>silentsuite</span><span className="text-emerald-500">.io</span>
+              <span className="text-[rgb(var(--primary))]">app.</span><span className={isDark ? 'text-white' : 'text-gray-900'}>silentsuite</span><span className="text-[rgb(var(--primary))]">.io</span>
             </span>
           </div>
           <div className="mt-2 sm:mt-3 flex items-center gap-1.5">

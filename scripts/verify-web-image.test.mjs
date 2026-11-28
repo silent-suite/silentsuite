@@ -160,7 +160,7 @@ test('characterization: actual hosted build arguments validate in memory and rep
     NEXT_PUBLIC_BILLING_API_URL: 'https://api.silentsuite.io',
     NEXT_PUBLIC_ETEBASE_SERVER_URL: 'https://server.silentsuite.io',
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: canary, NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED: 'true',
-    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_SENTRY_DSN: dsn, NEXT_PUBLIC_WEB_VITALS_ENABLED: 'true', NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
+    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_SENTRY_DSN: dsn, NEXT_PUBLIC_WEB_VITALS_ENABLED: 'true',
     NEXT_PUBLIC_SELF_HOSTED: 'false', NEXT_PUBLIC_OWNER_REGISTRATION: 'false', VCS_REF: sha,
   }
   const overrides = Object.entries(actual).map(([name, value]) => `${name}=${value}`).join('\n')
@@ -187,7 +187,7 @@ test('characterization: actual hosted build arguments validate in memory and rep
   assert.equal(effectiveBuildArgs(dockerfile, '').find(arg => arg.name === 'NEXT_PUBLIC_SENTRY_DSN').value, '')
   assert.equal(effectiveBuildArgs(dockerfile, '').find(arg => arg.name === 'NEXT_PUBLIC_WEB_VITALS_ENABLED').value, 'false')
   assert.equal(safe.buildArgs.find(arg => arg.name === 'NEXT_PUBLIC_WEB_VITALS_ENABLED').value, 'true')
-  for (const name of ['NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION']) {
+  for (const name of ['NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION']) {
     assert.equal(safe.buildArgs.find(arg => arg.name === name).value, 'false')
   }
   // The existing CI report also omits the key argument, including a Dockerfile default.
@@ -206,7 +206,7 @@ test('characterization: mismatched production argument vectors and key types fai
     NEXT_PUBLIC_BILLING_API_URL: 'https://api.silentsuite.io',
     NEXT_PUBLIC_ETEBASE_SERVER_URL: 'https://server.silentsuite.io',
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: canary, NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED: 'true',
-    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_SENTRY_DSN: dsn, NEXT_PUBLIC_WEB_VITALS_ENABLED: 'true', NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
+    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_SENTRY_DSN: dsn, NEXT_PUBLIC_WEB_VITALS_ENABLED: 'true',
     NEXT_PUBLIC_SELF_HOSTED: 'false', NEXT_PUBLIC_OWNER_REGISTRATION: 'false', VCS_REF: sha,
   }
   const encode = values => Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n')
@@ -220,7 +220,7 @@ test('characterization: mismatched production argument vectors and key types fai
   for (const publishableKey of [undefined, null, 42, '', new String(canary), canary + '\n', otherKey]) {
     cases.push([dockerfile, overrides, { ...proof, publishableKey }])
   }
-  for (const name of ['NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION', 'NEXT_PUBLIC_WEB_VITALS_ENABLED']) {
+  for (const name of ['NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION', 'NEXT_PUBLIC_WEB_VITALS_ENABLED']) {
     cases.push([dockerfile.replace(`ARG ${name}=false`, `ARG ${name}=true`), overrides, proof])
   }
   cases.push([dockerfile, overrides + '\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=' + otherKey, proof])

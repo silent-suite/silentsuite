@@ -819,7 +819,7 @@ export default function NotesPage() {
       <section className="mx-auto max-w-lg space-y-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6">
         <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{t('disabledTitle')}</h2>
         <p className="text-sm text-[rgb(var(--muted))]">{t('disabledDescription')}</p>
-        <Link href="/settings/experimental" className="inline-block text-sm text-[rgb(var(--primary))] underline">{t('openExperimentalSettings')}</Link>
+        <Link href="/settings/experimental" className="inline-block text-sm text-[rgb(var(--primary-text))] underline">{t('openExperimentalSettings')}</Link>
       </section>
     )
   }
@@ -1042,7 +1042,7 @@ function NotesPageBody() {
             disabled={!canCreateNote}
             aria-describedby={canWrite && !isOnline ? offlineNoticeId : undefined}
             title={!canWrite ? t('subscriptionRequired') : !isOnline ? t('newNoteOffline') : newNoteTarget ? t('newNoteIn', { name: newNoteTarget.name }) : !isLoading ? t('noWritableNotebook') : undefined}
-            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canCreateNote ? 'cursor-not-allowed opacity-50' : 'hover:bg-emerald-500'}`}
+            className={`flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canCreateNote ? 'cursor-not-allowed opacity-50' : 'hover:bg-emerald-800'}`}
           >
             <Plus className="h-4 w-4" />
             {t('newNote')}

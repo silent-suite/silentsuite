@@ -1,1 +1,0 @@
-* Fix f-droid build

@@ -10,7 +10,30 @@ export function resolveUserTimezone(preferred: string | undefined): string {
       // fall through
     }
   }
+  return deviceTimezone()
+}
+
+/** The IANA zone this browser/device runs in. */
+export function deviceTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
+}
+
+/**
+ * Timezone choices for a picker. `Intl.supportedValuesOf('timeZone')` leaves out
+ * "UTC" and legacy aliases, so a select bound to such a value would show the first
+ * entry instead. UTC always comes first, and `current` is kept when it is not listed.
+ */
+export function timezoneOptions(current?: string): string[] {
+  let supported: string[]
+  try {
+    supported = Intl.supportedValuesOf('timeZone')
+  } catch {
+    supported = []
+  }
+  const rest = supported.filter((tz) => tz !== 'UTC')
+  const head = ['UTC']
+  if (current && current !== 'UTC' && !rest.includes(current)) head.unshift(current)
+  return [...head, ...rest]
 }
 
 /** Wall-clock components of `date` as observed in `tz`. */
@@ -90,4 +113,19 @@ export function shortTimezoneLabel(tz: string, refDate: Date = new Date()): stri
   } catch {
     return tz
   }
+}
+
+/** Readable zone name for labels, e.g. "Europe/Berlin (GMT+1)" or "UTC". */
+export function timezoneDisplayName(tz: string, refDate: Date = new Date()): string {
+  const name = tz.replace(/_/g, ' ')
+  const short = shortTimezoneLabel(tz, refDate)
+  return short === tz ? name : `${name} (${short})`
+}
+
+/** Whether clocks in `a` and `b` read differently at `refDate`. */
+export function zonesShowDifferentTimes(a: string, b: string, refDate: Date = new Date()): boolean {
+  if (a === b) return false
+  const pa = partsInZone(refDate, a)
+  const pb = partsInZone(refDate, b)
+  return pa.day !== pb.day || pa.hour !== pb.hour || pa.minute !== pb.minute
 }

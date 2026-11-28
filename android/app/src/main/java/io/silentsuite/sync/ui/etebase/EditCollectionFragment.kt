@@ -9,6 +9,7 @@ import android.view.*
 import android.widget.EditText
 import android.widget.Toast
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputLayout
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
@@ -121,6 +122,7 @@ class EditCollectionFragment : Fragment() {
 
     private fun initUi(v: View) {
         val title = v.findViewById<EditText>(R.id.display_name)
+        val titleLayout = v.findViewById<TextInputLayout>(R.id.display_name_layout)
         val desc = v.findViewById<EditText>(R.id.description)
         title.isSaveEnabled = false
         desc.isSaveEnabled = false
@@ -135,7 +137,7 @@ class EditCollectionFragment : Fragment() {
         val colorSquare = v.findViewById<View>(R.id.color)
         when (cachedCollection.collectionType) {
             Constants.ETEBASE_TYPE_CALENDAR -> {
-                title.setHint(R.string.create_calendar_display_name_hint)
+                titleLayout.placeholderText = getString(R.string.create_calendar_display_name_hint)
 
                 val color = draft.color
                 colorSquare.setBackgroundColor(color)
@@ -151,7 +153,7 @@ class EditCollectionFragment : Fragment() {
                 }
             }
             Constants.ETEBASE_TYPE_TASKS -> {
-                title.setHint(R.string.create_tasklist_display_name_hint)
+                titleLayout.placeholderText = getString(R.string.create_tasklist_display_name_hint)
 
                 val color = draft.color
                 colorSquare.setBackgroundColor(color)
@@ -167,13 +169,13 @@ class EditCollectionFragment : Fragment() {
                 }
             }
             Constants.ETEBASE_TYPE_ADDRESS_BOOK -> {
-                title.setHint(R.string.create_addressbook_display_name_hint)
+                titleLayout.placeholderText = getString(R.string.create_addressbook_display_name_hint)
 
                 val colorGroup = v.findViewById<View>(R.id.color_group)
                 colorGroup.visibility = View.GONE
             }
             Constants.ETEBASE_TYPE_NOTES -> {
-                title.setHint(R.string.create_notebook_display_name_hint)
+                titleLayout.placeholderText = getString(R.string.create_notebook_display_name_hint)
 
                 val color = draft.color
                 colorSquare.setBackgroundColor(color)
@@ -196,6 +198,7 @@ class EditCollectionFragment : Fragment() {
         inflater.inflate(R.menu.fragment_edit_collection, menu)
         if (isCreating) {
             menu.findItem(R.id.on_delete).setVisible(false)
+            menu.findItem(R.id.on_save).setTitle(R.string.create_collection_submit)
         }
     }
 

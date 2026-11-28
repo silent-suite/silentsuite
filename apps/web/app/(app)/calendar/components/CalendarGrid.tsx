@@ -8,6 +8,7 @@ import {
   type CalendarEventExternal,
 } from '@schedule-x/calendar'
 import { createEventsServicePlugin } from '@schedule-x/events-service'
+import { createCurrentTimePlugin } from '@schedule-x/current-time'
 import { useTheme } from 'next-themes'
 import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
@@ -19,6 +20,7 @@ import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 import { startOfWeek, endOfWeek } from '@/app/lib/date'
 import {
   expandGridEventsForRange,
+  floatingFromDisplay,
   getRequiredTimedHourBounds,
   isTimeGridGestureEligible,
   toScheduleXProjection,
@@ -33,6 +35,7 @@ import {
   toScheduleXDayBoundariesInternal,
 } from '../lib/calendar-day-boundaries'
 
+import { CHIP_SURFACES, readableTextColor } from '@/app/lib/readable-text-color'
 import '@schedule-x/theme-default/dist/index.css'
 
 // Temporal polyfill — patches globalThis.Temporal and registers types
@@ -280,6 +283,18 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
   }, [calendars])
 
   const [eventsPlugin] = useState(() => createEventsServicePlugin())
+  // Draws the "now" line in today's column, in the calendar's configured timezone.
+  const [currentTimePlugin] = useState(() => createCurrentTimePlugin())
+  // Schedule-X 4.3.1 does not tell plugins when we push a new timezone or day
+  // boundaries through the config signals, so redraw the line ourselves.
+  const refreshCurrentTimeLine = useCallback(() => {
+    if (!currentTimePlugin.$app) return
+    try {
+      currentTimePlugin.onTimezoneChange()
+    } catch {
+      // The line is decorative; never let it break the grid.
+    }
+  }, [currentTimePlugin])
 
   // Keep the browser-local range only for existing pointer-coordinate math.
   const viewRange = useMemo(() => getViewRange(currentDate, effectiveView, firstDayOfWeek), [currentDate, effectiveView, firstDayOfWeek])
@@ -292,8 +307,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
     [visibleDates, userTz],
   )
   const expansion = useMemo(
-    () => expandGridEventsForRange(events, instantViewRange),
-    [events, instantViewRange],
+    () => expandGridEventsForRange(events, instantViewRange, userTz),
+    [events, instantViewRange, userTz],
   )
   const displayEvents = expansion.events
   const projectionView = effectiveView === 'month' ? 'month' : 'week'
@@ -337,8 +352,12 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         const cls = `sx-cal-color-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
         const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#10b981'
         // Schedule-X nests text spans inside event chips; keep descendants readable on custom colors.
-        return `.${cls} { background-color: ${safeColor} !important; color: #fff !important; }
-.${cls} * { color: #fff !important; }`
+        // A translucent colour shows the page through it, so each theme judges its own composite.
+        const textColor = readableTextColor(safeColor, CHIP_SURFACES.light)
+        const darkTextColor = readableTextColor(safeColor, CHIP_SURFACES.dark)
+        return `.${cls} { background-color: ${safeColor} !important; color: ${textColor} !important; }
+.${cls} * { color: ${textColor} !important; }
+.dark .${cls}, .dark .${cls} * { color: ${darkTextColor} !important; }`
       })
       .join('\n')
     // Keep the shared style node in place across multiple CalendarGrid instances
@@ -516,7 +535,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       eventOverlap: false,
       nDays: effectiveWeekDays,
     },
-    plugins: [eventsPlugin],
+    plugins: [eventsPlugin, currentTimePlugin],
     callbacks: {
       onEventClick: handleEventClick,
       onClickDateTime: handleClickDateTime,
@@ -545,11 +564,12 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       const tzSignal = app?.config?.timezone
       if (tzSignal && tzSignal.value !== userTz) {
         tzSignal.value = userTz
+        refreshCurrentTimeLine()
       }
     } catch {
       // Schedule-X internals may not be ready
     }
-  }, [calendar, userTz])
+  }, [calendar, userTz, refreshCurrentTimeLine])
 
   // Push first-day-of-week changes to the Schedule-X config signal. Week/month
   // use the user's preference; mobile 3-day mode anchors the first rendered
@@ -621,11 +641,12 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       const next = toScheduleXDayBoundariesInternal(displayDayStartHour, displayDayEndHour)
       if (boundariesSignal) {
         boundariesSignal.value = next
+        refreshCurrentTimeLine()
       }
     } catch {
       // Schedule-X internals may not be ready
     }
-  }, [calendar, displayDayStartHour, displayDayEndHour])
+  }, [calendar, displayDayStartHour, displayDayEndHour, refreshCurrentTimeLine])
 
   // Sync view AND date changes from store → Schedule-X via internal API.
   // CalendarApp has NO public navigation methods. We access the private $app
@@ -942,7 +963,10 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       const durationHours = moveStart.duration / (60 * 60 * 1000)
       const maxStartHour = displayDayEndHour - durationHours
       const clampedHour = Math.max(displayDayStartHour, Math.min(snappedHour, maxStartHour))
-      const newStart = buildDateFromHour(dayInfo.date, clampedHour)
+      const droppedStart = buildDateFromHour(dayInfo.date, clampedHour)
+      // A floating event keeps the wall clock it was dropped at, as the grid shows it.
+      const floating = displayEvents.find((event) => event.id === moveStart.eventId)?.floating
+      const newStart = floating ? floatingFromDisplay(droppedStart, userTz) : droppedStart
       const newEnd = new Date(newStart.getTime() + moveStart.duration)
 
       if (newStart.getTime() !== moveStart.originalStart.getTime()) {
@@ -967,7 +991,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         isDragMovingRef.current = false
       }, 100)
     },
-    [getDayColumnInfo, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, displayDayStartHour, displayDayEndHour],
+    [getDayColumnInfo, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, displayDayStartHour, displayDayEndHour, displayEvents, userTz],
   )
 
   // Track mouse position for event click anchoring + drag-to-select start
@@ -1334,7 +1358,9 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         const origStartHour = origStart.getHours() + origStart.getMinutes() / 60
         const minEndHour = origStartHour + 0.5
         const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, displayDayEndHour))
-        const newEnd = buildDateFromHour(origStart, clampedEndHour)
+        const resizedEnd = buildDateFromHour(origStart, clampedEndHour)
+        const floating = displayEvents.find((event) => event.id === resizeStart.eventId)?.floating
+        const newEnd = floating ? floatingFromDisplay(resizedEnd, userTz) : resizedEnd
 
         if (newEnd.getTime() !== resizeStart.originalEnd.getTime()) {
           if (resizeStart.eventId.includes('__')) {
@@ -1407,7 +1433,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         isDraggingRef.current = false
       }, 100)
     },
-    [onSlotClick, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, completeDragMove, displayDayEndHour],
+    [onSlotClick, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, completeDragMove, displayDayEndHour, displayEvents, userTz],
   )
 
   // ESC key handler for cancelling drag-to-move and drag-to-resize
@@ -1698,7 +1724,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
           >
             {dragSelection.startTime && dragSelection.endTime && (
               <>
-                <span className="text-[11px] font-medium text-[rgb(var(--primary))] leading-none">
+                <span className="text-[11px] font-medium text-[rgb(var(--primary-text))] leading-none">
                   {dragSelection.startTime.toLocaleTimeString('en-US', {
                     hour: 'numeric',
                     minute: '2-digit',
@@ -1706,7 +1732,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
                     timeZone: userTz,
                   })}
                 </span>
-                <span className="text-[11px] font-medium text-[rgb(var(--primary))] leading-none self-end">
+                <span className="text-[11px] font-medium text-[rgb(var(--primary-text))] leading-none self-end">
                   {dragSelection.endTime.toLocaleTimeString('en-US', {
                     hour: 'numeric',
                     minute: '2-digit',
@@ -1783,7 +1809,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
               setUndoToast(null)
               if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
             }}
-            className="font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
+            className="font-medium text-emerald-300 hover:text-emerald-200 dark:text-emerald-800 dark:hover:text-emerald-900 transition-colors"
           >
             Undo
           </button>

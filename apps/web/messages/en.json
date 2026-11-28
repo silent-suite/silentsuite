@@ -56,7 +56,15 @@
     "manageAddressBooks": "Manage address books",
     "manageTaskLists": "Manage task lists",
     "manageNotebooks": "Manage notebooks",
-    "contactCount": "{count, plural, one {# contact} other {# contacts}}"
+    "contactCount": "{count, plural, one {# contact} other {# contacts}}",
+    "tasksLoadFailedTitle": "Couldn't load your tasks",
+    "tasksLoadFailedOffline": "You're offline. Your tasks will show here when you're back online.",
+    "tasksLoadFailedDescription": "Something went wrong while loading them. Your tasks are safe.",
+    "tasksLoadFailedRetry": "Try again"
+  },
+  "CalendarTimezone": {
+    "timesIn": "Times in {zone}",
+    "timesInWithDevice": "Times in {zone}, this device: {device}"
   },
   "Notes": {
     "title": "Notes",

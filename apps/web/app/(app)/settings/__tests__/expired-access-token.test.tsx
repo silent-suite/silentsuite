@@ -49,14 +49,16 @@ describe('Settings billing reads after the 15-minute access token expires', () =
     vi.unstubAllGlobals()
   })
 
-  it('Subscription refreshes once and shows the plan instead of the unavailable view', async () => {
+  it('Subscription refreshes once and shows the trial instead of the unavailable view', async () => {
     const refreshSession = routeBilling('/subscription', subscription, true)
     render(<SubscriptionPage />)
     await flush()
     expect(refreshSession).toHaveBeenCalledTimes(1)
     expect(calls('https://billing.test/subscription')).toBe(2)
     expect(screen.queryByText('Unable to load subscription details.')).not.toBeInTheDocument()
-    expect(screen.getByText('Early annual')).toBeInTheDocument()
+    // Next to a purchase action the plan name comes from the offer (SIGNUP-03), which this
+    // fixture doesn't serve, so the loaded trial row stands in for the plan.
+    expect(screen.getByText('7-day trial (no card)')).toBeInTheDocument()
   })
 
   it('Subscription keeps the unavailable view without a retry when the refresh fails', async () => {
@@ -75,6 +77,9 @@ describe('Settings billing reads after the 15-minute access token expires', () =
     expect(refreshSession).toHaveBeenCalledTimes(1)
     expect(calls('https://billing.test/account')).toBe(2)
     expect(screen.getByText('trialing no card')).toBeInTheDocument()
+    // The row shows a status, not a plan name (WEB-13).
+    expect(screen.getByText('Status')).toBeInTheDocument()
+    expect(screen.queryByText('Plan')).not.toBeInTheDocument()
   })
 })
 
@@ -125,7 +130,9 @@ describe('wired: a 7-day no-card trial opens Settings after its access token exp
     await flush()
     expect(calls('https://billing.test/auth/refresh')).toBe(1)
     expect(screen.queryByText('Unable to load subscription details.')).not.toBeInTheDocument()
-    expect(screen.getByText('Early annual')).toBeInTheDocument()
+    // Next to a purchase action the plan name comes from the offer (SIGNUP-03), which this
+    // fixture doesn't serve, so the loaded trial row stands in for the plan.
+    expect(screen.getByText('7-day trial (no card)')).toBeInTheDocument()
     expect(useAuthStore.getState().user?.id).toBe(user.id)
   })
 

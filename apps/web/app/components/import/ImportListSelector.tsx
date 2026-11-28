@@ -68,7 +68,7 @@ export default function ImportListSelector({
             />
             <span className="flex-1 text-left">{list.name}</span>
             {selectedId === list.id && (
-              <Check className="h-4 w-4 text-[rgb(var(--primary))]" />
+              <Check className="h-4 w-4 text-[rgb(var(--primary-text))]" />
             )}
           </button>
         ))}
@@ -94,7 +94,7 @@ export default function ImportListSelector({
               }}
               placeholder={`New ${label.toLowerCase()} name`}
               autoFocus
-              className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-1.5 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:border-[rgb(var(--primary))] focus:outline-none"
+              className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-1.5 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:border-[rgb(var(--focus-ring))] focus:outline-none"
             />
             <div className="flex items-center gap-1.5">
               {PRESET_COLORS.map((color) => (
@@ -115,7 +115,7 @@ export default function ImportListSelector({
                 type="button"
                 onClick={handleCreate}
                 disabled={!newName.trim()}
-                className="rounded-md bg-[rgb(var(--primary))] px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
+                className="rounded-md bg-[rgb(var(--primary-strong))] px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-[rgb(var(--primary-strong-hover))] disabled:opacity-50"
               >
                 Create
               </button>

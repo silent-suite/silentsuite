@@ -168,6 +168,7 @@
             android:visibility="gone">
 
             <TextView
+                android:id="@+id/setup_calendar_outcome"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:drawableStart="@drawable/ic_calendar_outline"
@@ -177,6 +178,7 @@
                 android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
 
             <TextView
+                android:id="@+id/setup_contacts_outcome"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/spacing_8"
@@ -187,6 +189,7 @@
                 android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
 
             <TextView
+                android:id="@+id/setup_tasks_outcome"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/spacing_8"
@@ -217,6 +220,15 @@
                 android:text="@string/post_login_permission_privacy"
                 android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/setup_notification_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_12"
+            android:text="@string/post_login_ready_notifications"
+            android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/setup_status"

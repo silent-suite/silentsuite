@@ -180,7 +180,7 @@ class DetectConfigurationFragment : DialogFragment() {
 
         override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
             return MaterialAlertDialogBuilder(requireActivity())
-                    .setTitle(R.string.setting_up_encryption)
+                    .setTitle(R.string.login_failed_title)
                     .setIcon(R.drawable.ic_error_dark)
                     .setMessage(requireArguments().getInt(KEY_MESSAGE_RES))
                     .setPositiveButton(android.R.string.ok) { dialog, which ->

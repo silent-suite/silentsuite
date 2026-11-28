@@ -152,6 +152,15 @@ plain domain (`https://sync.example.com`) in your other apps.
 
 Your data is end-to-end encrypted. The server never sees your plaintext calendar entries, contacts, or tasks.
 
+## 5. Close Signups
+
+The server ships with `ETEBASE_DISABLE_SIGNUP=false` so you can register the first account from the app. Close signups as soon as that account exists, because anyone who reaches your server URL can otherwise create an account:
+
+```bash
+cd silentsuite-server
+./close-signups.sh
+```
+
 ## Next Steps
 
 - [Troubleshooting](./troubleshooting.md) -- common install, reverse proxy, and health-check problems.

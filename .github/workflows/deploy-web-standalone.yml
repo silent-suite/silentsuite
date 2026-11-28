@@ -135,7 +135,6 @@ jobs:
             NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true
             NEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
             NEXT_PUBLIC_WEB_VITALS_ENABLED=true
-            NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
             NEXT_PUBLIC_SELF_HOSTED=false
             NEXT_PUBLIC_OWNER_REGISTRATION=false
             VCS_REF=${{ inputs.expected_sha }}
@@ -169,7 +168,6 @@ jobs:
             NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true
             NEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
             NEXT_PUBLIC_WEB_VITALS_ENABLED=true
-            NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
             NEXT_PUBLIC_SELF_HOSTED=false
             NEXT_PUBLIC_OWNER_REGISTRATION=false
             VCS_REF=${{ inputs.expected_sha }}
@@ -194,7 +192,6 @@ jobs:
             NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true
             NEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
             NEXT_PUBLIC_WEB_VITALS_ENABLED=true
-            NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
             NEXT_PUBLIC_SELF_HOSTED=false
             NEXT_PUBLIC_OWNER_REGISTRATION=false
             VCS_REF=${{ inputs.expected_sha }}

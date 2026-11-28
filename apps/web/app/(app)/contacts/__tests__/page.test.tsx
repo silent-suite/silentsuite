@@ -182,6 +182,24 @@ describe('ContactsPage mobile reachability', () => {
     expect(screen.queryByText('Bob')).not.toBeInTheDocument()
   })
 
+  it('sorts by family name, then given name, then display name', () => {
+    const contact = (id: string, displayName: string, given: string, family: string, prefix = ''): Contact => ({ id, uid: id, displayName, name: { prefix, given, family, suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, listId: 'book', created_at: new Date(), updated_at: new Date() })
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+    storeMock.contactState.contacts = [
+      contact('1', 'Dr. Ada Lovelace', 'Ada', 'Lovelace', 'Dr.'),
+      contact('2', 'Charles Babbage', 'Charles', 'Babbage'),
+      contact('3', 'Zoe Lovelace', 'Zoe', 'Lovelace'),
+      contact('4', 'Acme Corp', '', ''),
+      contact('5', 'Grace', 'Grace', ''),
+      contact('6', 'Ada Lovelace (work)', 'Ada', 'Lovelace'),
+    ]
+    renderWithIntl(<ContactsPage />)
+
+    const order = screen.getAllByRole('button', { name: /to favorites$/ })
+      .map((button) => button.getAttribute('aria-label')!.replace(/^Add (.*) to favorites$/, '$1'))
+    expect(order).toEqual(['Acme Corp', 'Charles Babbage', 'Grace', 'Ada Lovelace (work)', 'Dr. Ada Lovelace', 'Zoe Lovelace'])
+  })
+
   it('shows the account total, including contacts in hidden address books', () => {
     const contact = (id: string, listId: string): Contact => ({ id, uid: id, displayName: `Person ${id}`, name: { prefix: '', given: id, family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, listId, created_at: new Date(), updated_at: new Date() })
     storeMock.contactListState.lists = [

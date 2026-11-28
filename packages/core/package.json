@@ -9,11 +9,9 @@
     ".": "./src/index.ts",
     "./package.json": "./package.json",
     "./utils/ical-parser": "./src/utils/ical-parser.ts",
-    "./utils/vcard-parser": "./src/utils/vcard-parser.ts",
-    "./utils/csv-parser": "./src/utils/csv-parser.ts"
+    "./utils/vcard-parser": "./src/utils/vcard-parser.ts"
   },
   "scripts": {
-    "build": "tsc",
     "lint": "echo \"no lint yet\"",
     "test": "vitest run",
     "type-check": "tsc --noEmit"

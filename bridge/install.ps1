@@ -387,7 +387,9 @@ function Invoke-SilentSuiteBridgeInstall {
         Write-Host ""
         Write-Host "  Bridge installed." -ForegroundColor Green
         Write-Host "  Dashboard: " -NoNewline; Write-Host "$BridgeDashboardUrl" -ForegroundColor Cyan
-        Write-Host "  Log in:    " -NoNewline; Write-Host "$BinaryName --login" -ForegroundColor Cyan
+        if (-not $LoginOk) {
+            Write-Host "  Sign in:   on the dashboard, or run " -NoNewline; Write-Host "$BinaryName --login" -ForegroundColor Cyan
+        }
         Write-Host "  Install log: " -NoNewline; Write-Host "$InstallLog" -ForegroundColor Cyan
         Write-Host "  Bridge log:  " -NoNewline; Write-Host "$BridgeLog" -ForegroundColor Cyan
         Write-Host "  Full docs: " -NoNewline; Write-Host "https://docs.silentsuite.io/bridge" -ForegroundColor Cyan

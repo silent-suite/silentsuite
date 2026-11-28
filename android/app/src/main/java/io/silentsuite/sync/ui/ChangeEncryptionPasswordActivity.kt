@@ -68,7 +68,7 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
     fun changePasswordError(e: Exception) {
         progress.dismiss()
         MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.wrong_encryption_password)
+                .setTitle(R.string.change_password_failed)
                 .setIcon(R.drawable.ic_error_dark)
                 .setMessage(e.localizedMessage)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
@@ -130,6 +130,7 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
     fun changePasswordClicked(v: View) {
         val old_password_view = findViewById<TextInputLayout>(R.id.encryption_password)
         val new_password_view = findViewById<TextInputLayout>(R.id.new_encryption_password)
+        val confirm_password_view = findViewById<TextInputLayout>(R.id.confirm_new_encryption_password)
 
         var valid = true
         val old_password = old_password_view.editText?.text.toString()
@@ -143,8 +144,18 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
         if (new_password.isEmpty()) {
             new_password_view.error = getString(R.string.login_password_required)
             valid = false
+        } else if (!NewPasswordRules.isLongEnough(new_password)) {
+            new_password_view.error = getString(R.string.change_password_too_short, NewPasswordRules.MIN_LENGTH)
+            valid = false
         } else {
             new_password_view.error = null
+        }
+        val confirm_password = confirm_password_view.editText?.text.toString()
+        if (!NewPasswordRules.matches(new_password, confirm_password)) {
+            confirm_password_view.error = getString(R.string.change_password_mismatch)
+            valid = false
+        } else {
+            confirm_password_view.error = null
         }
 
         if (!valid) {
@@ -157,8 +168,8 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
                 .setPositiveButton(android.R.string.yes) { _, _ ->
                     progress = ProgressDialogHelper.createIndeterminate(
                         this,
-                        R.string.setting_up_encryption,
-                        getString(R.string.setting_up_encryption_content)
+                        R.string.change_password_progress_title,
+                        getString(R.string.change_password_progress_content)
                     )
                     progress.show()
                     changePasswordDo(old_password, new_password)
@@ -183,4 +194,14 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
             return intent
         }
     }
+}
+
+/** New-password checks for [ChangeEncryptionPasswordActivity]. */
+internal object NewPasswordRules {
+    /** Same minimum as the web app's sign-up and password change (apps/web, zod `.min(8)`). */
+    const val MIN_LENGTH = 8
+
+    fun isLongEnough(password: String) = password.length >= MIN_LENGTH
+
+    fun matches(password: String, confirmation: String) = password == confirmation
 }

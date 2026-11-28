@@ -292,6 +292,36 @@ async function jsonOrThrow(response: Response): Promise<unknown> {
 function api(url: string, path: string) { return `${url.replace(/\/$/, '')}${path}` }
 function jsonInit(method: 'POST' | 'GET', body?: object): RequestInit { return { method, credentials: 'include', headers: { 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) } }
 
+/** Billing admission for a hosted signup pass (`POST /auth/signup-pass/v2`). Payment state is never an input. */
+export type SignupPassAuthority =
+  | { kind: 'intent'; checkoutIntentToken: string }
+  | { kind: 'ownership'; requestId: string; emailOwnershipToken: string }
+
+export type SignupPassOutcome = { kind: 'pass'; signupPass: string } | { kind: 'name-taken' } | { kind: 'unavailable' }
+
+const SIGNUP_PASS = /^[A-Za-z0-9_-]{43}$/
+
+/**
+ * Never throws. Only a well-formed pass or Billing's exact name conflict is
+ * acted on; anything else (404, ownership-required, 503, network) is
+ * `unavailable` and the Etebase server decides whether a tokenless signup is allowed.
+ */
+export async function requestSignupPass(params: { fetcher: BillingV2Fetch; billingApiUrl: string; email: string; authority: SignupPassAuthority }): Promise<SignupPassOutcome> {
+  const { fetcher, authority } = params
+  const body = authority.kind === 'intent'
+    ? { contractVersion: 2, kind: 'intent', email: params.email, checkoutIntentToken: authority.checkoutIntentToken }
+    : { contractVersion: 2, kind: 'ownership', email: params.email, requestId: authority.requestId, emailOwnershipToken: authority.emailOwnershipToken }
+  try {
+    const response = await fetcher(api(params.billingApiUrl, '/auth/signup-pass/v2'), jsonInit('POST', body))
+    const value: unknown = await response.json().catch(() => null)
+    if (response.status === 409 && isObject(value) && value.code === 'signup-name-taken') return { kind: 'name-taken' }
+    if (response.status === 200 && isObject(value) && typeof value.signupPass === 'string' && SIGNUP_PASS.test(value.signupPass)) {
+      return { kind: 'pass', signupPass: value.signupPass }
+    }
+  } catch { /* Unreachable Billing: the server decides. */ }
+  return { kind: 'unavailable' }
+}
+
 export async function cancelUnclaimedAnnualSelection(params: {
   fetcher: BillingV2Fetch; billingApiUrl: string; email: string; requestId: string;
   checkoutIntentToken: string; emailOwnershipToken: string;

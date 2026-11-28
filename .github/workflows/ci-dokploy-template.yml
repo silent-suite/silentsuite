@@ -1,0 +1,239 @@
+name: CI Dokploy Template
+
+# Checks the SilentSuite Dokploy blueprint with the published digest-pinned images.
+# No registry publication, release, deployment or repository write; no secrets.
+on:
+  pull_request:
+    paths:
+      - "self-host/dokploy/**"
+      - "self-host/umbrel/silentsuite/data/**"
+      - "self-host/umbrel/silentsuite/docker-compose.yml"
+      - "scripts/dokploy-template-*"
+      - "scripts/umbrel-candidate-probe.py"
+      - "scripts/umbrel-candidate-privacy.py"
+      - "tests/test_self_host_dokploy_template.py"
+      - ".github/workflows/ci-dokploy-template.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dokploy-template-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # Dokploy/templates revision whose validators the blueprint must pass.
+  DOKPLOY_TEMPLATES_REF: 60ee1e7a217f21a12e5f23fef36808b126bfa8c0
+  DOKPLOY_VERSION: v0.31.4
+  # SHA-256 of https://dokploy.com/install.sh as reviewed on 2026-11-27 (it is not in the
+  # Dokploy repository). A changed script fails here until it is reviewed and re-pinned.
+  DOKPLOY_INSTALL_SHA256: aca0137c3dfcab285dd624730e73f8de3ae020613a5cfac43b6f7f2ca0c7babe
+
+jobs:
+  contract:
+    name: Dokploy template contract
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install hash-locked PyYAML
+        run: |
+          cat > "$RUNNER_TEMP/requirements.txt" <<'REQUIREMENTS'
+          PyYAML==6.0.3 \
+              --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
+              --hash=sha256:9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28
+          REQUIREMENTS
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r "$RUNNER_TEMP/requirements.txt"
+
+      - name: Contract tests
+        run: |
+          python scripts/dokploy-template-render.py template --check
+          python -m unittest -v tests/test_self_host_dokploy_template.py
+
+      - name: Checkout Dokploy/templates validators
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Dokploy/templates
+          ref: ${{ env.DOKPLOY_TEMPLATES_REF }}
+          path: upstream-templates
+          persist-credentials: false
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+
+      - name: Run the upstream validators on the blueprint
+        working-directory: upstream-templates
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$DOKPLOY_TEMPLATES_REF"
+          test ! -e blueprints/silentsuite
+          cp -R ../self-host/dokploy/silentsuite blueprints/silentsuite
+          # Lockfile install without lifecycle scripts; nothing from it runs outside this step.
+          (cd build-scripts && npm ci --ignore-scripts --no-audit --no-fund)
+          node build-scripts/generate-meta.js --check
+          (cd build-scripts && npx --no-install tsx validate-docker-compose.ts --file ../blueprints/silentsuite/docker-compose.yml --verbose)
+          (cd build-scripts && npx --no-install tsx validate-template.ts --dir ../blueprints/silentsuite --verbose)
+
+  stack:
+    name: Dokploy stack (${{ matrix.arch }})
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Fetch the release identity of the pinned tag
+        run: |
+          set -euo pipefail
+          tag="$(python -c 'import json; print(json.load(open("self-host/dokploy/silentsuite/meta.json"))["version"])')"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$ ]]
+          curl -fsSL --proto '=https' -o "$RUNNER_TEMP/umbrel-images.json" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/umbrel-images.json"
+
+      - name: Stack, persistence, upgrade and restore checks
+        run: |
+          env -i PATH="$PATH" RUNNER_TEMP="$RUNNER_TEMP" \
+            bash scripts/dokploy-template-stack.sh "$RUNNER_TEMP/umbrel-images.json" "${{ matrix.platform }}"
+
+  dokploy:
+    name: Real Dokploy import and TLS (amd64)
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Create the CI certificate authority and leaf
+        run: |
+          set -euo pipefail
+          umask 077
+          pki="$RUNNER_TEMP/pki"
+          mkdir "$pki"
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
+            -subj "/CN=SilentSuite Dokploy CI CA" -keyout "$pki/ca.key" -out "$pki/ca.pem" \
+            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign 2>/dev/null
+          openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+            -subj "/CN=silentsuite.ci.test" -keyout "$pki/leaf.key" -out "$pki/leaf.csr" 2>/dev/null
+          printf 'subjectAltName=DNS:silentsuite.ci.test\nextendedKeyUsage=serverAuth\n' > "$pki/leaf.ext"
+          openssl x509 -req -in "$pki/leaf.csr" -CA "$pki/ca.pem" -CAkey "$pki/ca.key" -CAcreateserial \
+            -days 2 -extfile "$pki/leaf.ext" -out "$pki/leaf.pem" 2>/dev/null
+          rm "$pki/ca.key"
+
+      - name: Install Dokploy (pinned installer and version)
+        run: |
+          set -euo pipefail
+          curl -fsSL --proto '=https' -o "$RUNNER_TEMP/dokploy-install.sh" https://dokploy.com/install.sh
+          echo "$DOKPLOY_INSTALL_SHA256  $RUNNER_TEMP/dokploy-install.sh" | sha256sum --check --quiet
+          address="$(hostname -I | awk '{print $1}')"
+          sudo env DOKPLOY_VERSION="$DOKPLOY_VERSION" ADVERTISE_ADDR="$address" sh "$RUNNER_TEMP/dokploy-install.sh" >/dev/null
+          test "$(docker service inspect dokploy -f '{{.Spec.TaskTemplate.ContainerSpec.Image}}' | cut -d@ -f1)" = "dokploy/dokploy:$DOKPLOY_VERSION"
+
+      - name: Import, switch to HTTPS and deploy through the Dokploy API
+        run: |
+          set -euo pipefail
+          python scripts/dokploy-template-render.py import > "$RUNNER_TEMP/import.b64"
+          python scripts/dokploy-template-e2e.py deploy --payload "$RUNNER_TEMP/import.b64" \
+            --cert "$RUNNER_TEMP/pki/leaf.pem" --key "$RUNNER_TEMP/pki/leaf.key" --state "$RUNNER_TEMP/e2e-state.json"
+
+      - name: Files and networks Dokploy actually created
+        run: |
+          set -euo pipefail
+          app="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["appName"])' "$RUNNER_TEMP/e2e-state.json")"
+          [[ "$app" =~ ^[a-z0-9-]+$ ]]
+          mkdir "$RUNNER_TEMP/written"
+          for name in router.conf init.sh server-start.sh; do
+            sudo cat "/etc/dokploy/compose/$app/files/silentsuite/$name" > "$RUNNER_TEMP/written/$name"
+          done
+          python - "$RUNNER_TEMP/written" <<'PY'
+          import sys, tomllib
+          from pathlib import Path
+          mounts = tomllib.loads(Path("self-host/dokploy/silentsuite/template.toml").read_text())["config"]["mounts"]
+          for mount in mounts:
+              written = Path(sys.argv[1], Path(mount["filePath"]).name).read_text()
+              assert written == mount["content"], mount["filePath"]
+          print("PASS Dokploy wrote the mount files byte for byte")
+          PY
+          shared="$(docker network inspect dokploy-network -f '{{range .Containers}}{{.Name}} {{end}}')"
+          for container in $(docker ps --filter "label=com.docker.compose.project=$app" --format '{{.Names}}'); do
+            case " $shared " in
+              *" $container "*) [ "$container" = "$app-silentsuite-1" ] || { echo "FAIL $container is on dokploy-network"; exit 1; } ;;
+            esac
+          done
+          case " $shared " in *" $app-silentsuite-1 "*) ;; *) echo "FAIL router not on dokploy-network"; exit 1 ;; esac
+          echo "PASS only the router joins dokploy-network"
+
+      - name: Load the CI certificate into Traefik
+        run: |
+          # Observed with Dokploy v0.31.4 on a local server: an uploaded certificate lands in a new
+          # subdirectory of Traefik's dynamic directory, but Traefik keeps serving its default
+          # certificate until it reloads (Dokploy reloads only for remote servers). Real installs
+          # use Let's Encrypt; this step only makes the CI certificate visible.
+          docker restart dokploy-traefik >/dev/null
+          for _ in $(seq 30); do
+            subject="$(echo | openssl s_client -connect 127.0.0.1:443 -servername silentsuite.ci.test 2>/dev/null | openssl x509 -noout -subject 2>/dev/null || true)"
+            case "$subject" in *silentsuite.ci.test*) echo "PASS Traefik serves the CI certificate"; exit 0 ;; esac
+            sleep 2
+          done
+          echo "FAIL Traefik still serves: ${subject:-nothing}"
+          exit 1
+
+      - name: SilentSuite over Traefik TLS
+        run: python scripts/dokploy-template-e2e.py probe --state "$RUNNER_TEMP/e2e-state.json" --ca "$RUNNER_TEMP/pki/ca.pem"
+
+      - name: Container states on failure
+        if: failure()
+        run: |
+          docker ps -a --format '{{.Names}} {{.Status}}'
+          echo | openssl s_client -connect 127.0.0.1:443 -servername silentsuite.ci.test 2>/dev/null \
+            | openssl x509 -noout -subject -issuer 2>/dev/null || echo "no TLS certificate served"
+          for container in $(docker ps -a --format '{{.Names}}' | grep -E -- '-silentsuite-1$'); do
+            docker inspect -f '{{range $k, $v := .Config.Labels}}{{if eq (slice $k 0 7) "traefik"}}{{$k}}={{$v}}{{"\n"}}{{end}}{{end}}' "$container"
+          done
+          sudo find /etc/dokploy/traefik/dynamic -maxdepth 3 -name '*.yml' -o -maxdepth 3 -name '*.crt' | head -20
+          docker logs --tail 40 dokploy-traefik 2>&1 | grep -v -i 'privkey\|BEGIN' || true
+          # Router (nginx) and initializer output only; they log no requests and no secrets.
+          for container in $(docker ps -a --format '{{.Names}}' | grep -E -- '-silentsuite-(1|init-1)$'); do
+            echo "== $container restarts=$(docker inspect -f '{{.RestartCount}}' "$container")"
+            docker logs --tail 20 "$container" 2>&1
+          done

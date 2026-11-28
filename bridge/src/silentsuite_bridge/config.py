@@ -505,11 +505,6 @@ def requested_loopback_listeners() -> list[dict]:
     return [r for r in parse_server_hosts(SERVER_HOSTS) if r["kind"] == "loopback"]
 
 
-def requested_remote_listeners() -> list[dict]:
-    """Return only remote (non-loopback, non-wildcard) records from SERVER_HOSTS."""
-    return [r for r in parse_server_hosts(SERVER_HOSTS) if r["kind"] == "remote"]
-
-
 def requested_dashboard_listener() -> dict | None:
     """Return the first loopback record from SERVER_HOSTS, or None."""
     for r in parse_server_hosts(SERVER_HOSTS):
@@ -593,15 +588,6 @@ def _address_family_of(host: str, kind: str) -> str | None:
         return "ipv4" if ip_address(host).version == 4 else "ipv6"
     except ValueError:
         return None
-
-
-def _normalised_listener_key(host: str, port: int) -> str:
-    """Return a stable key for deduplication: canonical IP + port."""
-    try:
-        canonical = str(ip_address(host.strip()))
-    except ValueError:
-        canonical = host.strip().lower()
-    return f"{canonical}:{port}"
 
 
 def listener_conflicts() -> list[str]:

@@ -8,6 +8,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
@@ -32,6 +35,7 @@ import io.silentsuite.sync.ui.BaseActivity
 import io.silentsuite.sync.ui.UnsyncedNotesEntry
 import io.silentsuite.sync.ui.WebViewActivity
 import io.silentsuite.sync.ui.applySystemBarInsetsAsPadding
+import io.silentsuite.sync.utils.NotificationUtils
 import java.util.UUID
 
 /** Resumes a durable setup row. It deliberately accepts no credentials or session extra. */
@@ -42,6 +46,7 @@ class PostLoginSetupActivity : BaseActivity() {
     private var accountCreationId: String? = null
     private var missingCreationId = false
     private var seenRetryVersion = 0
+    private val unsyncedNotes = UnsyncedNotesEntry(this)
 
     /**
      * ActivityResultRegistry retains the platform-result association across recreation. Denial
@@ -226,14 +231,17 @@ class PostLoginSetupActivity : BaseActivity() {
         resumeSetupWork()
     }
 
-    /** Unsynced Notes in the overflow, as on the sign-in screen, for an account whose setup cannot finish too. */
+    /**
+     * Unsynced Notes in the overflow, as on the sign-in screen, for an account whose setup cannot finish too, hidden
+     * only while there is certainly nothing on this device to show there ([UnsyncedNotesEntry]).
+     */
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        UnsyncedNotesEntry.addTo(menu)
+        unsyncedNotes.addTo(menu)
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean =
-        UnsyncedNotesEntry.opens(this, item) || super.onOptionsItemSelected(item)
+        unsyncedNotes.opens(item) || super.onOptionsItemSelected(item)
 
     private fun submit(decision: PostLoginSetupOrchestrator.UserDecision) {
         model.submitUserDecision(decision)
@@ -676,8 +684,10 @@ class PostLoginSetupActivity : BaseActivity() {
         val presentation = presentationFor(current, condition)
 
         findViewById<TextView>(R.id.setup_title).setText(titleResource(presentation.title))
-        findViewById<TextView>(R.id.setup_body).setText(bodyResource(presentation.body))
+        findViewById<TextView>(R.id.setup_body).text =
+            bodyText(presentation.body, integrationsNamedFor(condition, permissions))
         renderSetupStepper(presentation)
+        renderIntegrationAccess(permissions)
         findViewById<View>(R.id.setup_integration_details).visibility = visible(
             current == PostLoginSetupState.PERMISSIONS &&
                 condition != PostLoginSetupPresentationCondition.INVENTORY_LOADING &&
@@ -704,6 +714,10 @@ class PostLoginSetupActivity : BaseActivity() {
         )
         findViewById<Button>(R.id.setup_done).visibility =
             visible(exact && current == PostLoginSetupState.READY)
+        // The sync overview asks for notification permission right after this step; say why first.
+        findViewById<View>(R.id.setup_notification_hint).visibility = visible(
+            current == PostLoginSetupState.READY && NotificationUtils.shouldRequestPermission(this)
+        )
         findViewById<Button>(R.id.setup_skip_integrations).visibility =
             visible(permitsSkip)
         findViewById<Button>(R.id.setup_continue_limited).visibility = visible(
@@ -773,6 +787,7 @@ class PostLoginSetupActivity : BaseActivity() {
         listOf(
             R.id.setup_stepper,
             R.id.setup_integration_details,
+            R.id.setup_notification_hint,
             R.id.setup_done,
             R.id.setup_continue_limited,
             R.id.setup_skip_integrations,
@@ -817,6 +832,85 @@ class PostLoginSetupActivity : BaseActivity() {
             }
         }
         findViewById<View>(R.id.setup_action_bar).visibility = View.VISIBLE
+    }
+
+    /** Names the integrations that are missing access when Android denied or blocked them. */
+    private fun bodyText(
+        body: PostLoginSetupPresentation.Body,
+        named: List<PostLoginSetupOrchestrator.Integration>,
+    ): CharSequence {
+        val plural = when (body) {
+            PostLoginSetupPresentation.Body.PERMISSION_DENIED ->
+                R.plurals.post_login_permission_denied_named_body
+            PostLoginSetupPresentation.Body.PERMISSION_BLOCKED ->
+                R.plurals.post_login_permission_blocked_named_body
+            else -> null
+        }
+        if (plural == null || named.isEmpty()) return getString(bodyResource(body))
+        val names = named.map { getString(integrationNameResource(it)) }
+        val list = when (names.size) {
+            1 -> names[0]
+            2 -> getString(R.string.post_login_integration_list_two, names[0], names[1])
+            else -> getString(
+                R.string.post_login_integration_list_three,
+                names[0],
+                names[1],
+                names[2],
+            )
+        }
+        return resources.getQuantityString(plural, names.size, list)
+    }
+
+    private fun integrationNameResource(
+        integration: PostLoginSetupOrchestrator.Integration,
+    ): Int = when (integration) {
+        PostLoginSetupOrchestrator.Integration.CALENDAR -> R.string.post_login_integration_calendar
+        PostLoginSetupOrchestrator.Integration.CONTACTS -> R.string.post_login_integration_contacts
+        PostLoginSetupOrchestrator.Integration.TASKS -> R.string.post_login_integration_tasks
+    }
+
+    /** Adds "Allowed" or "Not allowed" under each integration once Android has answered. */
+    private fun renderIntegrationAccess(
+        permissions: Map<
+            PostLoginSetupOrchestrator.Integration,
+            PostLoginSetupOrchestrator.PermissionEvidence
+        >,
+    ) {
+        listOf(
+            Triple(
+                PostLoginSetupOrchestrator.Integration.CALENDAR,
+                R.id.setup_calendar_outcome,
+                R.string.post_login_calendar_outcome,
+            ),
+            Triple(
+                PostLoginSetupOrchestrator.Integration.CONTACTS,
+                R.id.setup_contacts_outcome,
+                R.string.post_login_contacts_outcome,
+            ),
+            Triple(
+                PostLoginSetupOrchestrator.Integration.TASKS,
+                R.id.setup_tasks_outcome,
+                R.string.post_login_tasks_outcome,
+            ),
+        ).forEach { (integration, viewId, outcome) ->
+            val row = findViewById<TextView>(viewId)
+            val access = integrationAccessFor(permissions[integration])
+            if (access == null) {
+                row.setText(outcome)
+                return@forEach
+            }
+            val (label, color) = when (access) {
+                IntegrationAccess.ALLOWED ->
+                    R.string.post_login_integration_allowed to R.color.semantic_success
+                IntegrationAccess.NOT_ALLOWED ->
+                    R.string.post_login_integration_not_allowed to R.color.semantic_error
+            }
+            row.text = SpannableStringBuilder(getString(outcome)).append('\n').append(
+                getString(label),
+                ForegroundColorSpan(ContextCompat.getColor(this, color)),
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
     }
 
     private fun applySetupActionBarInsets(actionBar: View) =

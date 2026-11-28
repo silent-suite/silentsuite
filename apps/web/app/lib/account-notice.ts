@@ -75,3 +75,36 @@ export function parseBillingDate(value: unknown): BillingDate | null {
 export function trialDaysLeft(trialEndsAtMs: number, nowMs: number): number {
   return trialEndsAtMs > nowMs ? Math.ceil((trialEndsAtMs - nowMs) / DAY_MS) : 0
 }
+
+/** What ended, for wording only; access is never decided from it. */
+export type EndedHistory = 'trial' | 'subscription' | 'unpaid'
+
+export const ENDED_TITLES: Record<EndedHistory, string> = {
+  trial: 'Your free trial ended.',
+  subscription: 'Your subscription ended.',
+  unpaid: "You haven't finished paying.",
+}
+
+const PAY_NOW_TRIAL_PATHS: ReadonlyArray<unknown> = ['immediate', 'crypto_annual']
+
+/**
+ * Reads a GET /subscription body. A trial ended when Billing proves it, when an unsubscribed
+ * account came from a trial, or when a trial path ended with no period end past the trial (a
+ * card trial cancelled before its first charge keeps the trial end as its period end). A
+ * pay-now account Billing never marked subscribed hasn't paid. Any other ended account was a
+ * subscription. Null when nothing ended.
+ */
+export function classifyEndedHistory(body: unknown): EndedHistory | null {
+  if (!isRecord(body)) return null
+  if (parseAccountNotice(body.accountNotice)?.kind === 'trial_ended') return 'trial'
+  const { status, trialPath } = body
+  if (status === 'trialing') return body.hostedAccess === 'trial_ended' ? 'trial' : null
+  if (status === 'none') return PAY_NOW_TRIAL_PATHS.includes(trialPath) ? 'unpaid' : 'trial'
+  if (status !== 'cancelled' && status !== 'expired') return null
+  if (trialPath !== '7day' && trialPath !== '30day') return 'subscription'
+  const trialEndsAt = isRecord(body.trial) && isIsoDate(body.trial.endsAt) ? Date.parse(body.trial.endsAt) : NaN
+  if (!Number.isFinite(trialEndsAt)) return 'subscription'
+  const periodEnd = isIsoDate(body.renewalDate) ? Date.parse(body.renewalDate) : NaN
+  // A day of slack: Stripe's second-precision period end can differ slightly from the trial end.
+  return periodEnd > trialEndsAt + DAY_MS ? 'subscription' : 'trial'
+}

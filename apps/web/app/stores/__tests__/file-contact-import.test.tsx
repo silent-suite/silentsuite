@@ -11,8 +11,6 @@ import ContactImport from '@/app/components/import/ContactImport'
 
 const toastMock = vi.hoisted(() => ({ showErrorToast: vi.fn(), showToast: vi.fn() }))
 vi.mock('@/app/stores/use-toast-store', async (importOriginal) => ({ ...(await importOriginal<object>()), ...toastMock }))
-const cacheMock = vi.hoisted(() => ({ putItems: vi.fn(async () => {}), isCacheEnabled: vi.fn(() => true) }))
-vi.mock('@/app/lib/data-cache', async (importOriginal) => ({ ...(await importOriginal<object>()), ...cacheMock }))
 const queueMock = vi.hoisted(() => ({ enqueue: vi.fn(async () => 'never') }))
 vi.mock('@/app/lib/offline-queue', async (importOriginal) => ({ ...(await importOriginal<object>()), ...queueMock }))
 vi.mock('@/app/stores/use-label-suggestions-store', () => ({
@@ -138,7 +136,6 @@ beforeEach(() => {
   useContactListStore.setState({ lists: [{ id: 'col-1', name: 'A', color: '#fff', visible: true, accessLevel: 2 }, { id: 'col-2', name: 'B', color: '#fff', visible: true, accessLevel: 2 }], activeListId: 'col-1' } as any)
   useAuthStore.setState({ canWrite: () => true } as any)
   toastMock.showErrorToast.mockReset()
-  cacheMock.putItems.mockClear()
   queueMock.enqueue.mockClear()
   vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -232,12 +229,10 @@ describe('file contact import: same-page retries never double-create', () => {
   it('registry 1: after a 413, corrected content with the same UID uploads as a new item', async () => {
     server.plan = [{ status: 413 }]
     await outcomeOf(importFile([card('Too big', 'a')]))
-    cacheMock.putItems.mockClear()
     await expect(importFile([card('Corrected', 'a')])).resolves.toBe(1)
     const [content] = server.items('col-1')
     expect(content).toContain('FN:Corrected')
     expect(server.attempts[1]!.uids[0]).not.toBe(server.attempts[0]!.uids[0])
-    expect((cacheMock.putItems.mock.calls[0] as any)[0][0].content).toContain('FN:Corrected')
   })
 
   it('registry 2: a 413 on a manual retry keeps the entry while the first request can still commit', async () => {
@@ -267,13 +262,11 @@ describe('file contact import: same-page retries never double-create', () => {
     await vi.advanceTimersByTimeAsync(5 * FILE_IMPORT_TIMEOUT_MS)
     await first
     vi.useRealTimers()
-    cacheMock.putItems.mockClear()
     await expect(importFile([card('Changed', 'a')])).resolves.toBe(1)
     expect(server.attempts.at(-1)!.uids).toEqual(server.attempts[0]!.uids)
     const contents = server.items('col-1')
     expect(contents).toHaveLength(1)
     expect(contents[0]).toContain('FN:Original')
-    expect((cacheMock.putItems.mock.calls[0] as any)[0][0].content).toContain('FN:Original')
     expect(useContactStore.getState().contacts.map((c) => c.displayName)).toEqual(['Original'])
   })
 })

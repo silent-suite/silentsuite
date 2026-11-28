@@ -119,7 +119,7 @@ curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-
 
 It verifies the release bundle and the server image, then writes `.env` (with the verified image digest) and `etebase-server.ini` before it starts anything. A plain clone has neither file, so `docker compose up` in `self-host/` will not start the stack on its own.
 
-Next steps, including the reverse proxy: [Quick Start](./docs/self-hosting/quick-start.md). Full guide: [Self-host SilentSuite](./docs/self-hosting/)
+Next steps, including the reverse proxy: [Quick Start](https://docs.silentsuite.io/self-hosting/quick-start). Full guide: [Self-host SilentSuite](https://docs.silentsuite.io/self-hosting/)
 
 ## Help test and contribute
 
@@ -131,7 +131,7 @@ Useful contributions include:
 - Translation proposals reviewed by fluent human speakers
 - Documentation and privacy-claim review
 
-Browse the open [good first issues](https://github.com/silent-suite/silentsuite/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22), read the [contributing guide](./docs/contributing/), or open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues).
+Browse the open [good first issues](https://github.com/silent-suite/silentsuite/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22), read the [contributing guide](./CONTRIBUTING.md), or open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues).
 
 Do not include passwords, recovery material, private calendar/contact data, or other secrets in reports. Send security disclosures to <info@silentsuite.io> rather than opening a public issue.
 
@@ -143,7 +143,7 @@ Thanks to everyone helping build SilentSuite, from code and translations to test
   <img src="https://contrib.rocks/image?repo=silent-suite/silentsuite" alt="GitHub contributors to SilentSuite" />
 </a>
 
-[Meet the code contributors](https://github.com/silent-suite/silentsuite/graphs/contributors) · [Find a way to contribute](./docs/contributing/)
+[Meet the code contributors](https://github.com/silent-suite/silentsuite/graphs/contributors) · [Find a way to contribute](./CONTRIBUTING.md)
 
 ### Stargazers
 
@@ -161,10 +161,10 @@ If SilentSuite is useful to you, a star helps others discover the project.
 
 ## Documentation
 
-- [User guide](./docs/user-guide/)
-- [Self-hosting](./docs/self-hosting/)
+- [User guide](https://docs.silentsuite.io/user-guide/)
+- [Self-hosting](https://docs.silentsuite.io/self-hosting/)
 - [Roadmap](./ROADMAP.md)
-- [Contributing](./docs/contributing/)
+- [Contributing](./CONTRIBUTING.md)
 - [Translating SilentSuite](./TRANSLATING.md)
 - [Security model](https://silentsuite.io/security)
 - [Hosted documentation](https://docs.silentsuite.io)
@@ -181,7 +181,7 @@ pnpm install
 pnpm dev
 ```
 
-The Etebase sync server, CalDAV/CardDAV Bridge, and Android adapter have separate setup requirements. See the [contributing guide](./docs/contributing/) for the complete development environment.
+The Etebase sync server, CalDAV/CardDAV Bridge, and Android adapter have separate setup requirements. See the [Development Setup guide](./apps/docs/contributing/dev-setup.md) for the complete development environment.
 
 ### Repository map
 

@@ -44,7 +44,6 @@ ROOT_WORKFLOW = WORKFLOW_DIR / "release-android.yml"
 # Unprivileged Android CI. It keeps the same structural policy job and Conscrypt
 # producer, and must never regain a release-producing job.
 ANDROID_CI_WORKFLOW = WORKFLOW_DIR / "build-android.yml"
-ANDROID_SIBLING_WORKFLOW = Path("android/.github/workflows/build.yml")
 # The dispatch-only rehearsal for the release lane's reproducibility gate. It
 # runs the same two builds and the same comparison, holds no signing capability
 # whatsoever, and must never become a second way to produce a release artifact.
@@ -552,8 +551,8 @@ EXPECTED_KEYSTORE_HELPER_SHA256 = "b9b0c8046a85209754c5e206b9cc1778036d2366d0709
 EXPECTED_READINESS_HELPER_SHA256 = "066b64d487cc9fd23d2c947c801cb663c6b40f4fb42b22dffc8d0cc49c87e763"
 EXPECTED_BRIDGE_STAGING_HELPER_SHA256 = "b9dd8980fa763c485caa5ac999b2ba9f9d187a9545e02e3cc580425fc223e0b6"
 EXPECTED_UMBREL_INPUT_SHA256 = {
-    "scripts/umbrel_release_contract.py": "122c7b55425324cf30b446f02f40cd872c822f638f4f0617a6dd26f67a08bf9b",
-    "contracts/umbrel-images.schema.json": "1dd23914b0f8a372da97466ea3c4df0ecf5575d690460e95ee305af7f5100861",
+    "scripts/umbrel_release_contract.py": "b0e214f08f2a91d369dbcdd4fae8eff6aeef149eef3df012af35db9997535181",
+    "contracts/umbrel-images.schema.json": "c29c8405fde8491cdcda799649e5f9b106dfcb2af4280da62e446e650a5be627",
     "scripts/umbrella_release_contract.py": "7d16d249ccaeed8cff512110ae7c15ec8ec03810872a588ed6f8aac5f5a1759f",
 }
 # The Conscrypt producer exists twice: unprivileged CI builds it from the
@@ -588,7 +587,6 @@ ALLOWED_ATTACHMENT_JOB_KEYS = {
 ALLOWED_RELEASE_STEP_KEYS = {"name", "uses", "with", "run", "env", "if"}
 REQUIRED_TRIGGER_PATHS = {
     ".github/workflows/**",
-    "android/.github/workflows/**",
     "runbooks/android-release.md",
     "scripts/check-android-signing-boundary.py",
     "tests/test_android_*.py",
@@ -1123,7 +1121,6 @@ def check_umbrel_publication(server: Mapping[str, Any], violations: list[str]) -
         "VCS_REF=${{ inputs.source_sha }}", "NEXT_PUBLIC_SELF_HOSTED=true",
         "NEXT_PUBLIC_ETEBASE_SERVER_URL=", "NEXT_PUBLIC_OWNER_REGISTRATION=true",
         "NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=false", "NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false",
-        "NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false",
     }
     if set(str(build.get("build-args", "")).splitlines()) != required_args:
         violations.append("web self-host build arguments changed")
@@ -1570,12 +1567,9 @@ def check(root: Path) -> list[str]:
     workflow_dir = root / WORKFLOW_DIR
     violations: list[str] = []
     root_path = root / ROOT_WORKFLOW
-    sibling_path = root / ANDROID_SIBLING_WORKFLOW
 
     if not root_path.is_file():
         return [f"missing required workflow: {ROOT_WORKFLOW}"]
-    if not sibling_path.is_file():
-        return [f"missing Android sibling workflow: {ANDROID_SIBLING_WORKFLOW}"]
 
     loaded: dict[Path, dict[str, Any]] = {}
     workflow_paths = sorted((*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml")))
@@ -2220,7 +2214,7 @@ def check(root: Path) -> list[str]:
                 f"{', '.join(sorted(refs_outside_reviewed_env))}"
             )
 
-    for relative in (ROOT_WORKFLOW, ANDROID_CI_WORKFLOW, ANDROID_SIBLING_WORKFLOW):
+    for relative in (ROOT_WORKFLOW, ANDROID_CI_WORKFLOW):
         path = root / relative
         try:
             workflow = load_workflow(path)

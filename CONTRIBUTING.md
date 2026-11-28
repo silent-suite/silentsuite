@@ -2,24 +2,24 @@
 
 Thanks for helping. Testing reports, documentation fixes, translations and code are all useful, and you don't need to write code to make a difference.
 
-The full guides live in [`docs/contributing/`](./docs/contributing/). This page is the short version.
+The full guides live in [`apps/docs/contributing/`](./apps/docs/contributing/index.md) and on [docs.silentsuite.io](https://docs.silentsuite.io/contributing/). This page is the short version.
 
 ## Ways to help
 
 - Test the apps. Try the Android app on your device, the Bridge with your DAV client (Thunderbird, Apple Calendar, Evolution, GNOME Calendar and others), or a fresh self-hosted server, and [open an issue](https://github.com/silent-suite/silentsuite/issues) with what worked and what didn't.
-- Improve the docs. Fix anything unclear, outdated or wrong in [`docs/`](./docs/) or [`apps/docs/`](./apps/docs/). Reviews of privacy and security claims are welcome too.
+- Improve the docs. Fix anything unclear, outdated or wrong in [`apps/docs/`](./apps/docs/). Reviews of privacy and security claims are welcome too.
 - Translate. Read the [Translation Guide](./TRANSLATING.md) first. Proposals need a review by a fluent human speaker.
 - Write code. Issues labelled [good first issue](https://github.com/silent-suite/silentsuite/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) are small and should name the files involved. For larger changes, open an issue to talk about the approach before you write much code.
 
 ## Before you open a pull request
 
-1. Set up your environment with the [Development Setup](./docs/contributing/dev-setup.md) guide.
+1. Set up your environment with the [Development Setup](./apps/docs/contributing/dev-setup.md) guide.
 2. Branch from `main` and open your pull request against `main`.
 3. Keep it to one issue or one change, and link the issue if there is one.
-4. Follow the [Code Conventions](./docs/contributing/code-conventions.md) and add or update tests where it makes sense ([Testing](./docs/contributing/testing.md)).
+4. Follow the [Code Conventions](./apps/docs/contributing/code-conventions.md) and add or update tests where it makes sense ([Testing](./apps/docs/contributing/testing.md)).
 5. In the description, say what changed, why, and how you checked it. "Docs-only change, no tests run" is a fine answer for docs.
 
-The [Pull Request Guide](./docs/contributing/pull-request-guide.md) has the full workflow and the local checks to run.
+The [Pull Request Guide](./apps/docs/contributing/pull-request-guide.md) has the full workflow and the local checks to run.
 
 ## What to expect
 

@@ -43,10 +43,7 @@ REQUEST_LIMIT_DEFAULTS = {
     "ETEBASE_MAX_AUTH_REQUEST_BYTES": "65536",
     "ETEBASE_MAX_REQUEST_BYTES": "67108864",
 }
-CONFIGURATION_DOCS = {
-    "docs": ROOT / "docs" / "self-hosting" / "configuration.md",
-    "apps-docs": ROOT / "apps" / "docs" / "self-hosting" / "configuration.md",
-}
+CONFIGURATION_DOC = ROOT / "apps" / "docs" / "self-hosting" / "configuration.md"
 
 
 class StrictLoader(yaml.BaseLoader):
@@ -137,14 +134,14 @@ def test_env_example_documents_request_limits():
 
 
 def _request_limit_rows(text: str) -> list[str]:
-    """Only the newly added limit rows; the mirrors differ elsewhere (link labels)."""
+    """Only the request-limit rows of the configuration table."""
     return [line for line in text.splitlines() if line.startswith("| `ETEBASE_MAX_")]
 
 
-@pytest.mark.parametrize("mirror", [pytest.param("docs", id="docs"), pytest.param("apps-docs", id="apps-docs")])
-def test_configuration_docs_document_request_limits(mirror):
-    text = CONFIGURATION_DOCS[mirror].read_text(encoding="utf-8")
+def test_configuration_docs_document_request_limits():
+    text = CONFIGURATION_DOC.read_text(encoding="utf-8")
     rows = _request_limit_rows(text)
+    assert rows, "the request-limit rows are missing"
     for name, default in REQUEST_LIMIT_DEFAULTS.items():
         assert any(row.startswith(f"| `{name}` | No | `{default}` |") for row in rows), name
     recreate = [line for line in text.splitlines() if line.startswith("After changing a server runtime setting")]
@@ -154,12 +151,6 @@ def test_configuration_docs_document_request_limits(mirror):
     # Recovery guidance distinguishes the msgpack and billing JSON 413 responses.
     assert "request_too_large" in text
     assert "Request body too large" in text
-
-
-def test_request_limit_doc_rows_match_across_mirrors():
-    rows = {mirror: _request_limit_rows(path.read_text(encoding="utf-8")) for mirror, path in CONFIGURATION_DOCS.items()}
-    assert rows["docs"], "the request-limit rows are missing"
-    assert rows["docs"] == rows["apps-docs"]
 
 
 def test_server_port_stays_bound_to_host_loopback():

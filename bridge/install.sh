@@ -272,17 +272,17 @@ main() {
 
     DASHBOARD_URL="http://localhost:37358/.web/"
 
+    LOGGED_IN=false
     if prompt_yn "Log in to SilentSuite now?"; then
         step "Launching..."
-        printf "\n  Opening your browser to sign in.\n"
-        printf "  After login, the bridge runs in the background.\n\n"
+        printf "\n  Opening your browser to sign in.\n\n"
 
         # Run login flow — don't let failure kill the script
         if "${INSTALL_DIR}/${BINARY_NAME}" --login; then
+            LOGGED_IN=true
             info "Login complete."
         else
-            warn "Login did not complete. You can log in later with:"
-            printf "    ${BINARY_NAME} --login\n"
+            warn "Login did not complete. You can sign in later from the dashboard."
         fi
     fi
 
@@ -305,7 +305,9 @@ main() {
     step "Setup complete!"
     printf "\n  ${GREEN}Bridge installed.${NC}\n"
     printf "  Dashboard: ${BLUE}${DASHBOARD_URL}${NC}\n"
-    printf "  Log in:    ${BLUE}${BINARY_NAME} --login${NC}\n"
+    if [ "$LOGGED_IN" = false ]; then
+        printf "  Sign in:   on the dashboard, or run ${BLUE}${BINARY_NAME} --login${NC}\n"
+    fi
     printf "  Full docs: ${BLUE}https://docs.silentsuite.io/bridge${NC}\n\n"
 }
 

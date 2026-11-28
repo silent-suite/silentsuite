@@ -117,5 +117,6 @@ export function useSignupNavigation({ enabled, warnOnLeave = true, step, view, r
     } }, '')
     setNotice(false)
   }
-  return { recovery, notice, markMutation, clear, retireCheckpoints }
+  const currentPhase = () => phase.current
+  return { recovery, notice, markMutation, clear, retireCheckpoints, currentPhase }
 }

@@ -400,9 +400,10 @@ function readVEvent(veventStr: string): CalendarEvent {
     ? parseICalDateValue(vevent.dtend, endTzid)
     : { date: endFromDuration ?? new Date(startParsed.date.getTime()), allDay: startParsed.allDay };
 
-  const exdateTzid = vevent.exdateParams?.['TZID'] ?? (isAllDay ? undefined : startTzid);
+  const noZoneTzid = isAllDay ? undefined : startTzid;
+  const exdateTzid = vevent.exdateParams?.['TZID'] ?? noZoneTzid;
   const exceptions = (vevent.exdate ?? []).map(
-    (d) => parseICalDateValue(d, exdateTzid).date,
+    (d, i) => parseICalDateValue(d, vevent.exdateTzids ? vevent.exdateTzids[i] || noZoneTzid : exdateTzid).date,
   );
 
   // Captured from the wire value before parsing: a gap wall time cannot be recovered later.

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildSignupPageviewPayload,
   buildCheckoutReturnedPayload,
+  buildInPageCheckoutReturnedPayload,
   buildPlanSelectedPayload,
   buildSubscriptionManagementEntryPayload,
   canonicalizeCampaignParams,
@@ -160,6 +161,9 @@ describe('public analytics privacy contract', () => {
     })
     expect(buildCheckoutReturnedPayload('cancelled', 'btcpay')).toEqual({
       domain: 'app.silentsuite.io', name: 'Checkout Returned', url: 'https://app.silentsuite.io/signup/cancel', props: { outcome: 'cancelled', payment_method: 'btcpay' },
+    })
+    expect(buildInPageCheckoutReturnedPayload('stripe')).toEqual({
+      domain: 'app.silentsuite.io', name: 'Checkout Returned', url: 'https://app.silentsuite.io/signup', props: { outcome: 'returned', payment_method: 'stripe' },
     })
     expect(buildSubscriptionManagementEntryPayload()).toEqual({
       domain: 'app.silentsuite.io', name: 'Subscription Management Entry', url: 'https://app.silentsuite.io/settings/subscription', props: { surface: 'subscription_settings' },

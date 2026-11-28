@@ -142,5 +142,5 @@ def start_background(
     print(f"Process ID: {process.pid}")
     print(_dashboard_text(address, port))
     print(f"Log: {log_file}")
-    print("To stop it, use Quit in the tray icon menu or end silentsuite-bridge.exe in Task Manager.")
+    print("To stop it, run: Get-Process silentsuite-bridge* | Stop-Process")
     return 0

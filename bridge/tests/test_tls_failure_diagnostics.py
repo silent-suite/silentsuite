@@ -452,7 +452,9 @@ def test_plaintext_http_to_https_listener_emits_fixed_category_tls_line(
         assert entry["levelno"] >= logging.INFO
     generic = [
         m for m in observed
-        if m.startswith(("Radicale server request failed", "DAV request"))
+        if m.startswith(
+            ("Radicale server request failed", "DAV request", "Dashboard request")
+        )
     ]
     assert not generic, (
         "pre-HTTP TLS failure must not also be reported as a request "
@@ -595,7 +597,9 @@ def test_repeated_pre_http_tls_failures_are_rate_limited_per_listener(
             assert match.group("category") in TLS_CATEGORIES
         assert not [
             m for m in observed
-            if m.startswith(("Radicale server request failed", "DAV request"))
+            if m.startswith(
+                ("Radicale server request failed", "DAV request", "Dashboard request")
+            )
         ], f"generic duplicate for a handled handshake: {observed!r}"
 
         # A new listener run starts with its own limiter.

@@ -176,6 +176,13 @@ The stage directory must not exist yet, and its parent must be a directory you
 own that other local users cannot write. Like an install, it is created by a
 single atomic `mkdir` only after every check it performs has passed.
 
+## Dokploy
+
+If you run [Dokploy](https://dokploy.com), you can deploy SilentSuite as a Compose service from the
+blueprint in [`self-host/dokploy/`](https://github.com/silent-suite/silentsuite/blob/main/self-host/dokploy/README.md). Dokploy generates the secrets and provides the
+HTTPS certificate. Switch the domain to HTTPS before the first signup. The package README covers
+install, the first account, backup and restore, and updates.
+
 ## Manual Setup
 
 > `install.sh --version vX.Y.Z --stage-only ./staged` performs the release-tag,
@@ -591,6 +598,17 @@ supported reset command: automated volume deletion is not supported, and
 re-running `install.sh` is not an upgrade or reset path — it refuses to touch an
 existing installation. Take and verify a backup before any maintenance you are
 unsure about.
+
+## StartOS (Start9)
+
+A StartOS package lives in [`self-host/startos/`](https://github.com/silent-suite/silentsuite/tree/main/self-host/startos). It runs the same released
+server and web images, generates its own installation password and database password, and
+uses StartOS backups (a PostgreSQL dump plus the server data). On StartOS, open the
+**Show Installation Password** action, then sign up at the service's `https://` address.
+The Android app needs a public domain on that address, because it only trusts publicly
+issued certificates. The package is built and smoke-tested in CI. It has not been tested on
+a StartOS server yet and is not in the Start9 registry. See
+[`self-host/startos/instructions.md`](https://github.com/silent-suite/silentsuite/blob/main/self-host/startos/instructions.md).
 
 ## Security Notes
 
