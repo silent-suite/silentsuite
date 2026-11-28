@@ -618,6 +618,13 @@ a StartOS server yet and is not in the Start9 registry. See
 - The server image is selected by an immutable digest, never by a mutable tag, so the bytes you verified at install time are the bytes that keep running.
 - Built on the [Etebase protocol](https://docs.etebase.com), an open standard for E2E encrypted data sync.
 
+## CasaOS and ZimaOS
+
+A package for the CasaOS / ZimaOS app store lives in the repository's [`self-host/casaos/` folder](https://github.com/silent-suite/silentsuite/blob/main/self-host/casaos/README.md). It runs
+the web app and the sync server together on one port, makes its own credentials on first
+start, and needs your own HTTPS proxy or tunnel before sign-up works. Its backup is a copy of
+the stopped app's folder, described in that README. The `backup.sh` helper in this guide is for the installer stack only.
+
 ## Full Documentation
 
 For more details, see [docs.silentsuite.io/self-hosting](https://docs.silentsuite.io/self-hosting/).
