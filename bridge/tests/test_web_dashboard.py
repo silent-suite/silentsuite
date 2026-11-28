@@ -2603,3 +2603,15 @@ def test_render_dashboard_survives_signed_out_listing_failure(tmp_path, monkeypa
 
     assert "No accounts configured yet" in html
     assert "Signed out, local copy kept" not in html
+
+
+@pytest.mark.parametrize(
+    "page",
+    [web_module.REPORT_HTML, auth_browser.AUTH_PAGE_HTML, auth_browser.SUCCESS_PAGE_HTML],
+)
+def test_report_and_sign_in_pages_use_the_dashboard_secondary_grey(page):
+    import re
+
+    text_colours = re.findall(r"(?<![-\w])color:\s*(#[0-9a-fA-F]{3,6})", page)
+    assert "#888" in text_colours
+    assert not {"#555", "#666", "#777"} & set(text_colours)

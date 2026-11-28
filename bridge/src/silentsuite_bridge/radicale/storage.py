@@ -616,8 +616,15 @@ def _vcard4_media_line_to_3(name, params, value, group):
         if any(flag.strip().lower() == "base64" for flag in flags):
             # A data URI may percent-escape base64 characters (%3D for =).
             value = urllib.parse.unquote(match.group(2))
-            if value != match.group(2) and not _BASE64_REGEX.match(value):
-                return None  # never emit decoded line breaks or other text
+            # Never emit decoded line breaks or other text, and keep a payload
+            # that does not decode: an undecodable ENCODING=b line would make
+            # the whole card unreadable.
+            if len(value) % 4 or not _BASE64_REGEX.match(value):
+                return None
+            try:
+                base64.b64decode(value, validate=True)
+            except ValueError:
+                return None
         else:
             value = base64.b64encode(
                 urllib.parse.unquote_to_bytes(match.group(2))
@@ -641,10 +648,12 @@ def _vcard4_media_line_to_3(name, params, value, group):
     return f"{group + '.' if group else ''}{name}{param_text}:{value}"
 
 
-def _vcard4_media_to_3(content):
+def _vcard4_media_to_3(content, data_uris_only=False):
     """Rewrite vCard 4 PHOTO/LOGO lines into the vCard 3.0 forms clients read.
 
     Works on unfolded content lines, so parameters and group prefixes are kept.
+    With ``data_uris_only`` (vCard 3.0 cards, which have no data: URIs) only
+    data: URI values are rewritten; other URIs are served as stored.
     A line that is already in a 3.0 form, or that cannot be converted, is left
     unchanged: dropping it would let a client edit delete the photo everywhere.
     """
@@ -655,13 +664,32 @@ def _vcard4_media_to_3(content):
             name, params, value, group = vobject.base.parseLine(line)
         except vobject.base.ParseError:
             name = None
-        if name is not None and name.upper() in ("PHOTO", "LOGO"):
+        if (
+            name is not None
+            and name.upper() in ("PHOTO", "LOGO")
+            and not (data_uris_only and not _DATA_URI_REGEX.match(value))
+        ):
             converted = _vcard4_media_line_to_3(name, params, value, group)
             if converted is not None:
                 line = converted
                 changed = True
         lines.append(line)
     return "\r\n".join(lines) + "\r\n" if changed else content
+
+
+def _read_rewritten(item, content, stored_content):
+    """Parse rewritten card text, or keep the already parsed stored card.
+
+    A photo rewrite must never make a readable contact unreadable.
+    """
+    if content == stored_content:
+        return item
+    try:
+        return vobject.readOne(content)
+    except MemoryError:
+        raise
+    except Exception:
+        return item
 
 
 # vCard 3.0 has no year-less date. A vCard 4 --MMDD / --MM-DD birthday is served
@@ -1115,12 +1143,22 @@ class Collection(BaseCollection):
                 if hasattr(item, "kind") and item.kind.value.lower() == "group":
                     pass
                 else:
-                    content = _vcard4_media_to_3(stored_content)
-                    if content != stored_content:
-                        item = vobject.readOne(content)
+                    item = _read_rewritten(
+                        item, _vcard4_media_to_3(stored_content), stored_content
+                    )
 
                     item.contents["version"][0].value = "3.0"
                     _mark_yearless_birthdays(item)
+            elif (
+                item.name == "VCARD"
+                and item.contents["version"][0].value == "3.0"
+            ):
+                # Older web writes put data: URI photos into vCard 3.0 cards.
+                item = _read_rewritten(
+                    item,
+                    _vcard4_media_to_3(stored_content, data_uris_only=True),
+                    stored_content,
+                )
 
             if config.E2EE_LOCK_PREFIX:
                 for _key, line in _title_lines(item):

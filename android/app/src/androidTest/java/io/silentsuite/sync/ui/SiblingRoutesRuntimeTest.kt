@@ -238,14 +238,27 @@ class SiblingRoutesRuntimeTest {
                 scenario.onActivity { activity ->
                     assertEquals(account.name, activity.findViewById<TextView>(R.id.account_name).text.toString())
                     val oldPassword = activity.findViewById<TextInputLayout>(R.id.encryption_password).editText!!
-                    val newPassword = activity.findViewById<TextInputLayout>(R.id.new_encryption_password).editText!!
+                    val newPasswordLayout = activity.findViewById<TextInputLayout>(R.id.new_encryption_password)
+                    val confirmLayout = activity.findViewById<TextInputLayout>(R.id.confirm_new_encryption_password)
+                    val newPassword = newPasswordLayout.editText!!
+                    val confirmPassword = confirmLayout.editText!!
                     assertFalse(oldPassword.isSaveEnabled)
                     assertFalse(newPassword.isSaveEnabled)
+                    assertFalse(confirmPassword.isSaveEnabled)
                     assertTrue(activity.findViewById<View>(R.id.set_password).minimumHeight >=
                         activity.resources.getDimensionPixelSize(R.dimen.touch_target_min))
                     oldPassword.setText("old")
+                    // Too short and mismatched: rejected inline, no confirmation prompt.
                     newPassword.setText("new")
+                    confirmPassword.setText("other")
                     activity.changePasswordClicked(activity.findViewById(R.id.set_password))
+                    assertTrue(newPasswordLayout.error != null)
+                    assertTrue(confirmLayout.error != null)
+                    newPassword.setText("new-password")
+                    confirmPassword.setText("new-password")
+                    activity.changePasswordClicked(activity.findViewById(R.id.set_password))
+                    assertEquals(null, newPasswordLayout.error)
+                    assertEquals(null, confirmLayout.error)
                 }
                 waitUntil("password confirmation dialog") {
                     try {

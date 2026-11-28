@@ -3,11 +3,12 @@
 import { useCallback, useMemo } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { expandEventRecurrence, occurrenceEnd, type CalendarEvent } from '@silentsuite/core'
+import type { CalendarEvent } from '@silentsuite/core'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate, weekStartIndex, weekdayLabels } from '@/app/lib/date'
+import { expandGridEventsForRange, isDetachedCancellation } from '../lib/calendar-grid-events'
 
 const FALLBACK_CALENDAR_COLOR = '#10b981'
 const MAX_DOTS_PER_DAY = 4
@@ -68,21 +69,16 @@ function addEventDots(
     }
   }
 
+  if (isDetachedCancellation(event)) return
   if (!event.recurrenceRule) {
     addSpan(event.startDate, event.endDate)
     return
   }
 
-  const durationMs = Math.max(0, event.endDate.getTime() - event.startDate.getTime())
-  // A nominal day or week DURATION can be longer than the first occurrence across DST changes;
-  // a day's margin covers any zone's shift.
-  const lookbackMs = Math.max(durationMs, 86400000) + (event.duration ? 86400000 : 0)
-  const expansionStart = new Date(rangeStart.getTime() - lookbackMs)
-  const occurrences = expandEventRecurrence(event, { start: expansionStart, end: rangeEnd })
-
-  for (const occurrenceStart of occurrences) {
-    // A day or week DURATION keeps its wall clock across DST, so each occurrence takes its own end.
-    addSpan(occurrenceStart, occurrenceEnd(event, occurrenceStart))
+  // The grid's expansion: each occurrence with its own end, moved occurrences at their new time
+  // and cancelled ones left out.
+  for (const occurrence of expandGridEventsForRange([event], { start: rangeStart, end: rangeEnd }).events) {
+    addSpan(occurrence.startDate, occurrence.endDate)
   }
 }
 

@@ -48,7 +48,8 @@ const PLATFORM_INSTRUCTIONS = [
   },
   {
     name: 'Google Tasks',
-    steps: 'Use Google Takeout → select Tasks → download',
+    steps:
+      "Importing a Google Tasks file isn't supported yet. Google Takeout exports tasks as JSON, which this importer can't read.",
   },
   {
     name: 'Other',

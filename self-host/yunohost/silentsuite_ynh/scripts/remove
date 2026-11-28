@@ -1,0 +1,33 @@
+#!/bin/bash
+
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+source _common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# REMOVE SYSTEM CONFIGURATIONS
+#=================================================
+ynh_script_progression "Removing system configurations related to $app..."
+
+for service in "$app-web" "$app-server"; do
+    if ynh_hide_warnings yunohost service status "$service" >/dev/null; then
+        yunohost service remove "$service"
+    fi
+    ynh_config_remove_systemd "$service"
+done
+
+ynh_config_remove_nginx
+
+# The web app's Next.js cache (systemd CacheDirectory= of the web unit).
+ynh_safe_rm "/var/cache/$app-web"
+
+_silentsuite_cleanup_fetch
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_script_progression "Removal of $app completed"

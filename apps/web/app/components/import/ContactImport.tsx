@@ -21,6 +21,9 @@ import type { ImportIncompleteError, ImportPositionOutcome } from '@/app/lib/imp
 // Large address books with long notes can exceed 10 MB; each batch still uploads separately.
 export const MAX_CONTACT_IMPORT_FILE_BYTES = 50 * 1024 * 1024
 
+// Android stores a contact in one provider batch; a note far past this (an estimate) can stop its sync.
+export const LONG_CONTACT_NOTE_CHARS = 200_000
+
 const sourceKeyOf = (contact: VCard) => (contact as VCard & { sourceKey?: string }).sourceKey
 
 function hasProviderContacts(contacts: VCard[]): boolean {
@@ -144,6 +147,14 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   // Progress lives in the store, so a page that was left and reopened still shows the running import.
   const runningImport = useContactStore((s) => s.fileImport) ?? null
   const busy = isImporting || runningImport !== null
+  // Counted from the current file preview, so a retry that lists only the unsaved contacts never
+  // warns about a long note that was already saved.
+  const longNotes = hasProviderContacts(contacts) ? 0 : contacts.filter((contact) => (contact.note?.length ?? 0) > LONG_CONTACT_NOTE_CHARS).length
+  const longNoteNotice = longNotes === 0
+    ? null
+    : longNotes === 1
+      ? '1 contact has a note over 200,000 characters and may not sync to Android.'
+      : `${longNotes} contacts have notes over 200,000 characters and may not sync to Android.`
   // Each file selection and each provider run takes the next token when it starts; its preview,
   // notices and errors count only while that token is still the newest, so a slower, older
   // selection (a file, Google or Microsoft) never replaces a newer one.
@@ -401,6 +412,10 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
 
       {unreadableNotice && (
         <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{unreadableNotice}</p>
+      )}
+
+      {longNoteNotice && (
+        <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{longNoteNotice}</p>
       )}
 
       {error && (

@@ -41,6 +41,10 @@ def child_argv(binary_args, argv=None) -> list[str]:
     args = list(binary_args) + [CHILD_FLAG]
     if "--no-tray" in argv:
         args.append("--no-tray")
+    if "--server" in argv:
+        idx = argv.index("--server")
+        if idx + 1 < len(argv):
+            args += ["--server", argv[idx + 1]]
     return args
 
 
@@ -142,5 +146,5 @@ def start_background(
     print(f"Process ID: {process.pid}")
     print(_dashboard_text(address, port))
     print(f"Log: {log_file}")
-    print("To stop it, run: Get-Process silentsuite-bridge* | Stop-Process")
+    print(f"To stop it, run: Stop-Process -Id {process.pid}")
     return 0

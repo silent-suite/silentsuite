@@ -154,9 +154,11 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 209, f"expected 209 Android resource XML files, found {len(files)}"
+    assert len(files) == 211, f"expected 211 Android resource XML files, found {len(files)}"
     assert {
         "drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml",
+        # AppTheme's text colour state lists (disabled rows at 38%).
+        "color/theme_text_primary.xml", "color/theme_text_secondary.xml",
         # The month widget adds 19 XML files; all remain subject to the color rules below.
         "drawable/widget_month_add.xml",
         "drawable/widget_month_background.xml",
@@ -791,6 +793,35 @@ def test_every_android_resource_xml_obeys_the_closed_color_contract():
     assert all(locations == alias_declarations for locations in found_alias_declarations.values()), found_alias_declarations
 
 
+def state_list_roles(name: str) -> set[str]:
+    assert not (RES / f"color-night/{name}.xml").exists(), name
+    items = ET.parse(RES / f"color/{name}.xml").getroot().findall("item")
+    roles = set()
+    for item in items:
+        reference = COLOR_REFERENCE.fullmatch(item.attrib.get(f"{ANDROID_NS}color", ""))
+        assert reference is not None, (name, item.attrib)
+        roles.add(reference.group(1))
+    return roles
+
+
+# Theme state lists and the one semantic role each resolves to, enabled or disabled.
+THEME_STATE_LIST_ROLES = {
+    "theme_text_primary": "semantic_on_surface",
+    "theme_text_secondary": "semantic_on_surface_variant",
+}
+
+
+def test_theme_text_state_lists_keep_their_surface_role_and_only_dim_when_disabled():
+    for name, role in THEME_STATE_LIST_ROLES.items():
+        assert state_list_roles(name) == {role}, name
+        items = ET.parse(RES / f"color/{name}.xml").getroot().findall("item")
+        # The default (last) item is the full-strength role; only the disabled state dims it.
+        assert set(items[-1].attrib) == {f"{ANDROID_NS}color"}, (name, items[-1].attrib)
+        dimmed = items[:-1]
+        assert [item.attrib.get(f"{ANDROID_NS}state_enabled") for item in dimmed] == ["false"], name
+        assert dimmed[0].attrib.get(f"{ANDROID_NS}alpha") == "0.38", name
+
+
 def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_contract():
     day, night = colors("values"), colors("values-night")
     theme_references = {}
@@ -801,8 +832,12 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
         }
         theme_references[qualifier] = references
         for name in references:
-            assert name in day, (qualifier, name, "missing day color")
-            assert name in night, (qualifier, name, "missing night color")
+            # A theme colour may be a state list in res/color as long as every colour it uses has a
+            # day and a night value; the list then resolves correctly in both themes.
+            roles = state_list_roles(name) if (RES / f"color/{name}.xml").exists() else {name}
+            for role in roles:
+                assert role in day, (qualifier, name, role, "missing day color")
+                assert role in night, (qualifier, name, role, "missing night color")
     assert theme_references["values"] == theme_references["values-night"]
 
     for qualifier, declared in (("values", day), ("values-night", night)):
@@ -898,11 +933,8 @@ def test_context_aware_vector_roles_and_tint_consumers_are_exact():
             "menu/collection_item_fragment.xml",
             "menu/activity_journal_item.xml",
         ),
-        "ic_save_light": (
-            "menu/fragment_edit_collection.xml",
-            "menu/activity_create_collection.xml",
-            "menu/activity_edit_collection.xml",
-        ),
+        # The create and edit collection forms use a "Create"/"Save" text action instead.
+        "ic_save_light": ("menu/activity_edit_collection.xml",),
         "ic_share_light": ("menu/activity_debug_info.xml",),
         "ic_sync_light": (
             "menu/activity_account.xml",
@@ -914,14 +946,14 @@ def test_context_aware_vector_roles_and_tint_consumers_are_exact():
         "ic_people_light": ("res/layout/activity_account.xml", "res/menu/activity_accounts_drawer.xml"),
         "ic_task_light": ("res/layout/activity_account.xml",),
         "ic_file_white": ("java/io/silentsuite/sync/ui/importlocal/ImportActivity.kt",),
-        "ic_menu_light": ("java/io/silentsuite/sync/ui/AccountActivity.kt",),
+        "ic_more_vert_light": ("java/io/silentsuite/sync/ui/AccountActivity.kt",),
     }
 
     for icon, consumers in system_bar_icons.items():
         vector = ET.parse(RES / f"drawable/{icon}.xml").getroot()
         assert {path.attrib.get("{http://schemas.android.com/apk/res/android}fillColor") for path in vector.findall("path")} == {"@color/semantic_on_system_bar"}, icon
         # The white fill is only right on a dark action bar. The theme tint makes the glyph follow
-        # the toolbar it sits on: dark on the light Material3 toolbars, white on the dark overlay.
+        # the toolbar it sits on: white through the navy bars' dark overlay.
         assert vector.attrib.get("{http://schemas.android.com/apk/res/android}tint") == "?attr/colorControlNormal", icon
         for consumer in consumers:
             assert f"@drawable/{icon}" in source(f"android/app/src/main/res/{consumer}"), (icon, consumer)
@@ -1152,12 +1184,46 @@ def test_legacy_window_action_bars_are_navy_with_white_foreground_in_both_themes
             assert items.get("android:textColorPrimary") == ON_TOP_BAR, (qualifier, items)
             assert items.get("colorControlNormal") == ON_TOP_BAR, (qualifier, items)
         # White belongs to the bar overlay only; content text and icons keep their surface roles.
-        assert app_theme.get("android:textColorPrimary") == "@color/semantic_on_surface"
-        assert app_theme.get("android:textColorSecondary") == "@color/semantic_on_surface_variant"
+        # The state lists only dim disabled rows; enabled text keeps these surface roles
+        # (test_theme_text_state_lists_keep_their_surface_role_and_only_dim_when_disabled).
+        assert app_theme.get("android:textColorPrimary") == "@color/theme_text_primary"
+        assert app_theme.get("android:textColorSecondary") == "@color/theme_text_secondary"
+        assert state_list_roles("theme_text_primary") == {"semantic_on_surface"}
+        assert state_list_roles("theme_text_secondary") == {"semantic_on_surface_variant"}
         assert "colorControlNormal" not in app_theme
         # The About toolbar already uses the approved pair and must stay that way.
         about = resource_styles(qualifier)["toolbar_style"]
         assert about.get("android:background") == TOP_BAR and about.get("titleTextColor") == ON_TOP_BAR
+
+
+def test_material3_window_action_bars_match_the_navy_top_bar_in_both_themes():
+    manifest = ET.parse(ROOT / "android/app/src/main/AndroidManifest.xml").getroot()
+    material3 = [
+        activity.attrib[f"{ANDROID_NS}name"]
+        for activity in manifest.find("application").findall("activity")
+        if activity.attrib.get(f"{ANDROID_NS}theme") == "@style/AppTheme.Material3"
+    ]
+    assert ".ui.setup.LoginActivity" in material3 and ".ui.notes.NotesActivity" in material3, material3
+
+    for qualifier in ("values", "values-night"):
+        theme = styles(qualifier)["AppTheme.Material3"]
+        # Material3 otherwise paints this bar colorSurfaceContainer (lavender by day, grey at night).
+        bar = app_style(qualifier, theme.get("actionBarStyle", ""))
+        for item in ("background", "backgroundStacked", "backgroundSplit"):
+            assert bar.get(item) == TOP_BAR, (qualifier, item, bar)
+        # The Material3 title colour is colorOnSurface, which the bar overlay leaves dark.
+        title = app_style(qualifier, bar.get("titleTextStyle", ""))
+        assert title.get("android:textColor") == ON_TOP_BAR, (qualifier, title)
+        # Up arrow, overflow and colorControlNormal-tinted action icons turn white in the bar only,
+        # exactly as on the legacy AppTheme bars; the content theme keeps its control colours.
+        assert theme.get("actionBarTheme") == "@style/ThemeOverlay.AppCompat.Dark.ActionBar", qualifier
+        assert "colorControlNormal" not in theme and "android:textColorSecondary" not in theme, qualifier
+
+    # Action icons with a fixed tint sit on the navy bar too.
+    assert 'app:iconTint="@color/semantic_on_system_bar"' in source("android/app/src/main/res/menu/activity_login.xml")
+    editor_action = ET.parse(RES / "color/note_editor_action.xml").getroot()
+    assert [item.attrib.get(f"{ANDROID_NS}color") for item in editor_action] == [ON_TOP_BAR, ON_TOP_BAR]
+    assert editor_action[0].attrib.get(f"{ANDROID_NS}state_enabled") == "false"
 
 
 def test_dashboard_top_bar_is_navy_with_toolbar_scoped_white_foregrounds_in_both_themes():
@@ -1236,6 +1302,20 @@ def test_about_toolbar_controls_are_white_through_the_scoped_top_bar_overlay():
             assert attribute not in overlay, (qualifier, attribute, "white would leak into the light overflow popup")
         for theme_name in ("AppTheme.Material3", "AppTheme.Material3.NoActionBar"):
             assert "colorControlNormal" not in styles(qualifier)[theme_name], (qualifier, theme_name)
+
+
+def test_about_tab_strip_is_navy_under_white_labels_and_up_arrow_aligns_with_title():
+    root = ET.parse(RES / "layout/activity_about.xml").getroot()
+    by_id = {element.attrib.get(f"{ANDROID_NS}id"): element for element in root.iter()}
+    tabs = by_id["@+id/tabs"]
+    # The Material3 TabLayout paints its own colorSurface background, which is near-white by
+    # day; white labels need the navy bar drawn on the strip itself in both themes.
+    assert tabs.attrib.get(f"{APP_NS}tabTextColor") == ON_TOP_BAR
+    assert tabs.attrib.get(f"{ANDROID_NS}background") == TOP_BAR
+    # AppCompat centres the Up button within minHeight but the title within the full height, so a
+    # minHeight below the bar height lifts the arrow above the title.
+    toolbar = by_id["@+id/toolbar"]
+    assert toolbar.attrib.get(f"{ANDROID_NS}minHeight") == toolbar.attrib.get(f"{ANDROID_NS}layout_height")
 
 
 SYSTEM_BAR_THEME_FAMILIES = ("AppTheme", "AppTheme.NoActionBar", "AppTheme.Material3", "AppTheme.Material3.NoActionBar")

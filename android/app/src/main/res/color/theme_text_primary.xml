@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AppTheme's android:textColorPrimary. A disabled row (for example a setting that depends on another
+     switch) shows its text at Material's 38% so it reads as unavailable; semantic_on_surface has a
+     night value, so this one list serves both themes. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false" android:alpha="0.38" android:color="@color/semantic_on_surface" />
+    <item android:color="@color/semantic_on_surface" />
+</selector>

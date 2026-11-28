@@ -287,6 +287,19 @@ describe('file contact import: preflight and UIDs', () => {
     expect(err.unsaved).toEqual([1])
   })
 
+  it('lowers the shown total as soon as already imported cards are skipped', async () => {
+    server.seed('col-1', 'BEGIN:VCARD\r\nUID:a\r\nFN:A\r\nEND:VCARD')
+    const create = useEtebaseStore.getState().createItemsBatch
+    let shown: unknown = null
+    useEtebaseStore.setState({ createItemsBatch: (...args: Parameters<typeof create>) => { shown = useContactStore.getState().fileImport; return create(...args) } } as any)
+    try {
+      await expect(importFile([card('A', 'a'), card('B', 'b'), card('C', 'c')])).resolves.toBe(2)
+      expect(shown).toEqual({ saved: 0, total: 2 })
+    } finally {
+      useEtebaseStore.setState({ createItemsBatch: create } as any)
+    }
+  })
+
   it('re-import with A on the server sends only B', async () => {
     server.seed('col-1', 'BEGIN:VCARD\r\nVERSION:3.0\r\nUID:a\r\nFN:A\r\nEND:VCARD')
     await expect(importFile([card('A', 'a'), card('B', 'b')])).resolves.toBe(1)
@@ -303,6 +316,39 @@ describe('file contact import: preflight and UIDs', () => {
   it('does not skip a UID that exists only in another list', async () => {
     server.seed('col-2', 'BEGIN:VCARD\r\nUID:a\r\nFN:A\r\nEND:VCARD')
     await expect(importFile([card('A', 'a')])).resolves.toBe(1)
+  })
+
+  it('an unframed or invalid UTF-8 server item does not make a file card look imported', async () => {
+    server.seed('col-1', 'UID:a')
+    server.seed('col-1', new Uint8Array([...new TextEncoder().encode('BEGIN:VCARD\r\nUID:b\r\nFN:'), 0xff, ...new TextEncoder().encode('\r\nEND:VCARD')]) as any)
+    server.seed('col-1', 'BEGIN:VCARD\r\nUID:c\r\nFN:C\r\nEND:VCARD')
+    const skipped = vi.fn()
+    await expect(importFile([card('A', 'a'), card('B', 'b'), card('C', 'c')], { onSkipped: skipped })).resolves.toBe(2)
+    expect(skipped).toHaveBeenCalledWith(1)
+    expect(server.attempts[0]!.uids).toHaveLength(2)
+  })
+
+  it('still skips valid duplicates in every supported framing next to malformed items', async () => {
+    server.seed('col-1', 'UID:x')
+    server.seed('col-1', new Uint8Array([0xff, 0xfe]) as any)
+    server.seed('col-1', 'BEGIN:VCARD\nUID:lf\nFN:A\nEND:VCARD\n')
+    server.seed('col-1', 'begin:vcard\r\nUID:lower\r\nFN:A\r\nend:vcard')
+    server.seed('col-1', '\uFEFFBEGIN:VCARD \r\nUID:bom\r\nFN:A\r\nEND:VCARD\t\r\n')
+    server.seed('col-1', new TextEncoder().encode('BEGIN:VCARD\r\nUID:fol\r\n ded\r\nFN:\u00c5\r\nEND:VCARD') as any)
+    const skipped = vi.fn()
+    const uids = ['x', 'lf', 'lower', 'bom', 'folded']
+    await expect(importFile(uids.map((uid) => card(uid, uid)), { onSkipped: skipped })).resolves.toBe(1)
+    expect(skipped).toHaveBeenCalledWith(4)
+    expect(server.attempts).toHaveLength(1)
+    expect(server.items('col-1').filter((content) => typeof content === 'string').map(vcardUid)).toContain('x')
+  })
+
+  it('a failed read or decrypt next to malformed items still aborts before any write', async () => {
+    server.seed('col-1', 'UID:x')
+    server.seed('col-1', new Uint8Array([0xff]) as any)
+    server.seed('col-1', 'x', true)
+    await expect(importFile([card('A', 'a')])).rejects.toMatchObject({ name: 'ImportReconcileFailedError' })
+    expect(server.attempts).toHaveLength(0)
   })
 
   it('an unreadable item blocks only when it is in the target list', async () => {
@@ -326,6 +372,27 @@ describe('file contact import: preflight and UIDs', () => {
     expect(err.outcomes).toEqual(['notSent'])
     expect(err.uncertain).toBe(false)
     expect(server.attempts).toHaveLength(0)
+  })
+
+  it('reports not sent, not already imported, when the list is deleted after the read', async () => {
+    server.seed('col-1', 'BEGIN:VCARD\r\nUID:a\r\nFN:A\r\nEND:VCARD')
+    const read = useEtebaseStore.getState().readCollectionVCardUids
+    useEtebaseStore.setState({
+      readCollectionVCardUids: async (...args: Parameters<typeof read>) => {
+        const result = await read(...args)
+        useEtebaseStore.setState((state) => ({ collections: { ...state.collections, contacts: [] } }))
+        return result
+      },
+    } as any)
+    try {
+      const skipped = vi.fn()
+      const err = await outcomeOf(importFile([card('A', 'a')], { onSkipped: skipped }))
+      expect(err.outcomes).toEqual(['notSent'])
+      expect(skipped).not.toHaveBeenCalled()
+      expect(server.attempts).toHaveLength(0)
+    } finally {
+      useEtebaseStore.setState({ readCollectionVCardUids: read } as any)
+    }
   })
 
   it('stops when the account changes between the read and the write', async () => {

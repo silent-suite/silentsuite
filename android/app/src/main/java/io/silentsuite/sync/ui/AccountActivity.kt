@@ -58,6 +58,8 @@ import io.silentsuite.sync.dataexport.AndroidDataExporter
 import io.silentsuite.sync.dataexport.AndroidExportKind
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.notes.NotesNetwork
+import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.notes.edit.UnsyncedNotes
@@ -292,18 +294,18 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         })
 
-        val icMenu = ContextCompat.getDrawable(this, R.drawable.ic_menu_light)
+        val icOverflow = ContextCompat.getDrawable(this, R.drawable.ic_more_vert_light)
 
         // CardDAV toolbar
         val tbCardDAV = findViewById<View>(R.id.carddav_menu) as Toolbar
-        tbCardDAV.overflowIcon = icMenu
+        tbCardDAV.overflowIcon = icOverflow
         tbCardDAV.inflateMenu(R.menu.carddav_actions)
         tbCardDAV.setOnMenuItemClickListener(this)
         tbCardDAV.setTitle(R.string.settings_carddav)
 
         // CalDAV toolbar
         val tbCalDAV = findViewById<View>(R.id.caldav_menu) as Toolbar
-        tbCalDAV.overflowIcon = icMenu
+        tbCalDAV.overflowIcon = icOverflow
         tbCalDAV.inflateMenu(R.menu.caldav_actions)
         tbCalDAV.setOnMenuItemClickListener(this)
         tbCalDAV.setTitle(R.string.settings_caldav)
@@ -311,14 +313,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         // TaskDAV toolbar
         val tbTaskDAV = findViewById<View>(R.id.taskdav_menu) as Toolbar
-        tbTaskDAV.overflowIcon = icMenu
+        tbTaskDAV.overflowIcon = icOverflow
         tbTaskDAV.inflateMenu(R.menu.taskdav_actions)
         tbTaskDAV.setOnMenuItemClickListener(this)
         tbTaskDAV.setTitle(R.string.settings_taskdav)
 
         // Notes toolbar (experimental; the card stays hidden until the account opts in)
         val tbNotes = findViewById<View>(R.id.notes_menu) as Toolbar
-        tbNotes.overflowIcon = icMenu
+        tbNotes.overflowIcon = icOverflow
         tbNotes.inflateMenu(R.menu.notes_actions)
         tbNotes.setOnMenuItemClickListener(this)
         tbNotes.setTitle(R.string.settings_notes)
@@ -593,7 +595,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         when (item.itemId) {
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
             R.id.nav_app_settings -> launchExactAccountRoute(
-                AppSettingsActivity.newIntent(this, account, accountCreationId))
+                AppSettingsActivity.newIntent(this, account, accountCreationId).fromDashboard())
             R.id.nav_invitations -> launchExactAccountRoute(
                 InvitationsActivity.newIntent(this, account, accountCreationId))
             R.id.nav_notes -> launchExactAccountRoute(
@@ -977,6 +979,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             internal var status: SyncStatusStore.Status? = null
 
             internal var infos: List<CollectionListItemInfo>? = null
+
+            /**
+             * Notes only: what refuses an automatic Notes run on the network read at load, the same
+             * rule as the Notes screen's line. Empty when nothing does or the network could not be read.
+             */
+            internal var networkBlockers: Set<NotesNetworkPolicy.Blocker> = emptySet()
         }
     }
 
@@ -1019,7 +1027,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         if (info.taskdav != null) {
             val progress = findViewById<View>(R.id.taskdav_refreshing) as ProgressBar
             progress.visibility = if (info.taskdav!!.refreshing) View.VISIBLE else View.GONE
-            val hasTaskProvider = hasSupportedTaskProvider()
 
             listTaskDAV = findViewById<View>(R.id.tasklists) as ListView
             listTaskDAV!!.isEnabled = !info.taskdav!!.refreshing
@@ -1029,9 +1036,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             adapter.addAll(info.taskdav!!.infos!!)
             listTaskDAV!!.adapter = adapter
             listTaskDAV!!.onItemClickListener = onItemClickListener
-
-            val opentasksWarning = findViewById<View>(R.id.taskdav_opentasks_warning)
-            opentasksWarning.visibility = if (hasTaskProvider) View.GONE else View.VISIBLE
         }
         renderNotesSurfaces(info)
         renderDashboard(info)
@@ -1069,6 +1073,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val destination: Int,
         val model: AccountDashboardModel,
         val status: SyncStatusStore.Status?,
+        val networkBlockers: Set<NotesNetworkPolicy.Blocker> = emptySet(),
     )
 
     private fun renderDashboard(info: AccountInfo) {
@@ -1119,7 +1124,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             info.notes?.let { notes ->
                 DashboardServiceUi(R.string.settings_notes, R.id.notes_status, R.id.notes_status_detail,
                     R.id.notes_status_icon, R.id.notes_status_row, R.id.notes, R.string.dashboard_notes_destination,
-                    reduce(notes, permission = true, collectionsAvailable = true), notes.status)
+                    reduce(notes, permission = true, collectionsAvailable = true), notes.status, notes.networkBlockers)
             },
         )
         services.forEach(::renderServiceStatus)
@@ -1134,8 +1139,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         else services
         val aggregate = aggregateAccountDashboard(headlineServices.map { it.model })
         val row = findViewById<View>(R.id.dashboard_status_row)
+        val reminderShown = taskReminder && !reminderHidden
         findViewById<View>(R.id.dashboard_task_reminder_dismiss).visibility =
-            if (taskReminder && !reminderHidden) View.VISIBLE else View.GONE
+            if (reminderShown) View.VISIBLE else View.GONE
+        // The headline carries the explanation while it shows the reminder, so the Tasks row keeps
+        // only its status instead of repeating the same sentence.
+        findViewById<View>(R.id.taskdav_status_detail).visibility = if (reminderShown) View.GONE else View.VISIBLE
         // An all-success headline would imply Tasks sync too, so the headline is omitted instead.
         if (headlineServices.size < services.size && aggregate.state == AccountDashboardState.SUCCESS) {
             row.visibility = View.GONE
@@ -1186,15 +1195,30 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private fun renderServiceStatus(service: DashboardServiceUi) {
         val result = latestMeaningfulResult(listOf(service.status))
         val presentation = presentAccountDashboard(service.model, result?.timestamp)
-        val statusText = dashboardStatusText(presentation)
+        // Notes held back by a Wi-Fi rule say so instead of "Up to date" or "First sync pending", as
+        // the Notes screen does. Running, queued and failed states keep their own words.
+        val networkHeld = service.networkBlockers.isNotEmpty() &&
+            (presentation.label == AccountDashboardLabel.SYNCED || presentation.label == AccountDashboardLabel.NEVER_SYNCED)
+        val statusText = when {
+            !networkHeld -> dashboardStatusText(presentation)
+            NotesNetworkPolicy.Blocker.ACCOUNT_NETWORK_NAME in service.networkBlockers ->
+                getString(R.string.dashboard_status_notes_network_name)
+            else -> getString(R.string.dashboard_status_waiting_wifi)
+        }
         val detailText = dashboardDetailText(presentation, result, service.destination)
         val statusView = findViewById<TextView>(service.statusView)
         statusView.text = statusText
         findViewById<TextView>(service.detailView).text = detailText
         findViewById<View>(service.rowView).contentDescription =
             "${getString(service.title)}. $statusText. $detailText"
-        applyDashboardVisual(findViewById(service.iconView), statusView, presentation)
+        applyDashboardVisual(findViewById(service.iconView), statusView, if (!networkHeld) presentation
+            else presentation.copy(icon = AccountDashboardIcon.PAUSED, tone = AccountDashboardTone.NEUTRAL))
 
+        if (service.destination == R.string.dashboard_notes_destination) {
+            val button = findViewById<com.google.android.material.button.MaterialButton>(R.id.notes_open)
+            button.visibility = View.VISIBLE
+            button.setOnClickListener { launchExactAccountRoute(NotesActivity.newIntent(this, account, accountCreationId)) }
+        }
         val openButtonId = when (service.destination) {
             R.string.dashboard_calendar_destination -> R.id.caldav_open
             R.string.dashboard_contacts_destination -> R.id.carddav_open
@@ -1311,8 +1335,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         else -> R.string.dashboard_services_title
     })
 
-    private fun relativeTime(timestamp: Long): CharSequence = DateUtils.getRelativeTimeSpanString(
-        timestamp, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
+    // Under a minute, Android would print "0 min. ago"; say "just now" instead. A time in the future
+    // (the clock moved back) keeps Android's own text.
+    private fun relativeTime(timestamp: Long): CharSequence {
+        val now = System.currentTimeMillis()
+        if (now - timestamp in 0 until DateUtils.MINUTE_IN_MILLIS) return getString(R.string.dashboard_time_just_now)
+        return DateUtils.getRelativeTimeSpanString(timestamp, now, DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
+    }
 
     private fun applyDashboardVisual(icon: ImageView, text: TextView, presentation: AccountDashboardPresentation) {
         icon.setImageResource(when (presentation.icon) {
@@ -1336,8 +1365,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun renderDashboardAction(action: AccountDashboardAction, setupTarget: Int?) {
+        // The task-app link is advice, not a fix, so it gets the quiet text button instead of the
+        // full-width primary one.
+        val taskAppLink = findViewById<View>(R.id.dashboard_task_app_action)
+        taskAppLink.visibility = if (action == AccountDashboardAction.INSTALL_TASK_APP) View.VISIBLE else View.GONE
+        taskAppLink.setOnClickListener { WebViewActivity.openUrl(this, Constants.androidTaskAppDocsUri) }
         val button = findViewById<com.google.android.material.button.MaterialButton>(R.id.dashboard_context_action)
-        button.visibility = if (action == AccountDashboardAction.NONE) View.GONE else View.VISIBLE
+        button.visibility = if (action == AccountDashboardAction.NONE || action == AccountDashboardAction.INSTALL_TASK_APP)
+            View.GONE else View.VISIBLE
         button.setText(when (action) {
             AccountDashboardAction.NONE -> R.string.account_synchronize_now
             AccountDashboardAction.SYNC_NOW -> R.string.account_synchronize_now
@@ -1364,14 +1399,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     val intent = Intent(this, PermissionsActivity::class.java)
                     permissionRemediationLauncherOverride?.invoke(intent) ?: startActivity(intent)
                 }
-                AccountDashboardAction.INSTALL_TASK_APP -> WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)
+                AccountDashboardAction.INSTALL_TASK_APP -> Unit
                 AccountDashboardAction.REVIEW_SETUP -> setupTarget?.let { target ->
                     findViewById<ScrollView>(R.id.parent).smoothScrollTo(0, findViewById<View>(target).top)
                 }
                 AccountDashboardAction.OPEN_ACCOUNT_SETTINGS -> launchExactAccountRoute(
-                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.ACCOUNT))
+                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.ACCOUNT).fromDashboard())
                 AccountDashboardAction.OPEN_SYNC_SETTINGS -> launchExactAccountRoute(
-                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.SYNC))
+                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.SYNC).fromDashboard())
             }
         }
     }
@@ -1383,9 +1418,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private fun permissionsReady(vararg permissions: String) = permissions.all {
         ContextCompat.checkSelfPermission(this, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
-
-    private fun hasSupportedTaskProvider() =
-            TaskProviderHandling.getWantedTaskSyncProvider(this) != null
 
 
     class AccountInfoViewModel : ViewModel(), AccountUpdateService.RefreshingStatusListener, ServiceConnection, SyncStatusObserver,
@@ -1682,6 +1714,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     info.notes!!.refreshing, info.notes!!.pending)
                 if (!exactGenerationStillCurrent()) return null
                 info.notes!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.NOTES)
+                // The same verdict an automatic Notes run gets now. A reading that fails says nothing.
+                info.notes!!.networkBlockers = try {
+                    NotesNetwork.verdict(context, accountManager, account, settings, explicit = false).blockers
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    emptySet()
+                }
             }
 
             // This runs on Dispatchers.IO immediately after the final private read and before
@@ -1922,6 +1961,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         collectionIntentLauncherOverride?.invoke(intent) ?: startActivity(intent)
     }
 
+    private fun Intent.fromDashboard(): Intent = putExtra(AppSettingsActivity.EXTRA_FROM_DASHBOARD, true)
+
     private fun launchExactAccountRoute(intent: Intent) {
         if (!exactAccountStillCurrent()) return
         accountRouteLauncherOverride?.invoke(intent) ?: startActivity(intent)
@@ -2041,9 +2082,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
         statusView.setTextColor(ContextCompat.getColor(this, R.color.semantic_warning))
         actionButton.visibility = View.VISIBLE
-        actionButton.setText(R.string.dashboard_open_account_settings)
+        // App settings has no billing controls; the web subscription page does, as in the expired notification.
+        actionButton.setText(R.string.subscription_manage)
         actionButton.setOnClickListener {
-            launchExactAccountRoute(AppSettingsActivity.newIntent(this, account, accountCreationId))
+            launchDashboardExternalApp(Intent(Intent.ACTION_VIEW, Uri.parse(BillingManager.BILLING_MANAGE_URL)))
         }
     }
 

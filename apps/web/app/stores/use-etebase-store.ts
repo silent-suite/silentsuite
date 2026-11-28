@@ -32,7 +32,7 @@ import {
 import { secureGet } from '@/app/lib/secure-storage'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
-import { parseVCard } from '@silentsuite/core/utils/vcard-parser'
+import { parseVCard, splitVCardFile } from '@silentsuite/core/utils/vcard-parser'
 import {
   ensureEncryptedEnvelope as cacheEnsureEncryptedEnvelope,
   ensureFingerprint as cacheEnsureFingerprint,
@@ -274,6 +274,26 @@ async function trackAndStartSyncEngine(
   return engine
 }
 
+/** Far above any real collection; a listing that reaches it is treated as broken. */
+const MAX_ITEM_LIST_PAGES = 10_000
+
+/**
+ * One per listing. Called for each page the server marks not done, it returns the
+ * cursor for the next page, or throws when that cursor is missing or repeats or the
+ * listing runs past `maxPages`, so a misbehaving server cannot keep a loop paging
+ * forever or restart it from the first page.
+ */
+export function nextItemPageStoken(maxPages = MAX_ITEM_LIST_PAGES) {
+  const seen = new Set<string>()
+  return (page: { stoken?: string | null; done: boolean }): string => {
+    if (seen.size + 1 >= maxPages) throw new Error(`Item listing has more than ${maxPages} pages`)
+    if (!page.stoken) throw new Error('Item listing is not done but returned no stoken')
+    if (seen.has(page.stoken)) throw new Error('Item listing returned a repeated stoken')
+    seen.add(page.stoken)
+    return page.stoken
+  }
+}
+
 /**
  * List every item for a single visible domain into the shared cache maps.
  * Paginates each concrete collection to completion and skips tombstones.
@@ -297,6 +317,7 @@ async function loadInitialDomainItems(
   for (const collection of typedCollections) {
     let stoken: string | null = null
     let done = false
+    const nextStoken = nextItemPageStoken()
 
     while (!done) {
       const response = await core.listItems(account, collection, stoken)
@@ -312,8 +333,8 @@ async function loadInitialDomainItems(
         maps.itemCollectionMap.set(item.uid, collection.uid)
         itemCount += 1
       }
-      stoken = response.stoken
       done = response.done
+      if (!done) stoken = nextStoken(response)
     }
   }
 
@@ -1413,6 +1434,7 @@ async function deleteCollectionIfProved(
     const stoken = before.stoken
     if (!stoken || before.isDeleted) return 'changed'
     let pageToken: string | null = null
+    const nextStoken = nextItemPageStoken()
     for (;;) {
       const page = await core.listItems(account, before, pageToken)
       assertGuard()
@@ -1423,7 +1445,7 @@ async function deleteCollectionIfProved(
         if (!knownRevision(revision) || core.savedRevisionOf(child) !== revision) return 'changed'
       }
       if (page.done) break
-      pageToken = page.stoken
+      pageToken = nextStoken(page)
     }
     const after = await core.getCollection(account, collectionUid)
     assertGuard()
@@ -3534,6 +3556,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         throw new ReplayNotConfirmedError('Replay create cannot be reconciled without content identity')
       }
       let stoken: string | null | undefined
+      const nextStoken = nextItemPageStoken()
       do {
         assertOfflineQueueAccountGuard(guard, get())
         const response = await core.listItems(account, collection, stoken)
@@ -3547,11 +3570,12 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (wantedLogicalUid ? logicalUid(candidateContent) === wantedLogicalUid : candidateContent === wantedContent) return candidate
         }
         if (response.done) return null
-        stoken = response.stoken
+        stoken = nextStoken(response)
       } while (true)
     }
     const findRemoteItemByUid = async (collection: any, uid: string) => {
       let stoken: string | null | undefined
+      const nextStoken = nextItemPageStoken()
       do {
         assertOfflineQueueAccountGuard(guard, get())
         const response = await core.listItems(account, collection, stoken)
@@ -3559,7 +3583,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const found = response.items.find((candidate: any) => !candidate.isDeleted && candidate.uid === uid)
         if (found) return found
         if (response.done) return null
-        stoken = response.stoken
+        stoken = nextStoken(response)
       } while (true)
     }
 
@@ -3722,13 +3746,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (collection.isDeleted) return hold('target-missing')
           let child: any = null
           let stoken: string | null | undefined
+          const nextStoken = nextItemPageStoken()
           do {
             assertOfflineQueueAccountGuard(guard, get())
             const response = await core.listItems(account, collection, stoken)
             assertOfflineQueueAccountGuard(guard, get())
             child = response.items.find((candidate: any) => candidate.uid === itemUid) ?? null
             if (child || response.done) break
-            stoken = response.stoken
+            stoken = nextStoken(response)
           } while (true)
           if (!child) return hold('target-missing')
           // Deleted elsewhere: the item is gone, not changed (#744).
@@ -3756,8 +3781,13 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (written.kind === 'saved' && kind === 'favorite') {
             const { contactSealedFavoriteAcknowledged } = await import('@/app/stores/use-contact-store')
             assertOfflineQueueAccountGuard(guard, get())
+            // The record now on the server, paired with the revision this write produced.
+            const accepted = {
+              over: provedRevision,
+              record: { ...core.deserializeContact(payload.body.content), id: itemUid, listId: entry.collectionUid, revision: written.etag },
+            }
             const onAcknowledged = () => {
-              if (getAccountEpoch() === guard.accountEpoch) contactSealedFavoriteAcknowledged(itemUid)
+              if (getAccountEpoch() === guard.accountEpoch) contactSealedFavoriteAcknowledged(itemUid, accepted)
             }
             return { remoteMutationConfirmed: true, acknowledgeRev: rev, onAcknowledged }
           }
@@ -3946,6 +3976,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const uids = new Set<string>()
       let stoken: string | undefined
       let done = false
+      const nextStoken = nextItemPageStoken()
       while (!done) {
         const page: { data: any[]; stoken: string | null; done: boolean } = await withFileImportTimeout(itemManager.list({ stoken }))
         assertCurrentAccountEpoch(accountEpoch)
@@ -3953,11 +3984,23 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (item.isDeleted) continue
           const raw = await item.getContent()
           assertCurrentAccountEpoch(accountEpoch)
-          const uid = parseVCard(typeof raw === 'string' ? raw : new TextDecoder().decode(raw), { keepMissingUid: true }).uid
+          // Only one complete, valid UTF-8 vCard vouches for its UID; an unframed or
+          // damaged payload never makes a file card look already imported. A failed read
+          // or decrypt above still aborts the whole check.
+          let text: string
+          try {
+            text = typeof raw === 'string' ? raw : new TextDecoder('utf-8', { fatal: true }).decode(raw)
+          } catch (err) {
+            if (err instanceof TypeError) continue
+            throw err
+          }
+          const { cards, incomplete } = splitVCardFile(text)
+          if (cards.length !== 1 || incomplete !== 0) continue
+          const uid = parseVCard(cards[0]!, { keepMissingUid: true }).uid
           if (uid) uids.add(uid)
         }
-        stoken = page.stoken || undefined
         done = page.done
+        if (!done) stoken = nextStoken(page)
       }
       return uids
     } catch (err) {
@@ -4504,6 +4547,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         // Paginate through all items
         let stoken: string | undefined = undefined
         let done = false
+        const nextStoken = nextItemPageStoken()
         while (!done) {
           const response: { data: any[]; stoken: string | null; done: boolean } = await itemManager.list({ stoken })
           assertCurrentAccountEpoch(accountEpoch)
@@ -4523,8 +4567,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
               if (report) report.unreadable += 1
             }
           }
-          stoken = response.stoken || undefined
           done = response.done
+          if (!done) stoken = nextStoken(response)
         }
 
         refreshed.push({ collection: freshCollection, items: collectionItems })

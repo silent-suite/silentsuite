@@ -555,3 +555,61 @@ def test_list_cached_users_reads_cache_file_without_creating_it(tmp_path, monkey
 
     assert list_cached_users() == ["bob@example.com"]
     assert db.database_proxy.obj is None
+
+
+def test_list_cached_users_opens_cache_file_read_only(tmp_path, monkeypatch):
+    import sqlite3
+
+    from silentsuite_bridge import local_cache
+    from silentsuite_bridge.local_cache import db, list_cached_users
+
+    path = tmp_path / "bridge_data.db"
+    connection = sqlite3.connect(path)
+    connection.execute('CREATE TABLE "user" (id INTEGER PRIMARY KEY, username VARCHAR(255))')
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(db.database_proxy, "obj", None)
+    monkeypatch.setattr(config, "DATABASE_FILE", str(path))
+    opened = []
+    real_connect = sqlite3.connect
+
+    def spy_connect(target, *args, **kwargs):
+        opened.append((target, kwargs.get("uri")))
+        return real_connect(target, *args, **kwargs)
+
+    monkeypatch.setattr(local_cache.sqlite3, "connect", spy_connect)
+
+    assert list_cached_users() == []
+    assert len(opened) == 1
+    target, uri = opened[0]
+    assert uri is True
+    assert target.startswith("file:") and target.endswith("?mode=ro")
+
+
+def test_list_cached_users_does_not_reconnect_closed_proxy(tmp_path, monkeypatch):
+    import sqlite3
+
+    import peewee as pw
+
+    from silentsuite_bridge.local_cache import db, list_cached_users
+
+    missing = tmp_path / "missing.db"
+    closed = pw.SqliteDatabase(str(missing))
+    assert closed.is_closed()
+    monkeypatch.setattr(db.database_proxy, "obj", closed)
+
+    assert list_cached_users() == []
+    assert not missing.exists()
+    assert closed.is_closed()
+
+    path = tmp_path / "bridge_data.db"
+    connection = sqlite3.connect(path)
+    connection.execute('CREATE TABLE "user" (id INTEGER PRIMARY KEY, username VARCHAR(255))')
+    connection.execute('INSERT INTO "user" (username) VALUES (?)', ("carol@example.com",))
+    connection.commit()
+    connection.close()
+    existing = pw.SqliteDatabase(str(path))
+    monkeypatch.setattr(db.database_proxy, "obj", existing)
+
+    assert list_cached_users() == ["carol@example.com"]
+    assert existing.is_closed()

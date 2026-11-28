@@ -134,17 +134,13 @@ function plainDateToDate(pd: Temporal.PlainDate): Date {
   return new Date(pd.year, pd.month - 1, pd.day)
 }
 
-/** Snap a Date to the nearest 30-minute boundary */
-function snapTo30Min(date: Date): Date {
-  const snapped = new Date(date)
-  const minutes = snapped.getMinutes()
-  const remainder = minutes % 30
-  if (remainder < 15) {
-    snapped.setMinutes(minutes - remainder, 0, 0)
-  } else {
-    snapped.setMinutes(minutes + (30 - remainder), 0, 0)
-  }
-  return snapped
+/** Snap a Date to the nearest 30-minute boundary of the wall clock in `timeZone` (the grid's zone,
+ * which can sit on a :15 or :45 offset from the browser). */
+function snapTo30Min(date: Date, timeZone: string): Date {
+  const zoned = toScheduleXDateTime(date, timeZone)
+    .with({ second: 0, millisecond: 0, microsecond: 0, nanosecond: 0 })
+    .round({ smallestUnit: 'minute', roundingIncrement: 30, roundingMode: 'halfExpand' })
+  return zonedToDate(zoned)
 }
 
 const DEFAULT_DAY_START_HOUR = 7
@@ -396,6 +392,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
     y: number
     time: number
     date: Date | null
+    /** The pressed column's day (browser-local Y/M/D, as buildDateFromHour expects). */
+    day: Date
     dayColRect: DOMRect | null
   } | null>(null)
   const selectionRef = useRef<HTMLDivElement>(null)
@@ -447,6 +445,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
   // through a ref (the planning view changes what a click does while the grid stays mounted).
   const onSlotClickRef = useRef(onSlotClick)
   onSlotClickRef.current = onSlotClick
+  const userTzRef = useRef(userTz)
+  userTzRef.current = userTz
 
   const handleClickDateTime = useCallback(
     (dateTime: Temporal.ZonedDateTime, e?: UIEvent) => {
@@ -454,7 +454,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       if (isDraggingRef.current || isDragMovingRef.current) return
 
       const raw = zonedToDate(dateTime)
-      const start = snapTo30Min(raw)
+      const start = snapTo30Min(raw, userTzRef.current)
       const end = new Date(start)
       end.setHours(end.getHours() + 1) // 1 hour default
 
@@ -1079,6 +1079,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         y: e.clientY,
         time: Date.now(),
         date: startDate,
+        day: dayInfo.date,
         dayColRect: dayInfo.rect,
       }
       isDraggingRef.current = false
@@ -1309,11 +1310,14 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       const colRect = dragStartRef.current.dayColRect
       if (!colRect) return
 
-      // Build display times
-      const dayDate = dragStartRef.current.date
+      // Build display times on the pressed column's day, not the browser-local
+      // day of the start instant (they differ when the browser and calendar zones do).
+      const dayDate = dragStartRef.current.day
       const startTime = buildDateFromHour(dayDate, snappedStart)
       const endTime = buildDateFromHour(dayDate, snappedEnd)
-      dragEndTimeRef.current = endTime
+      // Keep the cursor's end, not the later of the two: mouse-up puts start and end
+      // in order, so an upward drag keeps both endpoints.
+      dragEndTimeRef.current = buildDateFromHour(dayDate, snapHour(endHour))
 
       setDragSelection({
         left: colRect.left - wrapperRect.left,
@@ -1409,8 +1413,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       }
 
       // Compute snapped start and end
-      let start = snapTo30Min(dragStart.date)
-      let end = snapTo30Min(dragEndTimeRef.current)
+      let start = snapTo30Min(dragStart.date, userTz)
+      let end = snapTo30Min(dragEndTimeRef.current, userTz)
 
       // Ensure start is before end (user may drag upward)
       if (start > end) {
