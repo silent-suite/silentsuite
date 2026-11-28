@@ -305,6 +305,39 @@ describe('file contact import: preflight and UIDs', () => {
     await expect(importFile([card('A', 'a')])).resolves.toBe(1)
   })
 
+  it('an unframed or invalid UTF-8 server item does not make a file card look imported', async () => {
+    server.seed('col-1', 'UID:a')
+    server.seed('col-1', new Uint8Array([...new TextEncoder().encode('BEGIN:VCARD\r\nUID:b\r\nFN:'), 0xff, ...new TextEncoder().encode('\r\nEND:VCARD')]) as any)
+    server.seed('col-1', 'BEGIN:VCARD\r\nUID:c\r\nFN:C\r\nEND:VCARD')
+    const skipped = vi.fn()
+    await expect(importFile([card('A', 'a'), card('B', 'b'), card('C', 'c')], { onSkipped: skipped })).resolves.toBe(2)
+    expect(skipped).toHaveBeenCalledWith(1)
+    expect(server.attempts[0]!.uids).toHaveLength(2)
+  })
+
+  it('still skips valid duplicates in every supported framing next to malformed items', async () => {
+    server.seed('col-1', 'UID:x')
+    server.seed('col-1', new Uint8Array([0xff, 0xfe]) as any)
+    server.seed('col-1', 'BEGIN:VCARD\nUID:lf\nFN:A\nEND:VCARD\n')
+    server.seed('col-1', 'begin:vcard\r\nUID:lower\r\nFN:A\r\nend:vcard')
+    server.seed('col-1', '\uFEFFBEGIN:VCARD \r\nUID:bom\r\nFN:A\r\nEND:VCARD\t\r\n')
+    server.seed('col-1', new TextEncoder().encode('BEGIN:VCARD\r\nUID:fol\r\n ded\r\nFN:\u00c5\r\nEND:VCARD') as any)
+    const skipped = vi.fn()
+    const uids = ['x', 'lf', 'lower', 'bom', 'folded']
+    await expect(importFile(uids.map((uid) => card(uid, uid)), { onSkipped: skipped })).resolves.toBe(1)
+    expect(skipped).toHaveBeenCalledWith(4)
+    expect(server.attempts).toHaveLength(1)
+    expect(server.items('col-1').filter((content) => typeof content === 'string').map(vcardUid)).toContain('x')
+  })
+
+  it('a failed read or decrypt next to malformed items still aborts before any write', async () => {
+    server.seed('col-1', 'UID:x')
+    server.seed('col-1', new Uint8Array([0xff]) as any)
+    server.seed('col-1', 'x', true)
+    await expect(importFile([card('A', 'a')])).rejects.toMatchObject({ name: 'ImportReconcileFailedError' })
+    expect(server.attempts).toHaveLength(0)
+  })
+
   it('an unreadable item blocks only when it is in the target list', async () => {
     server.seed('col-2', 'x', true)
     await expect(importFile([card('A', 'a')])).resolves.toBe(1)
