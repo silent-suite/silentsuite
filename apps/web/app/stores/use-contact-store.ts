@@ -852,12 +852,21 @@ export const useContactStore = create<ContactState & ContactActions>()(
 
 /**
  * #744: this account's sealed favorite was replayed and its exact record acknowledged.
- * A ledger kept only for that queued acceptance retires; a refusal, an unsettled
- * generation or a pending photo keeps it, and sealed custody is not touched here.
+ * A ledger kept only for that queued acceptance retires; an unsettled generation or a
+ * pending photo keeps it, and sealed custody is not touched here. A refused draft
+ * stays shown and refused, but the queue no longer holds work for it, and when the
+ * favorite was written over this context's last server record, a later save or
+ * delete is proved against the record the favorite wrote.
  */
-export function contactSealedFavoriteAcknowledged(id: string): void {
+export function contactSealedFavoriteAcknowledged(id: string, accepted?: { over: string; record: StoredContact }): void {
   const ledger = liveLedger(id)
-  if (!ledger || !ledger.queued || ledger.refused || ledger.unsettled.size > 0) return
+  if (!ledger || !ledger.queued || ledger.unsettled.size > 0) return
+  if (ledger.refused) {
+    if (accepted && ledger.serverBase.revision === accepted.over) ledger.serverBase = accepted.record
+    // The shown save state stays 'refused'.
+    ledger.queued = false
+    return
+  }
   const owner = contactOwners.get(id)
   if (owner && isCurrentAccountEpoch(owner.accountEpoch) && owner.pendingPhotos > 0) return
   contactLedgers.delete(id)
