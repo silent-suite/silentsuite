@@ -364,7 +364,8 @@ export function EventDialog({
   // A moved occurrence keeps its own time form, which can differ from the series' (timed in an
   // all-day series): the form opens, and compares its all-day flag and zone, in that form.
   const floatingZone = formEvent?.floating && !formEvent.allDay ? deviceTimezone() : undefined
-  const ownForm = isEdit && (formEvent!.allDay !== event.allDay || formEvent!.timezone !== event.timezone)
+  const ownForm = isEdit && (formEvent!.allDay !== event.allDay || formEvent!.timezone !== event.timezone
+    || !!formEvent!.floating !== !!event.floating)
 
   // Initial all-day flag — needed before form state so we can pick the right
   // TZ for formatting the initial date/time strings.

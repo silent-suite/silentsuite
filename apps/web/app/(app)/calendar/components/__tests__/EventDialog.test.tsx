@@ -1258,6 +1258,29 @@ describe('EventDialog opens a moved occurrence in its own time form', () => {
     const [, patch, scope, instance] = mocks.updateRecurringEvent.mock.calls[0]!
     expect([patch, scope, instance]).toEqual([{ endDate: new Date('2027-03-15T16:30:00Z') }, 'this', moved])
   })
+
+  it('a floating occurrence of a UTC series counts as its own form', async () => {
+    const utcSeries = {
+      ...deserializeCalendarEvent([
+        'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+        'BEGIN:VEVENT', 'UID:floating-override', 'DTSTART:20270301T100000Z', 'DTEND:20270301T110000Z',
+        'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:Weekly', 'END:VEVENT',
+        'BEGIN:VEVENT', 'UID:floating-override', 'RECURRENCE-ID:20270315T100000Z',
+        'DTSTART:20270315T150000', 'DTEND:20270315T160000', 'END:VEVENT',
+        'END:VCALENDAR',
+      ].join('\r\n')),
+      calendarId: 'cal-a',
+    }
+    renderWithIntl(<EventDialog mode="edit" event={utcSeries} instanceDate={new Date('2027-03-15T10:00:00Z')} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event location'), { target: { value: 'Room 2' } })
+    fireEvent.change(screen.getByLabelText('End time'), { target: { value: '16:30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    const scopeDialog = await screen.findByRole('dialog', { name: 'Edit recurring event' })
+    fireEvent.click(within(scopeDialog).getByRole('button', { name: /All events/ }))
+    await waitFor(() => expect(mocks.updateRecurringEvent).toHaveBeenCalledTimes(1))
+
+    expect(mocks.updateRecurringEvent.mock.calls[0]![1]).toEqual({ location: 'Room 2' })
+  })
 })
 
 // WEB-04: a create that is not saved keeps the dialog and its input.
