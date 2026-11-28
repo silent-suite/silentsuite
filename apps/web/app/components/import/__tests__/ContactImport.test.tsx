@@ -575,6 +575,16 @@ describe('ContactImport large-file robustness', () => {
     expect(screen.getByRole('button', { name: 'Import 2 contacts' })).toBeInTheDocument()
   })
 
+  it('drops the long-note warning when the retry lists only contacts with short notes', async () => {
+    mocks.importContacts.mockRejectedValueOnce(new ImportIncompleteError(1, [1], false, ['saved', 'refused']))
+    await select(file(`BEGIN:VCARD\r\nFN:Long\r\nNOTE:${'n'.repeat(200_001)}\r\nEND:VCARD\r\nBEGIN:VCARD\r\nFN:Short\r\nNOTE:short\r\nEND:VCARD\r\n`))
+    expect(await screen.findByText('1 contact has a note over 200,000 characters and may not sync to Android.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Import 2 contacts' }))
+    expect(await screen.findByRole('button', { name: 'Import 1 contacts' })).toBeInTheDocument()
+    expect(screen.getByText('Short')).toBeInTheDocument()
+    expect(screen.queryByText(/note over 200,000 characters/)).toBeNull()
+  })
+
   it('counts a final card without END and a BEGIN before an END as unreadable', async () => {
     await select(file('BEGIN:VCARD\nFN:Open\nBEGIN:VCARD\nFN:Whole\nEND:VCARD\nBEGIN:VCARD\nFN:Tail'))
     expect(await screen.findByText("2 contacts couldn't be read.")).toBeInTheDocument()
