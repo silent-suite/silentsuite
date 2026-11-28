@@ -70,6 +70,6 @@ Thunderbird's CalDAV sync interval is 30 minutes by default. To change it: right
 ### Bridge not running
 
 If Thunderbird can't connect, check:
-1. Is the bridge running? Look for the tray icon or run `silentsuite-bridge --version`.
+1. Is the bridge running? Open `http://localhost:37358/`. If the dashboard loads, it is.
 2. Start the bridge: `silentsuite-bridge`
 3. Check the dashboard: `http://localhost:37358/`

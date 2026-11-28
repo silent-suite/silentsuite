@@ -13,6 +13,19 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 // boundaries are replaced, as in page.test.tsx. jsdom does not evaluate CSS media queries, so this
 // says nothing about mobile geometry; it checks that searching renders results instead of failing.
 
+// Counts how often the workspace expands events into search results (review fix: WEB-17).
+const searchExpansion = vi.hoisted(() => ({ inputs: [] as number[] }))
+vi.mock('../lib/search-results', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/search-results')>()
+  return {
+    ...actual,
+    toSearchResults: (...args: Parameters<typeof actual.toSearchResults>) => {
+      searchExpansion.inputs.push(args[0].length)
+      return actual.toSearchResults(...args)
+    },
+  }
+})
+
 vi.mock('@/app/stores/use-calendar-list-store', () => {
   const listState = {
     calendars: [{ id: 'cal-a', name: 'Work', color: '#10b981', visible: true }],
@@ -173,6 +186,25 @@ describe('Calendar search on the real calendar store (#295)', () => {
       uncaught.push(error instanceof Error ? error.message : String(error))
     }
   }
+
+  it('expands no search results while the query is empty (review fix: WEB-17)', () => {
+    searchExpansion.inputs = []
+    useCalendarStore.setState({
+      events: [{ ...calendarEvent('daily', 'Daily series'), recurrenceRule: 'FREQ=DAILY' }],
+    })
+    renderWithIntl(<RenderErrorBoundary><CalendarPage /></RenderErrorBoundary>)
+    expect(screen.getByTestId('mobile-agenda')).toBeInTheDocument()
+    expect(searchExpansion.inputs).toEqual([])
+
+    typeQuery('daily')
+    expect(searchExpansion.inputs.length).toBeGreaterThan(0)
+    expect(within(mobileSearchRoot().root).getAllByRole('button')[0]).toHaveTextContent('Daily series')
+
+    searchExpansion.inputs = []
+    typeQuery('  ')
+    expect(searchExpansion.inputs).toEqual([])
+    expect(renderFailures()).toEqual([])
+  })
 
   it('renders the agenda with an empty query, then shows matching results after typing a query', () => {
     renderWithIntl(<RenderErrorBoundary><CalendarPage /></RenderErrorBoundary>)

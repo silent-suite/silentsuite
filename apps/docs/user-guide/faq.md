@@ -6,7 +6,7 @@ New hosted billing is annual only: Early Adopter access is **€36 annually (€
 
 ### What is SilentSuite?
 
-SilentSuite is a privacy-focused, end-to-end encrypted sync service for calendar, contacts, tasks, and notes. Your data is encrypted on your device before it reaches the server. The server never sees plaintext.
+SilentSuite is a privacy-focused, end-to-end encrypted sync service for calendar, contacts, tasks, and notes. Your data is encrypted on your device before it reaches the server. The server never sees plaintext, not even collection names. It can see how many items each collection holds and how often each one changes, but not what is in them.
 
 ### Is SilentSuite free?
 
@@ -35,7 +35,27 @@ SilentSuite uses the [Etebase protocol](https://www.etebase.com/) with XChaCha20
 
 No. Your encryption keys are derived from your password, and the server never has access to them. If you forget your password, your data cannot be recovered. Use a password manager.
 
+### Are imports and exports also private?
+
+Yes. Both happen entirely in your browser: `.ics` and `.vcf` files are parsed and encrypted (or decrypted and written out) locally, so their contents never reach the server in plaintext. Notes are exported the same way: they are decrypted and written as Markdown files in your browser.
+
 ## Apps & Devices
+
+### How do I install the Android app?
+
+Use the same channel for install and updates:
+
+- **Google Play:** recommended if you installed from Play and want Play-managed updates.
+- **F-Droid:** the [official F-Droid package](https://f-droid.org/packages/io.silentsuite.android). Release timing can differ from GitHub Releases.
+- **Obtainium / Zapstore / GitHub Releases:** independent channels for open app-store installation, GitHub-managed updates, or direct APK downloads. In *Settings → Mobile*, the QR code opens the [Android installation guide](https://docs.silentsuite.io/user-guide/apps/android), while the separate APK link opens the latest GitHub Release.
+
+### How does the desktop Bridge work?
+
+It runs a small CalDAV/CardDAV server bound to `localhost:37358`. Supported desktop clients such as Thunderbird, Calendar on macOS and Evolution connect to that local address. The Bridge encrypts and decrypts against your silentsuite.io or self-hosted account, so plaintext stays on your computer. Install commands are in **Settings → Desktop** in the web app; see [SilentSuite Bridge](./apps/dav-bridge.md).
+
+### Will offline edits sync when I reconnect?
+
+Yes. The web app works offline: encrypted changes queue while you are offline and sync when you reconnect. Logging out deletes changes that have not synced yet, so **Log out** first says how many there are and offers to sync them.
 
 ### Why do I see a certificate mismatch when switching Android install channels?
 
@@ -56,4 +76,8 @@ Yes. See the [Self-Hosting guide](/self-hosting/) for instructions. Self-hosting
 
 ### What do I need to self-host?
 
-A Linux server with Docker, 1 GB RAM minimum, and a domain name. See [Requirements](/self-hosting/requirements) for full details.
+A Linux server with Docker, 1 GB RAM minimum, a domain name, and a reverse proxy you control (Caddy, nginx, Traefik or Cloudflare Tunnel) for TLS. See [Requirements](/self-hosting/requirements) for full details.
+
+### Can one account use both a self-hosted server and the hosted service?
+
+No. An account belongs to a single server, which you pick when you sign up. To move later, export from one and import into the other.

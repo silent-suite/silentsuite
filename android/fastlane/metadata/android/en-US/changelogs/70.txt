@@ -1,2 +1,0 @@
-* Gracefully handle Conflict errors (retry later).
-* Fix potential crash when opening and closing the app very quickly.

@@ -18,10 +18,35 @@ describe('Schedule-X week layout CSS', () => {
   })
 })
 
+describe('Schedule-X mobile multi-day CSS', () => {
+  it('fits the 7-day view to the screen instead of a wider sideways-scrolling grid', () => {
+    const rule = globalsCss.match(/\.sx-silentsuite-calendar\[data-mobile-days="7"\]\s*\{([^}]*)\}/)
+    expect(rule).not.toBeNull()
+    expect(rule![1]).toMatch(/min-width:\s*0;/)
+  })
+})
+
 describe('Schedule-X month layout CSS', () => {
   it('allows connected multi-day bars to keep the width calculated by Schedule-X', () => {
     expect(globalsCss).toMatch(
       /\.sx-silentsuite-calendar \.sx__month-grid-event\.ss-month-multiday\s*\{[^}]*max-width:\s*none/,
     )
+  })
+
+  it('keeps the chip start time whole and lets only the title truncate', () => {
+    const time = globalsCss.match(
+      /\.sx-silentsuite-calendar \.sx__month-grid-event \.sx__month-grid-event-time\s*\{([^}]*)\}/,
+    )
+    expect(time).not.toBeNull()
+    expect(time![1]).toMatch(/flex:\s*none;/)
+    expect(time![1]).toMatch(/min-width:\s*auto;/)
+    expect(time![1]).toMatch(/overflow:\s*visible;/)
+    expect(time![1]).toMatch(/text-overflow:\s*clip;/)
+
+    const title = globalsCss.match(
+      /\.sx-silentsuite-calendar \.sx__month-grid-event \.sx__month-grid-event-title\s*\{([^}]*)\}/,
+    )
+    expect(title).not.toBeNull()
+    expect(title![1]).toMatch(/flex:\s*1 1 auto;/)
   })
 })

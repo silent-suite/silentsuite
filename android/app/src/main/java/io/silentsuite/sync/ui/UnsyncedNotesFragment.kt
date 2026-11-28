@@ -2,6 +2,7 @@ package io.silentsuite.sync.ui
 
 import android.app.Application
 import android.app.Dialog
+import android.content.Context
 import android.os.Bundle
 import android.view.View
 import androidx.annotation.StringRes
@@ -210,7 +211,8 @@ class UnsyncedNotesFragment : PreferenceFragmentCompat() {
             this.key = key
             setTitle(text)
             isSingleLineTitle = false
-            isEnabled = false
+            // Not selectable rather than disabled, so the text keeps full contrast (disabled rows dim).
+            isSelectable = false
             isPersistent = false
         })
     }
@@ -262,6 +264,23 @@ class UnsyncedNotesFragment : PreferenceFragmentCompat() {
 
         internal fun removalKey(name: String) = KEY_REMOVAL_ROW + name
 
+        /** The stores and the removal section, read off the main thread, for the hub row and the sign-in item. */
+        private suspend fun readHub(app: Context) = withContext(Dispatchers.IO) {
+            UnsyncedNotesStores.read(app) to NotesRemovalSection.read(app)
+        }
+
+        /**
+         * Whether the screen has anything to show: the rule that shows the Settings hub row ([refreshHubRow]), so
+         * false only when no store holds anything, can't be read or has a discard that did not finish, no other Notes
+         * file was left unread, and no account is refused removal or the accounts can't be read
+         * ([UnsyncedNotesEntry]).
+         */
+        internal suspend fun anythingToShow(app: Context): Boolean {
+            val (listing, removal) = readHub(app)
+            val summary = UnsyncedNotesDiscardPolicy.hubSummary(listing)
+            return summary != null || UnsyncedNotesDiscardPolicy.hubRemoval(summary, removal) != null
+        }
+
         /**
          * Reads the stores and the removal section off the main thread and shows the Settings hub's [row] only while
          * some store holds anything, cannot be read, or has a discard that did not finish, with how many changes there
@@ -272,9 +291,7 @@ class UnsyncedNotesFragment : PreferenceFragmentCompat() {
         internal fun refreshHubRow(fragment: Fragment, row: Preference) {
             val app = fragment.requireContext().applicationContext
             fragment.viewLifecycleOwner.lifecycleScope.launch {
-                val (listing, removal) = withContext(Dispatchers.IO) {
-                    UnsyncedNotesStores.read(app) to NotesRemovalSection.read(app)
-                }
+                val (listing, removal) = readHub(app)
                 if (!fragment.isAdded) return@launch
                 val summary = UnsyncedNotesDiscardPolicy.hubSummary(listing)
                 val removalOnly = UnsyncedNotesDiscardPolicy.hubRemoval(summary, removal)

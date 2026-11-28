@@ -81,4 +81,16 @@ class BirthdayOptInTest {
             File(main, "java/io/silentsuite/sync/ui/AppSettingsActivity.kt").readText()
                 .substringAfter("\"birthdays_enabled\"").substringBefore("private fun setupSync").contains("BirthdayMaintenance"))
     }
+
+    @Test fun theExperimentalSwitchesSayOneSentenceAndBirthdaysNamesItsNextStep() {
+        val strings = File(main, "res/values/strings.xml").readText()
+        fun text(name: String) = strings.substringAfter("<string name=\"$name\">").substringBefore("</string>")
+        for (name in listOf("settings_notes_enabled_summary", "settings_birthdays_enabled_summary", "settings_widgets_enabled_summary")) {
+            assertEquals("$name is one sentence: ${text(name)}", 1, Regex("[.!?](\\s|$)").findAll(text(name)).count())
+        }
+        // The opt-in only offers the action, so the summary names the card and the exact menu item to tap next.
+        val birthdays = text("settings_birthdays_enabled_summary")
+        assertTrue(birthdays.contains(text("settings_caldav") + " card"))
+        assertTrue(birthdays.contains(text("birthdays_turn_on")))
+    }
 }

@@ -281,3 +281,7 @@ def test_unix_installer_orders_login_and_one_observed_start(tmp_path, login, aut
         assert "Auto-start configured" not in result.stdout
     if login == "ok" and (responder or fallback):
         assert (tmp_path / "service-account").read_text().strip() == "yes"
+    # The summary names a sign-in route only when login was skipped or failed,
+    # and never promises a background service it did not observe.
+    assert ("Sign in:" in result.stdout) == (login != "ok"), result.stdout
+    assert "runs in the background" not in result.stdout

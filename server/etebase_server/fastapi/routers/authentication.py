@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 from typing_extensions import Literal
 
 from etebase_server.django import app_settings, models
-from etebase_server.django.models import HeldUsername, LoginEmailChange, UserInfo
+from etebase_server.django.models import HeldUsername, LoginEmailChange, SignupPass, UserInfo, sha256_hex
 from etebase_server.django.signals import user_signed_up
 from etebase_server.django.token_auth.models import AuthToken
 from etebase_server.django.utils import CallbackContext, create_user, get_user_queryset
@@ -339,11 +339,57 @@ def signup_identity_taken(user_queryset, user_data: UserSignup) -> bool:
     return HeldUsername.objects.filter(name__in=held_names).exists()
 
 
+def refuse_hosted_signup(reason: str) -> t.NoReturn:
+    # The reason code only, never the pass or the address. WARNING so it shows without a logging setup.
+    logger.warning("hosted signup refused: reason=%s", reason)
+    raise HttpError(
+        "registration_token_required",
+        "A valid registration token is required to create an account on this server.",
+        status.HTTP_403_FORBIDDEN,
+    )
+
+
+def supplied_signup_pass(request: Request) -> str:
+    """Hosted pass mode: the one signup pass header, or refuse."""
+    supplied = request.headers.getlist(REGISTRATION_TOKEN_HEADER)
+    if not supplied or supplied == [""]:
+        refuse_hosted_signup("missing")
+    if len(supplied) != 1:
+        refuse_hosted_signup("invalid")
+    return supplied[0]
+
+
+def consume_signup_pass(signup_pass: str, user_data: UserSignup) -> None:
+    """Use up a live pass issued for exactly this username and email, inside the signup transaction.
+
+    The raw values must already be the canonical address the pass was issued for, so the stored
+    username and email are both that address. A later refusal in the transaction rolls this back.
+    """
+    digest = sha256_hex(signup_pass)
+    now = timezone.now()
+    if user_data.username == user_data.email:
+        claimed = SignupPass.objects.filter(
+            pass_hash=digest, email=user_data.username, consumed_at__isnull=True, expires_at__gt=now
+        ).update(consumed_at=now)
+        if claimed == 1:
+            return
+    row = SignupPass.objects.filter(pass_hash=digest).first()
+    if row is None:
+        refuse_hosted_signup("invalid")
+    if row.email != user_data.username or user_data.username != user_data.email:
+        refuse_hosted_signup("mismatch")
+    refuse_hosted_signup("consumed" if row.consumed_at is not None else "expired")
+
+
 def signup_save(data: SignupIn, request: Request) -> UserType:
     user_data = data.user
-    check_registration_token(request, user_data.username)
+    signup_pass = None
+    if settings.ETEBASE_HOSTED_SIGNUP_PASS_REQUIRED:
+        signup_pass = supplied_signup_pass(request)
+    else:
+        check_registration_token(request, user_data.username)
     try:
-        return _signup_save_atomic(data, request)
+        return _signup_save_atomic(data, request, signup_pass)
     except OperationalError:
         # SQLite: a concurrent writer claimed the database between our checks and our insert.
         raise HttpError(
@@ -351,7 +397,7 @@ def signup_save(data: SignupIn, request: Request) -> UserType:
         ) from None
 
 
-def _signup_save_atomic(data: SignupIn, request: Request) -> UserType:
+def _signup_save_atomic(data: SignupIn, request: Request, signup_pass: t.Optional[str] = None) -> UserType:
     user_data = data.user
     with transaction.atomic():
         bootstrap_token = settings.ETEBASE_BOOTSTRAP_ADMIN_TOKEN
@@ -371,6 +417,8 @@ def _signup_save_atomic(data: SignupIn, request: Request) -> UserType:
         user_queryset = get_user_queryset(User.objects.all(), CallbackContext(request.path_params))
         if signup_identity_taken(user_queryset, user_data):
             raise HttpError("user_exists", "User already exists", status_code=status.HTTP_409_CONFLICT)
+        if signup_pass is not None:
+            consume_signup_pass(signup_pass, user_data)
 
         # Create the user and save the casing the user chose as the first name
         try:

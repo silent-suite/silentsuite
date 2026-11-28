@@ -7,6 +7,7 @@ import messages from '@/messages/en.json'
 import type { Task } from '@silentsuite/core'
 import type { TaskList } from '@/app/stores/use-task-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { formatDate } from '@/app/lib/date'
 
 // Mobile reachability smoke test for the Tasks page (epic #295). jsdom does not
 // evaluate CSS media queries, so these assert that the primary create action and
@@ -90,6 +91,42 @@ describe('TasksPage mobile reachability', () => {
     expect(hasSkeleton()).toBe(false)
   })
 
+  // WEB-01: zero tasks after a failed or unfinished load is not the first-run empty state.
+  it('shows a load-failed state, not "No tasks yet", when the tasks domain did not load', () => {
+    act(() => useEtebaseStore.setState((state) => ({ isInitialized: true, domainLoadState: { ...state.domainLoadState, tasks: 'failed' } })))
+    const view = renderWithIntl(<TasksPage />)
+    expect(screen.getByText(messages.Collections.tasksLoadFailedTitle)).toBeInTheDocument()
+    expect(screen.getByText(messages.Collections.tasksLoadFailedDescription)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: messages.Collections.tasksLoadFailedRetry })).toBeInTheDocument()
+    expect(screen.queryByText('No tasks yet')).not.toBeInTheDocument()
+
+    // Offline: say why, and offer no retry that cannot work.
+    storeMock.syncState.isOnline = false
+    onTestFinished(() => { storeMock.syncState.isOnline = true })
+    view.rerender(<TasksPage />)
+    expect(screen.getByText(messages.Collections.tasksLoadFailedOffline)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: messages.Collections.tasksLoadFailedRetry })).not.toBeInTheDocument()
+    expect(screen.queryByText('No tasks yet')).not.toBeInTheDocument()
+
+    // A failed init that left the domain unknown is not "loaded" either.
+    act(() => useEtebaseStore.setState((state) => ({ domainLoadState: { ...state.domainLoadState, tasks: 'unknown' } })))
+    view.rerender(<TasksPage />)
+    expect(screen.getByText(messages.Collections.tasksLoadFailedTitle)).toBeInTheDocument()
+
+    // Cached tasks still show even when the load failed.
+    storeMock.taskState.tasks = [{ id: 'cached', uid: 'cached', title: 'Cached task', listId: 'work' } as Task]
+    view.rerender(<TasksPage />)
+    expect(screen.getByText('Cached task')).toBeInTheDocument()
+    expect(screen.queryByText(messages.Collections.tasksLoadFailedTitle)).not.toBeInTheDocument()
+  })
+
+  it('keeps "No tasks yet" for a loaded, truly empty tasks domain', () => {
+    act(() => useEtebaseStore.setState((state) => ({ isInitialized: true, domainLoadState: { ...state.domainLoadState, tasks: 'loaded' } })))
+    renderWithIntl(<TasksPage />)
+    expect(screen.getByText('No tasks yet')).toBeInTheDocument()
+    expect(screen.queryByText(messages.Collections.tasksLoadFailedTitle)).not.toBeInTheDocument()
+  })
+
   it('exposes the primary create action on all widths', () => {
     renderWithIntl(<TasksPage />)
     const createButton = screen.getByRole('button', { name: 'New task' })
@@ -102,6 +139,38 @@ describe('TasksPage mobile reachability', () => {
   it('exposes an inline quick-add on mobile', () => {
     renderWithIntl(<TasksPage />)
     expect(screen.getByPlaceholderText('Add a task...')).toBeInTheDocument()
+  })
+
+  // WEB-14: on reload only the local "My Tasks" placeholder (no access level) is known, which
+  // fails closed. Until the real lists load the quick add says "Loading…", not "Read-only mode".
+  it('shows a neutral loading placeholder, not "Read-only mode", until the task lists load', () => {
+    storeMock.taskListState.lists = [{ id: 'default', name: 'My Tasks', color: '#3b82f6', visible: true }]
+    const view = renderWithIntl(<TasksPage />)
+    const input = screen.getByRole('textbox', { name: 'Add a task' })
+    expect(input).toHaveAttribute('placeholder', 'Loading…')
+    expect(input).toBeDisabled()
+    expect(input).not.toHaveAttribute('title')
+    expect(screen.getByRole('button', { name: 'New task' })).not.toHaveAttribute('title')
+    expect(screen.queryByPlaceholderText('Read-only mode')).not.toBeInTheDocument()
+
+    // Real writable lists arrive: normal quick add.
+    writableList()
+    view.rerender(<TasksPage />)
+    expect(input).toHaveAttribute('placeholder', 'Add a task...')
+    expect(input).toBeEnabled()
+
+    // A real read-only list still says so.
+    storeMock.taskListState.lists = [{ id: 'shared', name: 'Shared', color: '#3b82f6', visible: true, accessLevel: 0 }]
+    view.rerender(<TasksPage />)
+    expect(input).toHaveAttribute('placeholder', 'Read-only mode')
+    expect(input).toHaveAttribute('title', 'This task list is read-only')
+
+    // Initialization ended without real lists: the placeholder still fails closed as read-only.
+    storeMock.taskListState.lists = [{ id: 'default', name: 'My Tasks', color: '#3b82f6', visible: true }]
+    act(() => useEtebaseStore.setState({ isInitialized: true }))
+    view.rerender(<TasksPage />)
+    expect(input).toHaveAttribute('placeholder', 'Read-only mode')
+    expect(input).toBeDisabled()
   })
 
   it('exposes a mobile collection switcher with a 44px touch target', () => {
@@ -697,6 +766,56 @@ describe('TasksPage mobile row and quick-add containment', () => {
     expect(badgeGroup.className).toContain('shrink-0')
     expect(badgeGroup.className).toContain('max-md:gap-1.5')
     expect(badgeGroup.className).toContain('max-md:min-w-0')
+  })
+})
+
+// WEB-08: a completed task with a past due date showed a red "26d overdue". A completed task is never
+// overdue, so its due date shows as a plain date in neutral text; an open task keeps the warning.
+
+describe('TasksPage due date on completed tasks', () => {
+  beforeEach(() => {
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    storeMock.taskState.tasks = []
+    storeMock.authState.canWrite.mockReturnValue(true)
+  })
+
+  function daysAgo(days: number): Date {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() - days)
+  }
+
+  function dueBadges(title: string): HTMLElement[] {
+    const titleColumn = screen.getByText(title).parentElement!
+    const row = titleColumn.parentElement!
+    const mobile = titleColumn.querySelector<HTMLElement>('.md\\:hidden > span')!
+    const desktop = within(row).getByRole('button', { name: 'Delete task' }).parentElement!.querySelector<HTMLElement>(':scope > span')!
+    return [mobile, desktop]
+  }
+
+  it('shows a completed task\'s past due date as a neutral date, not overdue, on mobile and desktop', () => {
+    visibleLists()
+    const due = daysAgo(26)
+    storeMock.taskState.tasks = [
+      taskFixture({ id: 'done', title: 'Done task', due_date: due, completed: true, status: 'completed', percent_complete: 100 }),
+      taskFixture({ id: 'open', title: 'Open task', due_date: due }),
+    ]
+    renderWithIntl(<TasksPage />)
+
+    const doneBadges = dueBadges('Done task')
+    expect(doneBadges).toHaveLength(2)
+    for (const badge of doneBadges) {
+      expect(badge).toHaveTextContent(formatDate(due, 'system', { month: 'short', day: 'numeric' }))
+      expect(badge.textContent).not.toMatch(/overdue/)
+      expect(badge.className).toContain('text-[rgb(var(--muted))]')
+      expect(badge.className).not.toContain('text-red-400')
+    }
+
+    const openBadges = dueBadges('Open task')
+    expect(openBadges).toHaveLength(2)
+    for (const badge of openBadges) {
+      expect(badge).toHaveTextContent('26d overdue')
+      expect(badge.className).toContain('text-red-400')
+    }
   })
 })
 

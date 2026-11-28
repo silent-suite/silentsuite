@@ -14,6 +14,7 @@ import {
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 
 interface ChecklistItem {
   id: string
@@ -32,6 +33,9 @@ export function OnboardingChecklist() {
   const hasEvents = useCalendarStore((s) => s.events.length > 0)
   const hasContacts = useContactStore((s) => s.contacts.length > 0)
   const hasTasks = useTaskStore((s) => s.tasks.length > 0)
+  // Imports can't run while the account is read-only, so don't suggest them.
+  // Hidden, not dismissed: the checklist comes back once writes work again.
+  const readOnly = useAuthStore((s) => s.isReadOnly())
 
   // Auto-complete import steps once the corresponding store has data, so the
   // checklist doesn't linger after a user imports via the normal flow.
@@ -82,7 +86,7 @@ export function OnboardingChecklist() {
     )
   }, [completedItems, dismissed])
 
-  if (dismissed) return null
+  if (dismissed || readOnly) return null
 
   const items: ChecklistItem[] = [
     {
@@ -130,7 +134,7 @@ export function OnboardingChecklist() {
             <span className="text-xs font-medium text-[rgb(var(--foreground))]">
               Get started
             </span>
-            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[10px] font-semibold text-white">
+            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-emerald-700 px-1.5 text-[10px] font-semibold text-white">
               {completedCount}/{items.length}
             </span>
           </div>

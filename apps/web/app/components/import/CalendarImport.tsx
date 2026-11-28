@@ -472,8 +472,8 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
 
       {importedCount !== null && (
         <div className="flex flex-col items-center gap-3 rounded-lg bg-[rgb(var(--primary))]/10 p-6">
-          <CheckCircle2 className="h-10 w-10 text-[rgb(var(--primary))]" />
-          <p className="text-sm font-medium text-[rgb(var(--primary))]">
+          <CheckCircle2 className="h-10 w-10 text-[rgb(var(--primary-text))]" />
+          <p className="text-sm font-medium text-[rgb(var(--primary-text))]">
             {importedCount} events imported
           </p>
         </div>
@@ -574,7 +574,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
               type="button"
               onClick={handleImport}
               disabled={isImporting}
-              className="inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary-strong))] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[rgb(var(--primary-strong-hover))] disabled:opacity-50"
             >
               {isImporting && <Loader2 className="h-4 w-4 animate-spin" />}
               {isImporting

@@ -20,9 +20,9 @@ function PrivateAdminRedirect() {
   return (
     <div className="flex min-h-[50vh] items-center justify-center">
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6 text-center">
-        <Shield className="mx-auto h-8 w-8 text-[rgb(var(--primary))]" />
+        <Shield className="mx-auto h-8 w-8 text-[rgb(var(--primary-text))]" />
         <p className="mt-3 text-sm font-medium text-[rgb(var(--foreground))]">Opening private admin dashboard...</p>
-        <a href={PRIVATE_ADMIN_URL} className="mt-2 inline-flex text-xs font-medium text-[rgb(var(--primary))] hover:underline">
+        <a href={PRIVATE_ADMIN_URL} className="mt-2 inline-flex text-xs font-medium text-[rgb(var(--primary-text))] hover:underline">
           Continue manually
         </a>
       </div>
@@ -80,7 +80,7 @@ function SelfHostedAdmin() {
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
         <div className="mb-4 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/10">
-            <Users className="h-5 w-5 text-[rgb(var(--primary))]" />
+            <Users className="h-5 w-5 text-[rgb(var(--primary-text))]" />
           </div>
           <div>
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">User Management</p>
@@ -97,7 +97,7 @@ function SelfHostedAdmin() {
             href={etebaseAdminUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[rgb(var(--primary-hover))]"
+            className="inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary-strong))] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[rgb(var(--primary-strong-hover))]"
           >
             <ExternalLink className="h-4 w-4" /> Open Etebase Admin Panel
           </a>
@@ -110,10 +110,10 @@ function SelfHostedAdmin() {
 
       <div className="grid gap-3 sm:grid-cols-2">
         <a href={etebaseAdminUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 transition-colors hover:border-[rgb(var(--primary))]">
-          <div className="flex items-center gap-3"><Server className="h-5 w-5 text-[rgb(var(--primary))]" /><div><p className="text-sm font-medium text-[rgb(var(--foreground))]">Etebase Admin</p><p className="text-xs text-[rgb(var(--muted))]">Users, collections, server settings</p></div></div><ExternalLink className="h-4 w-4 text-[rgb(var(--muted))]" />
+          <div className="flex items-center gap-3"><Server className="h-5 w-5 text-[rgb(var(--primary-text))]" /><div><p className="text-sm font-medium text-[rgb(var(--foreground))]">Etebase Admin</p><p className="text-xs text-[rgb(var(--muted))]">Users, collections, server settings</p></div></div><ExternalLink className="h-4 w-4 text-[rgb(var(--muted))]" />
         </a>
         <a href="https://github.com/silent-suite/silentsuite" target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 transition-colors hover:border-[rgb(var(--primary))]">
-          <div className="flex items-center gap-3"><Globe className="h-5 w-5 text-[rgb(var(--primary))]" /><div><p className="text-sm font-medium text-[rgb(var(--foreground))]">Documentation</p><p className="text-xs text-[rgb(var(--muted))]">Setup guides and troubleshooting</p></div></div><ExternalLink className="h-4 w-4 text-[rgb(var(--muted))]" />
+          <div className="flex items-center gap-3"><Globe className="h-5 w-5 text-[rgb(var(--primary-text))]" /><div><p className="text-sm font-medium text-[rgb(var(--foreground))]">Documentation</p><p className="text-xs text-[rgb(var(--muted))]">Setup guides and troubleshooting</p></div></div><ExternalLink className="h-4 w-4 text-[rgb(var(--muted))]" />
         </a>
       </div>
     </div>

@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 
 from . import config
-from .local_cache import clear_cached_user
+from .local_cache import clear_cached_user, list_cached_users
 from .privacy_logging import bounded_exception_class
 from .radicale.creds import CREDENTIALS_LOCK, Credentials
 from .radicale.etesync_cache import account_maintenance, forget_etesync_user
@@ -30,6 +30,14 @@ def _clear_cache_cleanup_marker(username, creds_path):
         if username in creds.list_cache_cleanups():
             creds.clear_cache_cleanup(username)
             creds.save()
+
+
+def _cache_cleanup_still_wanted(username, creds_path):
+    """Recheck the durable marker; a sign-in from another process clears it."""
+    if not creds_path:
+        return True
+    with CREDENTIALS_LOCK:
+        return username in Credentials(creds_path).list_cache_cleanups()
 
 
 def _schedule_deferred_cache_cleanup(username, *, creds_path=None):
@@ -53,6 +61,8 @@ def _schedule_deferred_cache_cleanup(username, *, creds_path=None):
                             continue
                         with _account_lock:
                             if _account_epochs.get(username, 0) != epoch:
+                                return
+                            if not _cache_cleanup_still_wanted(username, creds_path):
                                 return
                             clear_cached_user(username)
                             _clear_cache_cleanup_marker(username, creds_path)
@@ -177,6 +187,17 @@ def list_accounts(*, credentials: Credentials | None = None) -> list[str]:
     with _account_lock:
         creds = credentials or Credentials()
         return creds.list_users()
+
+
+def list_signed_out_accounts(*, credentials: Credentials | None = None) -> list[str]:
+    """Return logged-out accounts whose local cache was kept.
+
+    Accounts already queued for cache deletion are left out.
+    """
+    with _account_lock:
+        creds = credentials or Credentials()
+        hidden = set(creds.list_users()) | set(creds.list_cache_cleanups())
+        return [user for user in list_cached_users() if user not in hidden]
 
 
 def logout_account(

@@ -941,7 +941,6 @@ def test_ci_server_covers_every_surface_that_can_change_the_image():
             "scripts/check-server-image-dependencies.py",
             "scripts/lock-server-requirements.py",
             "contracts/self-host-server-image.schema.json",
-            "docs/self-hosting/**",
             "apps/docs/self-hosting/**",
             "tests/test_self_host_*.py",
             "tests/test_umbrella_release_*.py",

@@ -340,7 +340,8 @@ describe('ExportPage', () => {
 
   it('renders heading and description', () => {
     render(<ExportPage />)
-    expect(screen.getByText('Export Data')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Export Data' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
     expect(screen.getByText(/Download your data in standard formats/)).toBeInTheDocument()
   })
 

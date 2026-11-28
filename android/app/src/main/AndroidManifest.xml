@@ -296,19 +296,6 @@
             android:exported="false"
             android:theme="@style/AppTheme.Material3"
             />
-        <!-- TODO(Phase2): MigrateV2Activity removed - legacy v1→v2 migration no longer needed -->
-        <activity
-            android:name=".ui.ViewCollectionActivity"
-            android:exported="false"
-            />
-        <activity
-            android:name=".ui.CollectionMembersActivity"
-            android:exported="false"
-            />
-        <activity
-            android:name=".ui.JournalItemActivity"
-            android:exported="false"
-            />
         <activity
             android:name=".ui.importlocal.ImportActivity"
             android:exported="false"
@@ -320,16 +307,6 @@
             />
         <activity
             android:name=".ui.ChangeEncryptionPasswordActivity"
-            android:exported="false"
-            android:theme="@style/AppTheme.Material3"
-            />
-        <activity
-            android:name=".ui.CreateCollectionActivity"
-            android:exported="false"
-            android:theme="@style/AppTheme.Material3"
-            />
-        <activity
-            android:name=".ui.EditCollectionActivity"
             android:exported="false"
             android:theme="@style/AppTheme.Material3"
             />

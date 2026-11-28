@@ -6,7 +6,7 @@ You can report a problem or ask for a feature from inside SilentSuite. Nothing i
 
 - **Web:** **Settings → Report a problem** (listed under **Help**).
 - **Android:** **Settings → Help → Report a problem**.
-- **Bridge:** **Report a problem** in the tray menu, or the **Report a problem** page on the Bridge dashboard. On a headless install, open the dashboard in your browser.
+- **Bridge:** open the Bridge dashboard at `http://localhost:37358/` in your browser and choose **Report a problem or request a feature** at the bottom.
 
 ## What you can send
 

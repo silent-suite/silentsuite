@@ -8,10 +8,8 @@ import {
   ensureFingerprint,
   getItemsByType,
   getMeta,
-  getStoken,
   putItem,
   putMeta,
-  setStoken,
   _resetForTests,
   type CachedItem,
 } from '../data-cache'
@@ -110,7 +108,6 @@ describe('#744 schema-only cache reset retains the crypto key', () => {
 
     expect(await ensureFingerprint(fingerprint)).toBe(true)
     expect(await ensureEncryptedEnvelope()).toBe(true)
-    await setStoken('tasks', 'col-744', 'stk-744')
     await putItem(makeItem('schema-item', plaintext))
 
     const acceptedItems = await rawItems()
@@ -120,7 +117,6 @@ describe('#744 schema-only cache reset retains the crypto key', () => {
     expect(accepted.iv.length).toBeGreaterThan(0)
     expect(accepted.ct.length).toBeGreaterThan(0)
     expect(await rawCryptoKeys()).toHaveLength(1)
-    expect(await getStoken('col-744')).toBe('stk-744')
 
     await putMeta({
       accountFingerprint: fingerprint,
@@ -137,7 +133,6 @@ describe('#744 schema-only cache reset retains the crypto key', () => {
     expect(await rawCryptoKeys()).toHaveLength(1)
     expect(survived).toBe(false)
     expect(await rawItems()).toEqual([])
-    expect(await getStoken('col-744')).toBeNull()
     const meta = await getMeta()
     expect(meta?.accountFingerprint).toBe(fingerprint)
     expect(meta?.cacheSchemaVersion).toBe(CACHE_SCHEMA_VERSION)

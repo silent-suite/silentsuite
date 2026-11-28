@@ -25,8 +25,6 @@ const inventoryRoots = [
 
 const disclosureFiles = [
   'README.md',
-  'docs/user-guide/getting-started.md',
-  'docs/user-guide/faq.md',
   'apps/docs/user-guide/getting-started.md',
   'apps/docs/user-guide/faq.md',
 ]

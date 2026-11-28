@@ -9,8 +9,10 @@ package io.silentsuite.sync.ui
 
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.CalendarContract
 import androidx.annotation.VisibleForTesting
@@ -30,12 +32,15 @@ import com.google.android.material.snackbar.Snackbar
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.BuildConfig
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
+import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.ui.report.ProblemReport
 import io.silentsuite.sync.ui.report.ReportProblemActivity
 import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.ui.settings.SettingsCategory
@@ -68,6 +73,8 @@ class AppSettingsActivity : BaseActivity() {
         const val EXTRA_ACCOUNT = "account"
         const val EXTRA_CREATION_ID = "account_creation_id"
         const val EXTRA_CATEGORY = "settings_category"
+        /** Set by the account dashboard, so the Account Dashboard row returns to it instead of stacking another. */
+        internal const val EXTRA_FROM_DASHBOARD = "settings_from_dashboard"
         private const val STATE_ACCOUNT = "state_account"
         private const val STATE_CREATION_ID = "state_creation_id"
         private const val STATE_EXPLICIT_ACCOUNT = "state_explicit_account"
@@ -184,6 +191,9 @@ class AppSettingsActivity : BaseActivity() {
         val exact = ExactAccountRouting.validate(active, creationId, App.accountType, manager)
         return AccountRoute(exact, if (exact != null) creationId else null, false)
     }
+
+    internal val openedFromDashboard: Boolean
+        get() = intent.getBooleanExtra(EXTRA_FROM_DASHBOARD, false)
 
     internal fun exactSelectedAccount(): Account? {
         val exact = ExactAccountRouting.validate(selectedAccount, selectedCreationId, App.accountType,
@@ -339,7 +349,8 @@ class AppSettingsActivity : BaseActivity() {
                 if (current.all { it.third.isNullOrEmpty() }) screen.addPreference(Preference(requireContext()).apply {
                     key = RECOVERY_NONE_KEY
                     setTitle(R.string.settings_recover_deleted_contacts_none)
-                    isEnabled = false
+                    // Not selectable rather than disabled, so the message keeps full contrast.
+                    isSelectable = false
                     isPersistent = false
                 })
             }
@@ -447,7 +458,23 @@ class AppSettingsActivity : BaseActivity() {
                 isEnabled = account != null
                 setOnPreferenceClickListener {
                     val exact = exactSelectedAccount() ?: return@setOnPreferenceClickListener false
-                    startActivity(AccountActivity.newIntent(requireContext(), exact, host.selectedCreationId!!))
+                    // Opened from this account's dashboard: go back to it rather than open a second one.
+                    if (host.openedFromDashboard) host.finish()
+                    else startActivity(AccountActivity.newIntent(requireContext(), exact, host.selectedCreationId!!))
+                    true
+                }
+            }
+            requirePreference<Preference>("manage_subscription").apply {
+                // Billing lives on the hosted web app; a self-hosted server has no subscription.
+                isVisible = account == null || !ProblemReport.isCustomServer(
+                    AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_URI),
+                    Constants.serviceUrl.toString())
+                setOnPreferenceClickListener {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BillingManager.BILLING_MANAGE_URL)))
+                    } catch (_: ActivityNotFoundException) {
+                        Snackbar.make(requireView(), R.string.dashboard_open_app_unavailable, Snackbar.LENGTH_LONG).show()
+                    }
                     true
                 }
             }

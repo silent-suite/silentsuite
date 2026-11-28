@@ -1,12 +1,9 @@
 import { render, waitFor } from '@testing-library/react'
 import { StrictMode, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { deserializeNote } from '@silentsuite/core'
 import { SyncProvider } from '../sync-provider'
 import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
-import { getAll } from '@/app/lib/offline-queue'
-import { TEST_FINGERPRINT, queueGuard, resetRealOfflineQueue } from '@/app/stores/__tests__/offline-queue-store-test-utils'
 
 const order: string[] = []
 
@@ -31,14 +28,13 @@ type OnDomainLoaded = (event: {
   pageCount: number
   collectionCount: number
 }) => void | Promise<void>
-type OnCacheHydrate = () => void | Promise<void>
 
 const etebaseMock = vi.hoisted(() => {
   let syncChangeHandler: ((event: { collectionType: string; collectionUid: string; itemUids: string[]; changeType: string }) => Promise<void>) | null = null
   let syncStatusHandler: ((status: string) => void) | null = null
   // Default initialize replays the real store contract: calendar → tasks →
   // contacts → notes, one terminal callback each, statuses driven by domainLoadState.
-  async function defaultInitialize(options?: { onCacheHydrate?: OnCacheHydrate; onDomainLoaded?: OnDomainLoaded }) {
+  async function defaultInitialize(options?: { onDomainLoaded?: OnDomainLoaded }) {
     order.push('etebaseInitialize')
     for (const type of ['calendar', 'tasks', 'contacts', 'notes'] as const) {
       const status = state.domainLoadState[type] === 'failed' ? 'failed' : 'loaded'
@@ -102,20 +98,6 @@ const preferencesSyncMock = vi.hoisted(() => ({
   destroy: vi.fn(),
 }))
 
-const cacheMock = vi.hoisted(() => ({
-  getItemsByType: vi.fn(async (type: string) => {
-    order.push(`cacheGet:${type}`)
-    return []
-  }),
-  replaceItemsForType: vi.fn(async (type: string) => order.push(`cacheReplace:${type}`)),
-  isCacheEnabled: vi.fn(() => false),
-  getCacheCapabilityStatus: vi.fn(() => ({
-    featureFlagEnabled: false,
-    encryptedEnvelopeAvailable: false,
-    enabled: false,
-  })),
-}))
-
 const timingMock = vi.hoisted(() => ({
   logSyncTiming: vi.fn(() => {}),
   markSyncTimingStart: vi.fn(() => 100),
@@ -141,7 +123,6 @@ vi.mock('@/app/lib/privacy-safe-errors', () => ({
   getSafeErrorDetails: vi.fn(() => ({ name: 'Error' })),
 }))
 
-vi.mock('@/app/lib/data-cache', () => cacheMock)
 vi.mock('@/app/lib/sync-timing', () => timingMock)
 
 vi.mock('@/app/stores/use-sync-store', () => ({
@@ -151,15 +132,13 @@ vi.mock('@/app/stores/use-sync-store', () => ({
   ),
 }))
 
-// The store hook and the cache-mirror helper are replaced; every other export
-// of the module is the real one, reading the real offline queue.
+// The store hook is replaced; every other export of the module is the real one.
 vi.mock('@/app/stores/use-etebase-store', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/app/stores/use-etebase-store')>(),
   useEtebaseStore: Object.assign(
     (selector: (state: typeof etebaseMock.state) => unknown) => selector(etebaseMock.state),
     { getState: () => etebaseMock.state },
   ),
-  keepPendingCacheRecords: vi.fn(async (_type: string, records: unknown[]) => records),
 }))
 
 vi.mock('@/app/stores/use-task-store', () => ({
@@ -236,11 +215,6 @@ describe('SyncProvider timing instrumentation', () => {
       etebaseMock.setSyncStatusHandler(handler ?? null)
       return vi.fn()
     })
-    cacheMock.isCacheEnabled.mockReturnValue(false)
-    cacheMock.getItemsByType.mockImplementation(async (type: string) => {
-      order.push(`cacheGet:${type}`)
-      return []
-    })
     timingMock.logSyncTiming.mockImplementation(() => {})
     timingMock.markSyncTimingStart.mockReturnValue(100)
     timingMock.nowMs.mockReturnValue(100)
@@ -295,7 +269,6 @@ describe('SyncProvider timing instrumentation', () => {
       'setSyncStatus:synced',
       'setLastSynced',
     ])
-    expect(timingMock.logSyncTiming).toHaveBeenCalledWith('cache-capability', 100, expect.any(Object))
     expect(timingMock.logSyncTiming).toHaveBeenCalledWith('initial-sync-complete', 100, {})
   })
 
@@ -445,257 +418,6 @@ describe('SyncProvider timing instrumentation', () => {
     expect(contactStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
     expect(noteStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
     expect(order.filter((entry) => entry === 'syncCalendar')).toHaveLength(1)
-  })
-
-  it('hydrates cache through the verified Etebase callback and still continues startup', async () => {
-    cacheMock.isCacheEnabled.mockReturnValue(true)
-    etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate; onDomainLoaded?: OnDomainLoaded }) => {
-      order.push('etebaseInitialize')
-      await options?.onCacheHydrate?.()
-      for (const type of ['calendar', 'tasks', 'contacts', 'notes'] as const) {
-        await options?.onDomainLoaded?.({ type, status: 'loaded', itemCount: 0, pageCount: 1, collectionCount: 1 })
-      }
-    })
-
-    renderProvider()
-
-    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
-    expect(order.slice(0, 8)).toEqual([
-      'initializeSync',
-      'setSyncStatus:syncing',
-      'etebaseInitialize',
-      'cacheGet:tasks',
-      'cacheGet:contacts',
-      'cacheGet:calendar',
-      'cacheGet:notes',
-      'fetchAllItems:calendar',
-    ])
-    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('calendar', [], expect.any(Number))
-    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('tasks', [], expect.any(Number))
-    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('contacts', [], expect.any(Number))
-    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('notes', [], expect.any(Number))
-  })
-
-  it('hydrates the parseable cached events and tasks when one cached item does not parse', async () => {
-    const core = await import('@silentsuite/core')
-    const parseOrThrow = (title: string) => (content: string) => {
-      if (content === 'BROKEN') throw new Error('VEVENT missing required DTSTART property')
-      return { title }
-    }
-    vi.mocked(core.deserializeCalendarEvent).mockImplementation(parseOrThrow('event') as never)
-    vi.mocked(core.deserializeTask).mockImplementation(parseOrThrow('task') as never)
-    cacheMock.isCacheEnabled.mockReturnValue(true)
-    cacheMock.getItemsByType.mockImplementation(async (type: string) => {
-      order.push(`cacheGet:${type}`)
-      const collectionUid = type === 'calendar' ? 'cal-1' : 'list-1'
-      if (type !== 'calendar' && type !== 'tasks') return []
-      return [
-        { itemUid: `${type}-bad`, collectionUid, content: 'BROKEN' },
-        { itemUid: `${type}-good`, collectionUid, content: 'OK' },
-      ]
-    })
-    etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate }) => {
-      order.push('etebaseInitialize')
-      await options?.onCacheHydrate?.()
-    })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-    try {
-      renderProvider()
-
-      await waitFor(() => expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledTimes(1))
-      expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledWith([{ title: 'event', id: 'calendar-good', calendarId: 'cal-1' }])
-      await waitFor(() => expect(taskStoreMock.syncFromRemote).toHaveBeenCalledTimes(1))
-      expect(taskStoreMock.syncFromRemote).toHaveBeenCalledWith([{ title: 'task', id: 'tasks-good', listId: 'list-1' }])
-      // Only a count is reported, never the item's uid.
-      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/-bad/)
-    } finally {
-      warn.mockRestore()
-      vi.mocked(core.deserializeCalendarEvent).mockImplementation((() => ({ title: 'event' })) as never)
-      vi.mocked(core.deserializeTask).mockImplementation((() => ({ title: 'task' })) as never)
-    }
-  })
-
-  it('lets cache hydrate first and then overwrites calendar with server truth', async () => {
-    cacheMock.isCacheEnabled.mockReturnValue(true)
-    cacheMock.getItemsByType.mockImplementation(async (type: string) => {
-      order.push(`cacheGet:${type}`)
-      if (type === 'calendar') return [{ itemUid: 'cached-event', collectionUid: 'cal-1', content: 'VCALENDAR:CACHED' }]
-      return []
-    })
-    etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate; onDomainLoaded?: OnDomainLoaded }) => {
-      order.push('etebaseInitialize')
-      await options?.onCacheHydrate?.()
-      await options?.onDomainLoaded?.({ type: 'calendar', status: 'loaded', itemCount: 1, pageCount: 1, collectionCount: 1 })
-      await options?.onDomainLoaded?.({ type: 'tasks', status: 'loaded', itemCount: 0, pageCount: 1, collectionCount: 1 })
-      await options?.onDomainLoaded?.({ type: 'contacts', status: 'loaded', itemCount: 0, pageCount: 1, collectionCount: 1 })
-      await options?.onDomainLoaded?.({ type: 'notes', status: 'loaded', itemCount: 0, pageCount: 1, collectionCount: 1 })
-    })
-    etebaseMock.state.fetchAllItems.mockImplementation(async (type: DomainKey) => {
-      order.push(`fetchAllItems:${type}`)
-      if (type === 'calendar') return [{ uid: 'server-event', content: 'VEVENT:SERVER', collectionUid: 'cal-1' }]
-      return []
-    })
-
-    renderProvider()
-
-    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
-    expect(order.filter((entry) => entry === 'syncCalendar')).toHaveLength(2)
-    expect(order.indexOf('cacheGet:calendar')).toBeLessThan(order.indexOf('fetchAllItems:calendar'))
-  })
-
-  it.each([
-    ['every domain reaches a terminal callback', 'synced', etebaseMock.defaultInitialize],
-    // Offline shape: collection setup fails, the store swallows it, and
-    // initialize resolves without ever reaching a notes terminal callback.
-    ['initialize resolves without a notes domain callback', 'synced', async () => { order.push('etebaseInitialize') }],
-    ['initialize rejects', 'error', async () => { throw new Error('init failed') }],
-  ] as const)('never toggles a notes loading flag when %s', async (_label, finalStatus, initialize) => {
-    etebaseMock.state.initialize.mockImplementation(initialize)
-
-    renderProvider()
-
-    await waitFor(() => expect(syncStoreMock.setSyncStatus).toHaveBeenCalledWith(finalStatus))
-    expect(noteStoreMock.setState).not.toHaveBeenCalled()
-  })
-
-  it('keeps notes painted from cache when no remote domain callback follows', async () => {
-    cacheMock.isCacheEnabled.mockReturnValue(true)
-    cacheMock.getItemsByType.mockImplementation(async (type: string) => {
-      order.push(`cacheGet:${type}`)
-      if (type === 'notes') return [{ itemUid: 'cached-note', collectionUid: 'notebook-1', content: 'NOTE:CACHED' }]
-      return []
-    })
-    etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate }) => {
-      order.push('etebaseInitialize')
-      await options?.onCacheHydrate?.()
-    })
-
-    renderProvider()
-
-    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
-    expect(noteStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
-    expect(noteStoreMock.syncFromRemote.mock.calls[0][0]).toHaveLength(1)
-  })
-
-  it('keeps a note with a pending offline delete out of the notes painted from cache', async () => {
-    // A previous page load deleted note-1 while offline: the real store queues
-    // the delete in the real offline queue and the cached copy stays behind.
-    const { useEtebaseStore: realEtebaseStore } = await vi.importActual<typeof import('@/app/stores/use-etebase-store')>('@/app/stores/use-etebase-store')
-    await resetRealOfflineQueue()
-    realEtebaseStore.setState({ account: {} as never, accountFingerprint: TEST_FINGERPRINT })
-    vi.mocked(deserializeNote).mockImplementation(((_raw: string, uid: string) => ({ id: uid, title: 'note' })) as never)
-    try {
-      await expect(realEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notebook-1' })).resolves.toBe('queued')
-      expect(await getAll(queueGuard())).toEqual([
-        expect.objectContaining({ type: 'delete', collectionType: 'notes', itemUid: 'note-1', collectionUid: 'notebook-1', status: 'pending', accountFingerprint: TEST_FINGERPRINT }),
-      ])
-
-      // Reload while offline: the restored account paints from the cache and no remote domain callback follows.
-      etebaseMock.state.accountFingerprint = TEST_FINGERPRINT
-      cacheMock.isCacheEnabled.mockReturnValue(true)
-      cacheMock.getItemsByType.mockImplementation(async (type: string) => {
-        order.push(`cacheGet:${type}`)
-        if (type !== 'notes') return []
-        return [
-          { itemUid: 'note-1', collectionType: 'notes', collectionUid: 'notebook-1', content: 'NOTE:DELETED-OFFLINE', lastModified: 1 },
-          { itemUid: 'note-2', collectionType: 'notes', collectionUid: 'notebook-1', content: 'NOTE:KEPT', lastModified: 1 },
-        ]
-      })
-      etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate }) => {
-        order.push('etebaseInitialize')
-        await options?.onCacheHydrate?.()
-      })
-
-      renderProvider()
-
-      await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
-      expect(noteStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
-      expect((noteStoreMock.syncFromRemote.mock.calls[0][0] as { id: string }[]).map((note) => note.id)).toEqual(['note-2'])
-      // The delete itself is still queued for replay.
-      expect((await getAll(queueGuard())).map((entry) => entry.itemUid)).toEqual(['note-1'])
-    } finally {
-      vi.mocked(deserializeNote).mockImplementation((() => ({ title: 'note' })) as never)
-      realEtebaseStore.setState(realEtebaseStore.getInitialState(), true)
-      await resetRealOfflineQueue()
-    }
-  })
-
-  it.each([
-    ['completes', false],
-    ['fails with an ordinary error', true],
-  ] as const)('paints no cached notes and stays quiet when the account changes while the pending-delete queue read %s', async (_name, failRead) => {
-    const { useEtebaseStore: realEtebaseStore } = await vi.importActual<typeof import('@/app/stores/use-etebase-store')>('@/app/stores/use-etebase-store')
-    const { logger } = await import('@/app/lib/logger')
-    await resetRealOfflineQueue()
-    realEtebaseStore.setState({ account: {} as never, accountFingerprint: TEST_FINGERPRINT })
-    const originalGetAll = IDBObjectStore.prototype.getAll
-    let getAllSpy: { mockRestore: () => void } | null = null
-    try {
-      await expect(realEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notebook-1' })).resolves.toBe('queued')
-      // Also lets the queue's own listener read finish before the spy is installed.
-      expect((await getAll(queueGuard())).map((entry) => entry.itemUid)).toEqual(['note-1'])
-      vi.mocked(logger.warn).mockClear()
-      vi.mocked(logger.error).mockClear()
-
-      etebaseMock.state.accountFingerprint = TEST_FINGERPRINT
-      cacheMock.isCacheEnabled.mockReturnValue(true)
-      cacheMock.getItemsByType.mockImplementation(async (type: string) => {
-        order.push(`cacheGet:${type}`)
-        if (type !== 'notes') return []
-        return [
-          { itemUid: 'note-1', collectionType: 'notes', collectionUid: 'notebook-1', content: 'NOTE:DELETED-OFFLINE', lastModified: 1 },
-          { itemUid: 'note-2', collectionType: 'notes', collectionUid: 'notebook-1', content: 'NOTE:KEPT', lastModified: 1 },
-        ]
-      })
-      let queueReads = 0
-      getAllSpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementation(function (this: IDBObjectStore, ...args) {
-        if (this.name !== 'mutations') return originalGetAll.apply(this, args)
-        queueReads += 1
-        if (queueReads === 1) {
-          // The account changes while the provider's queue read is in flight.
-          bumpAccountEpoch()
-          if (failRead) throw new Error('queue read failed')
-        }
-        return originalGetAll.apply(this, args)
-      })
-      let hydrateOutcome: 'resolved' | 'rejected' | null = null
-      let markHydrateSettled!: () => void
-      const hydrateSettled = new Promise<void>((resolve) => { markHydrateSettled = resolve })
-      etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate }) => {
-        order.push('etebaseInitialize')
-        try {
-          await options?.onCacheHydrate?.()
-          hydrateOutcome = 'resolved'
-        } catch (err) {
-          hydrateOutcome = 'rejected'
-          throw err
-        } finally {
-          markHydrateSettled()
-        }
-      })
-
-      renderProvider()
-      await hydrateSettled
-      // Let the provider's init catch run after the hydrate callback settled.
-      await Promise.resolve()
-      await Promise.resolve()
-
-      expect(queueReads).toBe(1)
-      expect(order).toContain('cacheGet:notes')
-      expect(hydrateOutcome).toBe('rejected')
-      expect(noteStoreMock.syncFromRemote).not.toHaveBeenCalled()
-      expect(syncStoreMock.setLastSynced).not.toHaveBeenCalled()
-      expect(syncStoreMock.setSyncStatus).not.toHaveBeenCalledWith('error')
-      expect(syncStoreMock.setError).not.toHaveBeenCalled()
-      expect(sentryMock.captureException).not.toHaveBeenCalled()
-      expect(logger.warn).not.toHaveBeenCalled()
-      expect(logger.error).not.toHaveBeenCalled()
-    } finally {
-      getAllSpy?.mockRestore()
-      realEtebaseStore.setState(realEtebaseStore.getInitialState(), true)
-      await resetRealOfflineQueue()
-    }
   })
 
   it('does not let timing helper failures change sync status flow', async () => {

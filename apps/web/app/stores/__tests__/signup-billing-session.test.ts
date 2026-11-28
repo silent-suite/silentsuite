@@ -163,7 +163,7 @@ describe('signup Billing session boundary', () => {
     await waitFor(() => expect(continueToOptions).toBeEnabled())
     fireEvent.click(continueToOptions)
     const choose = async () => {
-      fireEvent.click(await screen.findByRole('button', { name: /7 day free trial/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /7-day free trial/i }))
       fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
       // No review screen: the password-loss acknowledgement gates the only creation step.
       const action = await screen.findByRole('button', { name: /continue to your workspace/i })
@@ -176,7 +176,7 @@ describe('signup Billing session boundary', () => {
     expect(useAuthStore.getState().pendingSignup?.etebaseAccountReady).toBe(true)
     expect(provisions).toBe(0)
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-    await screen.findByRole('heading', { name: /choose your plan/i })
+    await screen.findByRole('heading', { name: /choose your free trial/i })
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
     expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
     expect(screen.getByText(/original password remains unchanged/i)).toBeVisible()
@@ -537,6 +537,9 @@ it.each(['lost response', 'inline Bitcoin', 'storage failure'] as const)('retain
     document = render(createElement(RefreshedPendingPaymentPage))
     await screen.findByLabelText(/^password$/i)
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/payment-session/v2'))).toHaveLength(1)
-    expect(mocks.signup).not.toHaveBeenCalled()
+    // The account was created once, before payment dispatch; the restored page signs in to it.
+    expect(mocks.signup).toHaveBeenCalledTimes(1)
+    expect(useAuthStore.getState().pendingSignup?.etebaseAccountReady).toBe(true)
+    expect(screen.getByRole('heading', { name: 'Enter your password' })).toBeVisible()
   } finally { write.mockRestore() }
 })

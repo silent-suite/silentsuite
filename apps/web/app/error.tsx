@@ -38,7 +38,7 @@ export default function GlobalError({
         <div className="flex items-center justify-center gap-3">
           <button
             onClick={reset}
-            className="rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm font-medium text-white hover:bg-[rgb(var(--primary-hover))] transition-colors"
+            className="rounded-lg bg-[rgb(var(--primary-strong))] px-4 py-2 text-sm font-medium text-white hover:bg-[rgb(var(--primary-strong-hover))] transition-colors"
           >
             Try again
           </button>

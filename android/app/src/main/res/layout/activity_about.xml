@@ -24,12 +24,13 @@
             android:theme="@style/ThemeOverlay.AppTheme.TopBar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:minHeight="@dimen/touch_target_min" />
+            android:minHeight="?attr/actionBarSize" />
 
         <com.google.android.material.tabs.TabLayout
             android:id="@+id/tabs"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:background="@color/semantic_system_bar"
             android:minHeight="@dimen/touch_target_min"
             app:tabIndicatorColor="@color/semantic_primary"
             app:tabMode="scrollable"
