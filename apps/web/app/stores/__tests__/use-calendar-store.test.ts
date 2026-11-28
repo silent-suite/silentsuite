@@ -1692,6 +1692,46 @@ describe('useCalendarStore keeps VTIMEZONE blocks and overrides of a series', ()
 })
 
 
+describe('useCalendarStore "this" edit of an occurrence moved to another time form', () => {
+  beforeEach(resetStore)
+
+  it('keeps a timed override of an all-day series timed', async () => {
+    const master = seedRemote([
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+      'BEGIN:VEVENT', 'UID:mixed-series',
+      'DTSTART;VALUE=DATE:20270301', 'DTEND;VALUE=DATE:20270302',
+      'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:Weekly', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:mixed-series', 'RECURRENCE-ID;VALUE=DATE:20270315',
+      'DTSTART:20270315T150000Z', 'DTEND:20270315T160000Z', 'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n'))
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { location: 'Room 2' }, 'this', new Date(2027, 2, 15))
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^DTSTART:20270315T150000Z$/m)
+    expect(copy).toMatch(/^DTEND:20270315T160000Z$/m)
+    expect(copy).toMatch(/^LOCATION:Room 2$/m)
+  })
+
+  it('keeps an all-day override of a timed series all-day', async () => {
+    const master = seedRemote([
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+      'BEGIN:VEVENT', 'UID:mixed-series-2',
+      'DTSTART;TZID=Europe/Berlin:20270301T100000', 'DTEND;TZID=Europe/Berlin:20270301T110000',
+      'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:Weekly', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:mixed-series-2', 'RECURRENCE-ID;TZID=Europe/Berlin:20270315T100000',
+      'DTSTART;VALUE=DATE:20270316', 'DTEND;VALUE=DATE:20270317', 'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n'))
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { location: 'Room 2' }, 'this', new Date('2027-03-15T09:00:00Z'))
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^DTSTART;VALUE=DATE:20270316$/m)
+    expect(copy).toMatch(/^DTEND;VALUE=DATE:20270317$/m)
+  })
+})
+
+
 describe('file series import', () => {
   beforeEach(resetStore)
   it('imports a Windows master, moved and cancelled occurrences as one stored item', async () => {
