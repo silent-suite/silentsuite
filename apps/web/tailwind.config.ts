@@ -55,7 +55,19 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],
+        // One variable per Inter subset file (app/fonts/inter.ts); the browser takes
+        // each character from the first family whose range covers it.
+        sans: [
+          'var(--font-inter-latin)',
+          'var(--font-inter-latin-ext)',
+          'var(--font-inter-cyrillic)',
+          'var(--font-inter-cyrillic-ext)',
+          'var(--font-inter-greek)',
+          'var(--font-inter-greek-ext)',
+          'var(--font-inter-vietnamese)',
+          'system-ui',
+          'sans-serif',
+        ],
       },
     },
   },

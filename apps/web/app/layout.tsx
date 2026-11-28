@@ -1,12 +1,10 @@
 import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
+import { interVariables } from '@/app/fonts/inter'
 import { ThemeProvider } from 'next-themes'
 import { NextIntlClientProvider } from 'next-intl'
 import { getLocale, getMessages } from 'next-intl/server'
 import { AuthProvider } from '@/app/providers/auth-provider'
 import './globals.css'
-
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
   title: 'SilentSuite',
@@ -44,7 +42,7 @@ export default async function RootLayout({
   const [locale, messages] = await Promise.all([getLocale(), getMessages()])
 
   return (
-    <html lang={locale}className={inter.variable} suppressHydrationWarning>
+    <html lang={locale} className={interVariables} suppressHydrationWarning>
       <body className="font-sans">
         <NextIntlClientProvider messages={messages}>
           <ThemeProvider attribute="class" defaultTheme="system" enableSystem>

@@ -50,8 +50,8 @@ above. Requests to any other address are refused by the app as well.
 
 ## Known limits
 
-- The web font is downloaded from Google Fonts while building, as in the hosted
-  build; the app itself never contacts Google. Two builds of one commit are
-  compared byte for byte in CI (`android-web-bundle.yml`).
+- Two builds of one commit are compared byte for byte in CI
+  (`android-web-bundle.yml`). The build downloads nothing: the font files are in
+  `app/fonts/inter/`.
 - Reminders do not come from this view; Android's calendar sync provides them.
 - After an offline start the calendar is empty, as in the hosted web app.
