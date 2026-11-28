@@ -618,6 +618,17 @@ a StartOS server yet and is not in the Start9 registry. See
 - The server image is selected by an immutable digest, never by a mutable tag, so the bytes you verified at install time are the bytes that keep running.
 - Built on the [Etebase protocol](https://docs.etebase.com), an open standard for E2E encrypted data sync.
 
+## CasaOS and ZimaOS
+
+A package for the CasaOS / ZimaOS app store lives in the repository's [`self-host/casaos/` folder](https://github.com/silent-suite/silentsuite/blob/main/self-host/casaos/README.md). It runs
+the web app and the sync server together on one port, makes its own credentials on first
+start, and needs your own HTTPS proxy or tunnel before sign-up works. Its backup is a copy of
+the stopped app's folder, described in that README. The `backup.sh` helper in this guide is for the installer stack only.
+
+## YunoHost
+
+A YunoHost package lives in [`self-host/yunohost/silentsuite_ynh`](https://github.com/silent-suite/silentsuite/tree/main/self-host/yunohost/silentsuite_ynh) in the source repository (it is not part of this release bundle). It installs the published server and web images without Docker: each image is downloaded by its pinned digest, unpacked, and run under systemd. It needs a whole domain or subdomain with a trusted certificate, and is amd64 only for now. It is not in the YunoHost catalogue yet; install it from a local copy with `yunohost app install ./silentsuite_ynh`. The package's `doc/ADMIN.md` explains the installation password and which paths bypass the YunoHost login.
+
 ## Full Documentation
 
 For more details, see [docs.silentsuite.io/self-hosting](https://docs.silentsuite.io/self-hosting/).

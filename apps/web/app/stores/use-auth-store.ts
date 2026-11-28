@@ -1625,8 +1625,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         throw new DOMException('Signup was cancelled.', 'AbortError')
       }
       if (get().pendingSignup !== existing) throw new Error('Signup was superseded.')
-      if (isCustomServer(serverUrl) && serverUrl) {
-        localStorage.setItem('silentsuite-server-url', serverUrl)
+      // Save the server selection only now that the account exists on it.
+      if (typeof localStorage !== 'undefined') {
+        if (serverUrl && (isSelfHosted || isCustomServer(serverUrl))) localStorage.setItem('silentsuite-server-url', serverUrl)
+        else localStorage.removeItem('silentsuite-server-url')
       }
 
 

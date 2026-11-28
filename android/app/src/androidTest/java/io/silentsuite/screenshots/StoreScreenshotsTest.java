@@ -327,8 +327,7 @@ public class StoreScreenshotsTest {
 
     private boolean isLoginScreen() {
         return device.hasObject(By.textContains("Add account"))
-                || device.hasObject(By.text("LOG IN"))
-                || device.hasObject(By.text("Log In"))
+                || device.hasObject(By.text("Log in"))
                 || (device.hasObject(By.textContains("Email")) && device.hasObject(By.textContains("Password")));
     }
 
@@ -376,7 +375,7 @@ public class StoreScreenshotsTest {
 
     /**
      * Attempt to log in with the test account credentials (if provided).
-     * Types email + password into the login fields and taps Log In.
+     * Types email + password into the login fields and taps Log in.
      * Sets loggedIn=true if the collections screen appears after login.
      */
     private void tryLogin() {
@@ -470,7 +469,7 @@ public class StoreScreenshotsTest {
     @Test
     public void test05_sharing_members() {
         requireLoggedIn("sharing members");
-        // Tap the first collection to open its detail, then Manage Members
+        // Tap the first collection to open its detail, then Manage members
         UiObject2 collection = device.wait(Until.findObject(By.textContains("Calendar")), NAV_TIMEOUT);
         if (collection == null) {
             collection = device.wait(Until.findObject(By.textContains("Contacts")), NAV_TIMEOUT);
@@ -481,7 +480,7 @@ public class StoreScreenshotsTest {
         }
         tapDescContains("More");
         sleep(800);
-        tapTextContains("Manage Members");
+        tapTextContains("Manage members");
         sleep(2000);
         capture("5-sharing-members");
         device.pressBack();

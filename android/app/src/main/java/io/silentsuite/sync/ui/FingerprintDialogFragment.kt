@@ -76,7 +76,9 @@ class FingerprintDialogFragment : DialogFragment() {
         }
         val displayFingerprint = fingerprint ?: getString(R.string.fingerprint_unavailable)
         val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
-        view.findViewById<View>(R.id.body).visibility = View.GONE
+        view.findViewById<TextView>(R.id.body).apply {
+            if (fingerprint == null) visibility = View.GONE else setText(R.string.fingerprint_compare_hint)
+        }
         view.findViewById<TextView>(R.id.fingerprint).text = displayFingerprint
 
         return MaterialAlertDialogBuilder(requireContext())

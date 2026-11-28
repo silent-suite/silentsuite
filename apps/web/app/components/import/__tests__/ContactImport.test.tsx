@@ -569,6 +569,12 @@ describe('ContactImport large-file robustness', () => {
     expect(imported).toMatchObject({ displayName: 'Folded', notes: note })
   })
 
+  it('warns about notes over 200,000 characters but still imports them', async () => {
+    await select(file(`BEGIN:VCARD\r\nFN:Long\r\nNOTE:${'n'.repeat(200_001)}\r\nEND:VCARD\r\nBEGIN:VCARD\r\nFN:Edge\r\nNOTE:${'n'.repeat(200_000)}\r\nEND:VCARD\r\n`))
+    expect(await screen.findByText('1 contact has a note over 200,000 characters and may not sync to Android.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Import 2 contacts' })).toBeInTheDocument()
+  })
+
   it('counts a final card without END and a BEGIN before an END as unreadable', async () => {
     await select(file('BEGIN:VCARD\nFN:Open\nBEGIN:VCARD\nFN:Whole\nEND:VCARD\nBEGIN:VCARD\nFN:Tail'))
     expect(await screen.findByText("2 contacts couldn't be read.")).toBeInTheDocument()

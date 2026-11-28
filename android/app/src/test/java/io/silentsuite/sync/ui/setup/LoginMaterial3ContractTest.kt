@@ -25,7 +25,7 @@ class LoginMaterial3ContractTest {
 
         assertTrue(loginActivity.contains("android:theme=\"@style/AppTheme.Material3\""))
         assertTrue(menu.contains("android:icon=\"@drawable/ic_help_light\""))
-        assertTrue(menu.contains("app:iconTint=\"@color/semantic_on_surface\""))
+        assertTrue(menu.contains("app:iconTint=\"@color/semantic_on_system_bar\""))
         assertTrue(choiceLayout.contains("android:id=\"@+id/account_choice_brand_mark\""))
         assertTrue(choiceLayout.contains("android:src=\"@drawable/ic_silentsuite_arrows\""))
         assertTrue(choiceLayout.contains("@style/TextAppearance.AppTheme.FirstRun.Title"))
@@ -109,5 +109,13 @@ class LoginMaterial3ContractTest {
         assertTrue(choiceFragment.contains("requestSignIn"))
         assertTrue(choiceFragment.contains("requestHostedSignup"))
         assertTrue(credentialsLayout.contains("<net.cachapa.expandablelayout.ExpandableLayout"))
+    }
+
+    @Test
+    fun emailAndPasswordErrorsShowInlineOnTheirTextInputLayouts() {
+        assertTrue(credentialsLayout.contains("android:id=\"@+id/user_name_layout\""))
+        assertTrue(credentialsFragment.contains("editUserNameLayout.error = getString(R.string.login_email_address_error)"))
+        assertTrue(credentialsFragment.contains("editUrlPassword.error = getString(R.string.login_password_required)"))
+        assertFalse(credentialsFragment.contains("editUserName.error"))
     }
 }

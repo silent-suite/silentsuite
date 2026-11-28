@@ -22,7 +22,7 @@ import { CalendarListPanel } from '@/app/components/CalendarListPanel'
 import { TaskListPanel } from '@/app/components/TaskListPanel'
 import { ContactListPanel } from '@/app/components/ContactListPanel'
 import { NotebookListPanel } from '@/app/components/NotebookListPanel'
-import { OnboardingChecklist } from '@/app/components/OnboardingChecklist'
+import { OnboardingChecklistAt } from '@/app/components/OnboardingChecklist'
 import { TrialStatusLink } from '@/app/components/trial-status-link'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
@@ -107,7 +107,7 @@ export function Sidebar() {
       </div>
 
       {/* Onboarding checklist */}
-      {isExpanded && <OnboardingChecklist />}
+      {isExpanded && <OnboardingChecklistAt width="md-up" />}
 
       {/* Bottom section */}
       <div className="flex flex-col gap-1 border-t border-[rgb(var(--border))] px-2 py-2">

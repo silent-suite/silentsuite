@@ -37,6 +37,33 @@ describe('imported event time zones', () => {
     ]);
   });
 
+  it('keeps an EXDATE in the repeated DST hour on the same instant after a web save', () => {
+    const event = deserializeCalendarEvent([
+      'BEGIN:VEVENT', 'UID:exdate-fold', 'DTSTART;TZID=America/New_York:20261025T013000', 'DTEND;TZID=America/New_York:20261025T020000',
+      'RRULE:FREQ=DAILY;COUNT=14', 'EXDATE:20261101T063000Z', 'EXDATE;TZID=America/New_York:20261102T013000', 'END:VEVENT',
+    ].join('\r\n'));
+    expect(event.exceptions.map(d => d.toISOString())).toEqual(['2026-11-01T06:30:00.000Z', '2026-11-02T06:30:00.000Z']);
+    const text = serializeCalendarEvent({ ...event, title: 'Edited' });
+    expect(text).toContain('EXDATE:20261101T063000Z');
+    expect(text).toContain('EXDATE;TZID=America/New_York:20261102T013000');
+    const saved = deserializeCalendarEvent(text);
+    expect(saved.exceptions.map(d => d.toISOString())).toEqual(['2026-11-01T06:30:00.000Z', '2026-11-02T06:30:00.000Z']);
+    // The first 01:30 on the fold day is still an occurrence; the 2 November one stays excluded.
+    expect(expandEventRecurrence(saved, { start: new Date('2026-10-31Z'), end: new Date('2026-11-04Z') }).map(d => d.toISOString())).toEqual([
+      '2026-10-31T05:30:00.000Z', '2026-11-01T05:30:00.000Z', '2026-11-03T06:30:00.000Z',
+    ]);
+  });
+
+  it('writes EXDATEs away from a DST fold in the start zone', () => {
+    const event = deserializeCalendarEvent([
+      'BEGIN:VEVENT', 'UID:exdate-plain', 'DTSTART;TZID=America/New_York:20261025T013000', 'DTEND;TZID=America/New_York:20261025T020000',
+      'RRULE:FREQ=DAILY;COUNT=14', 'EXDATE:20261026T053000Z', 'END:VEVENT',
+    ].join('\r\n'));
+    const text = serializeCalendarEvent({ ...event, title: 'Edited' });
+    expect(text).toContain('EXDATE;TZID=America/New_York:20261026T013000');
+    expect(text).not.toMatch(/EXDATE:/);
+  });
+
   it('quotes a custom identifier when an existing event is saved', () => {
     const zone = '(UTC+01:00) Amsterdam, Berlin';
     const event = deserializeCalendarEvent(['BEGIN:VCALENDAR', 'BEGIN:VTIMEZONE', `TZID:${zone}`, 'END:VTIMEZONE', 'BEGIN:VEVENT', 'UID:custom', `DTSTART;TZID="${zone}":20261117T100000`, `DTEND;TZID="${zone}":20261117T110000`, 'END:VEVENT', 'END:VCALENDAR'].join('\r\n'));

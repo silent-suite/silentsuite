@@ -1,0 +1,56 @@
+#!/bin/bash
+
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+# Keep this path for calling _common.sh inside the execution's context of backup and restore scripts
+source ../settings/scripts/_common.sh
+source /usr/share/yunohost/helpers
+
+#=================================================
+# RESTORE THE APP MAIN DIR AND DATA DIR
+#=================================================
+ynh_script_progression "Restoring the app main directory and data..."
+
+ynh_restore "$install_dir"
+ynh_restore "$data_dir"
+
+# ynh_restore gives $install_dir to the app user: put root ownership back first.
+_silentsuite_set_permissions
+
+#=================================================
+# RESTORE THE POSTGRESQL DATABASE
+#=================================================
+ynh_script_progression "Restoring the PostgreSQL database..."
+
+ynh_psql_db_shell < ./db.sql
+
+#=================================================
+# RESTORE SYSTEM CONFIGURATION
+#=================================================
+ynh_script_progression "Restoring system configurations related to $app..."
+
+ynh_restore "/etc/nginx/conf.d/$domain.d/$app.conf"
+
+ynh_restore "/etc/systemd/system/$app-server.service"
+ynh_restore "/etc/systemd/system/$app-web.service"
+systemctl enable "$app-server.service" "$app-web.service" --quiet
+
+yunohost service add "$app-server" --description="SilentSuite server"
+yunohost service add "$app-web" --description="SilentSuite web app"
+
+#=================================================
+# RELOAD NGINX AND THE APP SERVICES
+#=================================================
+ynh_script_progression "Starting $app's services and reloading NGINX..."
+
+_silentsuite_start
+
+ynh_systemctl --service=nginx --action=reload
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_script_progression "Restoration completed for $app"

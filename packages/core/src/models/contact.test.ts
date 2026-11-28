@@ -290,6 +290,16 @@ describe('serializeContact / deserializeContact', () => {
 
 // ── getContactInitials ──
 
+describe('photo value type', () => {
+  it('keeps a declared URI photo that looks like base64 across fromVCard/toVCard', () => {
+    const contact = fromVCard('BEGIN:VCARD\r\nVERSION:3.0\r\nUID:u1\r\nFN:Ada\r\nPHOTO;VALUE=URI:icons/me\r\nEND:VCARD');
+    expect(contact.photoUrl).toBe('icons/me');
+    const written = toVCard(contact);
+    expect(written).toContain('PHOTO;VALUE=URI:icons/me');
+    expect(fromVCard(written).photoUrl).toBe('icons/me');
+  });
+});
+
 describe('getContactInitials', () => {
   it('returns two initials from given and family name', () => {
     const contact = makeFullContact();
