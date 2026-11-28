@@ -93,7 +93,9 @@ PY
 negative "a trailing space in the database password" "must not start or end with spaces" 'v["silentsuite"]["db_password"] += " "'
 negative "a leading space in the database password" "must not start or end with spaces" 'v["silentsuite"]["db_password"] = " " + v["silentsuite"]["db_password"]'
 negative "a line break in the database password" "must not start or end with spaces" 'v["silentsuite"]["db_password"] = "abc\ndef"'
+negative "an empty database password" "must not be empty" 'v["silentsuite"]["db_password"] = ""'
 negative "neither a certificate nor the HTTPS proxy option" "Select a certificate" 'v["network"]["behind_https_proxy"] = False'
+negative "both a certificate and the HTTPS proxy option" "Choose one" 'v["network"]["certificate_id"] = "1"'
 # Test values cannot override images, so mimic a one-image bot bump in ix_values.yaml.
 cp "$app/ix_values.yaml" "$work/ix_values.yaml"
 sed -i '/repository: ghcr.io\/silent-suite\/silentsuite-web-selfhost/{n;s/tag: "v[^@]*@/tag: "v0.0.1-beta@/}' "$app/ix_values.yaml"
@@ -142,7 +144,6 @@ values = {
         "web_port": {"bind_mode": "published", "port_number": int(os.environ["PROBE_PUBLIC_PORT"])},
         "certificate_id": "1" if mode == "tls" else None,
         "behind_https_proxy": mode == "proxy",
-        "networks": [],
     },
     "ix_volumes": {"data": f"{mnt}/data", "postgres_data": f"{mnt}/postgres_data"},
     "storage": storage,
@@ -205,6 +206,10 @@ server_uid="${server_user%%:*}"
 server_gid="${server_user##*:}"
 [ "$server_user" = "568:568" ] || fail "server must run as the TrueNAS apps user"
 python3 "$work/probe/probe.py" published
+web_image="$(docker inspect -f '{{.Config.Image}}' "$(cid web)")"
+docker run --rm --pull=never --entrypoint sh "$web_image" -c 'grep -rlq "Installation password" apps/web/.next/static' \
+  || fail "the shipped web image has no installation-password sign-up form"
+pass "the shipped web image has the installation-password sign-up form"
 helper account
 
 published=""
@@ -235,10 +240,12 @@ docker compose -p "$project" -f "$compose" logs --no-color >"$work/logs.txt" 2>&
 grep -qF "$marker" "$work/logs.txt" && fail "request paths appear in container logs"
 pass "no request path markers in router, server or web logs"
 signing="$(sudo cat "$mnt/data/registration-signing")"
-for secret in "$installation_password" "$db_password" "$signing"; do
+django_secret="$(sudo cat "$mnt/data/secret.txt")"
+[ -n "$django_secret" ] || fail "the server did not create its Django secret"
+for secret in "$installation_password" "$db_password" "$signing" "$django_secret"; do
   grep -qF -- "$secret" "$work/logs.txt" && fail "a per-run secret appears in container logs"
 done
-pass "no per-run secrets in container logs"
+pass "no per-run secrets in container logs (installation password, database password, signing key, Django secret)"
 
 down
 up tls
@@ -268,9 +275,19 @@ sudo rm -rf "$mnt"
 render_private proxy hp-unwritable host_path
 sudo mkdir -p "$mnt/data" && sudo chown 0:0 "$mnt/data" && sudo chmod 755 "$mnt/data"
 up hp-unwritable server
-wait_for_log server "the data directory is not writable" || fail "unwritable host path did not produce the package diagnostic"
-[ -z "$(sudo ls -A "$mnt/data")" ] || fail "server wrote into an unwritable host path"
-pass "unwritable host path is refused before anything is created"
+wait_for_log server "the data directory must be owned by" || fail "foreign-owned host path did not produce the package diagnostic"
+[ -z "$(sudo ls -A "$mnt/data")" ] || fail "server wrote into a foreign-owned host path"
+pass "foreign-owned host path is refused before anything is created"
+down
+sudo rm -rf "$mnt"
+
+render_private proxy hp-shared host_path
+sudo mkdir -p "$mnt/data" && sudo chown "$server_uid:$server_gid" "$mnt/data" && sudo chmod 775 "$mnt/data"
+up hp-shared server
+wait_for_log server "must not be writable by its group or by others" || fail "group-writable host path was not refused"
+[ -z "$(sudo ls -A "$mnt/data")" ] || fail "server wrote into a group-writable host path"
+[ "$(sudo stat -c '%a' "$mnt/data")" = "775" ] || fail "operator-managed permissions were changed"
+pass "group-writable host path is refused, unchanged, before anything is created"
 down
 sudo rm -rf "$mnt"
 
@@ -284,8 +301,19 @@ pass "dangling registration-signing link is refused and its target left absent"
 down
 sudo rm -rf "$mnt"
 
+render_private proxy hp-badkey host_path
+sudo mkdir -p "$mnt/data" && sudo chown "$server_uid:$server_gid" "$mnt/data" && sudo chmod 750 "$mnt/data"
+sudo sh -c "printf short > '$mnt/data/registration-signing'"
+sudo chown "$server_uid:$server_gid" "$mnt/data/registration-signing" && sudo chmod 600 "$mnt/data/registration-signing"
+up hp-badkey server
+wait_for_log server "registration-signing is malformed" || fail "a short persisted signing key was not refused"
+[ "$(sudo cat "$mnt/data/registration-signing")" = "short" ] || fail "a malformed signing key was silently rotated"
+pass "a malformed persisted signing key is refused, not rotated"
+down
+sudo rm -rf "$mnt"
+
 render_private proxy hp-mode host_path
-sudo mkdir -p "$mnt/data" && sudo chown "$server_uid:$server_gid" "$mnt/data" && sudo chmod 700 "$mnt/data"
+sudo mkdir -p "$mnt/data" && sudo chown "$server_uid:$server_gid" "$mnt/data" && sudo chmod 750 "$mnt/data"
 sudo sh -c "head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n' > '$mnt/data/secret.txt'"
 sudo chown "$server_uid:$server_gid" "$mnt/data/secret.txt" && sudo chmod 644 "$mnt/data/secret.txt"
 before="$(sudo sha256sum "$mnt/data/secret.txt" | cut -d' ' -f1)"
@@ -294,6 +322,8 @@ wait_for_log server "starting uvicorn" || fail "host-path stack with a prepared 
 [ "$(sudo stat -c '%a' "$mnt/data/secret.txt")" = "600" ] || fail "existing secret.txt mode not repaired"
 [ "$(sudo sha256sum "$mnt/data/secret.txt" | cut -d' ' -f1)" = "$before" ] || fail "existing secret.txt content changed"
 pass "existing secret.txt is kept and repaired to mode 600"
+[ "$(sudo stat -c '%a' "$mnt/data")" = "750" ] || fail "operator-managed data directory mode was changed"
+pass "operator-managed data directory mode (750) is left as set"
 down
 
 echo "NOT COVERED: a real TrueNAS host, browser sign-in, mobile/desktop clients"

@@ -104,3 +104,13 @@ def test_wrapper_inspects_data_before_touching_it():
     assert checks < WRAPPER.index("os.chmod(path, 0o600)")
     assert checks < WRAPPER.index("os.O_EXCL | os.O_NOFOLLOW")
     assert "--no-access-log" in WRAPPER
+
+
+def test_no_container_can_be_attached_to_outside_networks():
+    # Only the router's published port is the way in; no backend joins another network.
+    network = next(q for q in QUESTIONS["questions"] if q["variable"] == "network")
+    assert "networks" not in [attr["variable"] for attr in network["schema"]["attrs"]]
+
+
+def test_the_two_https_modes_are_exclusive():
+    assert "values.network.certificate_id and values.network.behind_https_proxy" in TEMPLATE

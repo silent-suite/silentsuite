@@ -20,8 +20,11 @@ listed in the TrueNAS catalog yet.
   upgrade helpers.
 
 The installation password and the database password come from the install form. The database
-password cannot be changed after install. Accounts can only be created over HTTPS, so the form
-needs either a certificate or the reverse-proxy option.
+password cannot be changed after install. The web app and the server accept the installation
+password only from an `https://` page (or from localhost), so the form needs exactly one of: a
+certificate, where SilentSuite serves HTTPS on its port and TrueNAS links to it, or the
+reverse-proxy option, where it serves plain HTTP for your proxy and TrueNAS shows no direct link,
+because sign-up there would be refused.
 
 ## Checks
 

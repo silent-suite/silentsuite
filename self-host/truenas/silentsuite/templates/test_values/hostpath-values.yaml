@@ -17,7 +17,6 @@ network:
     port_number: 8080
   certificate_id: null
   behind_https_proxy: true
-  networks: []
 
 storage:
   data:

@@ -26,6 +26,7 @@ import sys
 
 DATA = "/data"
 SECRETS = ("secret.txt", "registration-signing")
+SIGNING_TMP = ".registration-signing.tmp"
 
 
 def fail(message):
@@ -39,10 +40,18 @@ except FileNotFoundError:
     fail("the data directory is missing")
 if not stat.S_ISDIR(info.st_mode):
     fail("the data directory is not a directory")
+# A dedicated, private directory: owned by this user and writable by no one else, so no
+# other writer can swap the key files. TrueNAS-managed storage may be tightened to 0700;
+# operator-managed permissions are only checked, never changed.
+managed = os.environ.get("SILENTSUITE_DATA_PERMISSIONS") == "managed"
+if info.st_uid != os.getuid():
+    fail("the data directory must be owned by uid %d / gid %d (enable automatic permissions, "
+         "or give that user ownership)" % (os.getuid(), os.getgid()))
+if info.st_mode & 0o022 and not managed:
+    fail("the data directory must not be writable by its group or by others")
 if not os.access(DATA, os.W_OK | os.X_OK):
-    fail("the data directory is not writable for uid %d / gid %d; give that user ownership or "
-         "enable automatic permissions" % (os.getuid(), os.getgid()))
-for name in SECRETS:
+    fail("the data directory is not writable for uid %d / gid %d" % (os.getuid(), os.getgid()))
+for name in SECRETS + (SIGNING_TMP,):
     path = os.path.join(DATA, name)
     try:
         entry = os.lstat(path)
@@ -80,22 +89,45 @@ with open(os.environ["ETEBASE_EASY_CONFIG_PATH"], "w", encoding="utf-8") as hand
     config.write(handle)
 
 # 3. Repair existing secrets, then create the signing material once.
+def private(path, mode):
+    try:
+        os.chmod(path, mode)
+    except PermissionError:
+        # e.g. an NFSv4 ACL dataset whose ACL mode forbids chmod
+        fail("cannot set mode %o on %s; let the server user change its permissions" % (mode, path))
+
+
+if managed:
+    private(DATA, 0o700)
 for name in SECRETS:
     path = os.path.join(DATA, name)
     if os.path.lexists(path):
         # Checked above to be a regular file owned by this user, not a link.
-        os.chmod(path, 0o600)
+        private(path, 0o600)
 signing = os.path.join(DATA, "registration-signing")
+tmp = os.path.join(DATA, SIGNING_TMP)
+if os.path.lexists(tmp):
+    os.unlink(tmp)  # an interrupted first start; checked above to be our regular file
 if not os.path.lexists(signing):
-    fd = os.open(signing, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    # Write the whole key under a temporary name, then link it into place, so the
+    # permanent name only ever holds a complete key.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w", encoding="ascii") as handle:
         handle.write(secrets.token_hex(32))
         handle.flush()
         os.fsync(handle.fileno())
+    os.link(tmp, signing)
+    os.unlink(tmp)
+    dir_fd = os.open(DATA, os.O_RDONLY | os.O_DIRECTORY)
+    os.fsync(dir_fd)
+    os.close(dir_fd)
+with open(signing, encoding="ascii") as handle:
+    key = handle.read()
+if len(key) != 64 or any(c not in "0123456789abcdef" for c in key):
+    fail("registration-signing is malformed; restore it from a backup, or remove it to create a "
+         "new one (only pending sign-up grants are affected)")
 for name in ("media", "static"):
     os.makedirs(os.path.join(DATA, name), exist_ok=True)
-if os.stat(DATA).st_uid == os.getuid():
-    os.chmod(DATA, 0o700)
 PY
 
 unset SILENTSUITE_DB_PASSWORD

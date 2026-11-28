@@ -127,6 +127,11 @@ def etebase_login(signing_key):
     return status, challenge.get("salt"), token
 
 
+def list_collections(token):
+    headers = {**MSGPACK_HEADERS, "Authorization": f"Token {token}"}
+    return request("GET", "/api/v1/collection/", headers=headers)[0]
+
+
 def logout(token):
     return request("POST", "/api/v1/authentication/logout/", b"", {"Authorization": f"Token {token}"})[0]
 
@@ -164,6 +169,7 @@ def account_mode():
     check("signed Etebase login succeeds", status == 200 and bool(token))
     check("login challenge returns the signup salt", returned_salt == salt)
     if token:
+        check("the login token lists collections through the router", list_collections(token) == 200)
         check("the login token authorizes a native request (logout)", logout(token) == 204)
 
     with open(STATE_FILE, "w", encoding="utf-8") as handle:
@@ -190,6 +196,7 @@ def after_mode():
     check("signed Etebase login still succeeds", status == 200 and bool(token))
     check("login challenge still returns the signup salt", salt == bytes.fromhex(state["salt"]))
     if token:
+        check("the new token lists collections through the router", list_collections(token) == 200)
         check("the new token authorizes a native request (logout)", logout(token) == 204)
 
 

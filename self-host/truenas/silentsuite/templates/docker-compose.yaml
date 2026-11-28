@@ -10,13 +10,16 @@
 {# The database password is immutable after install, so refuse values the server cannot use.
    Fixed message: never echo the value. #}
 {% set db_password = values.silentsuite.db_password %}
-{% if db_password != db_password.strip() or "\r" in db_password or "\n" in db_password or "\0" in db_password %}
-  {% do tpl.funcs.fail("The database password must not start or end with spaces or contain line breaks.") %}
+{% if not db_password or db_password != db_password.strip() or "\r" in db_password or "\n" in db_password or "\0" in db_password %}
+  {% do tpl.funcs.fail("The database password must not be empty, start or end with spaces, or contain line breaks.") %}
 {% endif %}
 
 {# Creating an account needs an https:// origin: a TrueNAS certificate, or the user's own proxy. #}
 {% if not values.network.certificate_id and not values.network.behind_https_proxy %}
   {% do tpl.funcs.fail("Select a certificate, or enable 'Behind My Own HTTPS Reverse Proxy'. SilentSuite accounts can only be created over HTTPS.") %}
+{% endif %}
+{% if values.network.certificate_id and values.network.behind_https_proxy %}
+  {% do tpl.funcs.fail("Choose one: a certificate (SilentSuite serves HTTPS) or 'Behind My Own HTTPS Reverse Proxy' (plain HTTP for your proxy), not both.") %}
 {% endif %}
 
 {% set ss_net = tpl.networks.create_internal("silentsuite-net") %}
@@ -58,6 +61,12 @@
 {% do server.environment.add_env("ETEBASE_SECURE_SSL_REDIRECT", "false") %}
 {% do server.environment.add_user_envs(values.silentsuite.additional_envs) %}
 {% do server.add_storage("/data", values.storage.data) %}
+{# Whether TrueNAS sets the data ownership (the permissions action below applies). Only then
+   may the wrapper tighten the directory; otherwise it checks and never changes it. #}
+{% set data = values.storage.data %}
+{% set data_managed = (data.type == "ix_volume" and not data.ix_volume_config.get("acl_enable", false) and data.ix_volume_config.get("auto_permissions", true))
+  or (data.type == "host_path" and not data.host_path_config.get("acl_enable", false) and data.host_path_config.get("auto_permissions", false)) %}
+{% do server.environment.add_env("SILENTSUITE_DATA_PERMISSIONS", "managed" if data_managed else "operator") %}
 {% do server.add_storage("/run/silentsuite", {"type": "tmpfs", "tmpfs_config": {"size": 1, "mode": "0700", "uid": values.consts.server_user, "gid": values.consts.server_group}}) %}
 {% do perm_container.add_or_skip_action("data", values.storage.data, {"uid": values.consts.server_user, "gid": values.consts.server_group, "mode": "check"}) %}
 
@@ -93,7 +102,10 @@
   {% do postgres.add_dependency(values.consts.perms_container_name, "service_completed_successfully") %}
 {% endif %}
 
-{% do tpl.portals.add(values.network.web_port, {"scheme": scheme}) %}
+{# In proxy mode the direct port is plain HTTP, where sign-up is refused: link nothing there. #}
+{% if values.network.certificate_id %}
+  {% do tpl.portals.add(values.network.web_port, {"scheme": "https"}) %}
+{% endif %}
 
 {% do tpl.notes.add_info("Create your account in the web app: choose Sign up and enter the installation password you set for this app. Your account password then encrypts your data and is never sent to this server, so keep it safe; it cannot be recovered.") %}
 {% if values.network.certificate_id %}
