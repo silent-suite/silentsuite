@@ -35,6 +35,9 @@ export interface Contact {
    *  Optional so existing callers keep compiling; absence means a date. */
   birthdayIsText?: boolean;
   photoUrl: string | null;
+  /** The photo was declared as a URI, so it is never rewritten as base64.
+   *  Optional so existing callers keep compiling; absence means guess from the value. */
+  photoIsUri?: boolean;
   /** User-defined labels/categories for grouping and filtering.
    *  Round-tripped via the vCard CATEGORIES property (comma-separated).
    *  Optional so existing callers keep compiling; deserialize paths default to []. */
@@ -72,6 +75,7 @@ export function toVCard(contact: Contact): string {
     bday: contact.birthday ?? undefined,
     bdayIsText: contact.birthdayIsText === true ? true : undefined,
     photo: contact.photoUrl ?? undefined,
+    photoIsUri: contact.photoIsUri === true ? true : undefined,
     favorite: contact.favorite === true ? true : undefined,
     rev: formatRevTimestamp(contact.updated_at),
     unknownProperties: contact.unknownProperties && contact.unknownProperties.length > 0 ? contact.unknownProperties : undefined,
@@ -117,6 +121,7 @@ export function fromVCard(vcardStr: string): Contact {
     birthday: vcard.bday ?? null,
     ...(vcard.bdayIsText === true ? { birthdayIsText: true } : {}),
     photoUrl: vcard.photo ?? null,
+    ...(vcard.photoIsUri === true ? { photoIsUri: true } : {}),
     // Preserve CATEGORIES for round-trip; default to [] for legacy records
     categories: vcard.categories ?? [],
     // Preserve favorite state; legacy/absent cards deserialize to false
