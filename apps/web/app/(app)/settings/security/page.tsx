@@ -384,7 +384,7 @@ function ChangePasswordSection() {
         </div>
 
         {apiError && <p className="text-xs text-red-400">{apiError}</p>}
-        {success && <p className="text-xs text-[rgb(var(--primary))]">Password updated successfully. Other sessions have been signed out.</p>}
+        {success && <p className="text-xs text-[rgb(var(--primary-text))]">Password updated successfully. Other sessions have been signed out.</p>}
 
         <Button type="submit" disabled={isSubmitting} size="sm" className="max-md:min-h-[44px]">
           {isSubmitting ? 'Updating...' : 'Update password'}

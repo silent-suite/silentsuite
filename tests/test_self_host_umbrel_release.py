@@ -242,7 +242,7 @@ def test_candidate_workflow_uses_native_images_and_shared_archive_renderer():
     for setting in (
         "NEXT_PUBLIC_SELF_HOSTED=true", "NEXT_PUBLIC_ETEBASE_SERVER_URL=",
         "NEXT_PUBLIC_OWNER_REGISTRATION=true", "NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=false",
-        "NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false", "NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false",
+        "NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false",
     ):
         assert setting in args
     assembly = steps["Assemble development package archive"]["run"]
@@ -407,6 +407,21 @@ def test_paired_identity_binds_server_native_images_and_build_arguments():
     assert document["server"]["indexDigest"] == json.loads(server)["indexDigest"]
     assert document["platforms"] == ["linux/amd64", "linux/arm64"]
     assert document["buildArgs"] == BUILD_ARGS
+
+
+@pytest.mark.parametrize(("value", "valid"), [("false", True), ("true", False)])
+def test_paired_identity_of_an_earlier_release_may_still_carry_the_removed_cache_flag_off(value, valid):
+    from selfhost_release_contract import ContractError
+    from umbrel_release_contract import BUILD_ARGS, verify
+    assert "NEXT_PUBLIC_LOCAL_CACHE_ENABLED" not in BUILD_ARGS
+    tag, source, server, text = paired_identity_fixture()
+    document = json.loads(text)
+    document["buildArgs"]["NEXT_PUBLIC_LOCAL_CACHE_ENABLED"] = value
+    if valid:
+        verify(json.dumps(document), tag, source, server)
+    else:
+        with pytest.raises(ContractError):
+            verify(json.dumps(document), tag, source, server)
 
 
 @pytest.mark.parametrize("mutation", [

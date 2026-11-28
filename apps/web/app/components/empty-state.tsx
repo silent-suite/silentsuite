@@ -17,7 +17,7 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[rgb(var(--primary))]/10">
-        <Icon className="h-8 w-8 text-[rgb(var(--primary))]/60" />
+        <Icon className="h-8 w-8 text-[rgb(var(--primary-text))]/60" />
       </div>
       <h3 className="mt-4 text-base font-medium text-[rgb(var(--foreground))]">{title}</h3>
       <p className="mt-1.5 max-w-[280px] text-center text-sm leading-relaxed text-[rgb(var(--muted))]">
@@ -26,7 +26,7 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
       {action && (
         <button
           onClick={action.onClick}
-          className="mt-5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+          className="mt-5 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
         >
           {action.label}
         </button>
@@ -37,12 +37,12 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
 
 // Pre-configured empty states for each section
 
-export function CalendarEmptyState() {
+export function CalendarEmptyState({ canWrite = true }: { canWrite?: boolean }) {
   return (
     <EmptyState
       icon={CalendarDays}
       title="No events today"
-      description="Your schedule is clear. Tap the + button to add your first event."
+      description={canWrite ? 'Your schedule is clear. Tap the + button to add your first event.' : 'Your schedule is clear.'}
     />
   )
 }

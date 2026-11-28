@@ -409,6 +409,40 @@ def test_umbrel_coexistence_never_relaxes_the_flat_inventory(tmp_path, case, rea
     assert "inventory drifted" in result.stderr
 
 
+SEPARATE_PACKAGE_DIRS = ("casaos", "dokploy", "startos", "truenas", "umbrel", "yunohost")
+
+
+def test_every_separate_package_tree_coexists_with_the_flat_bundle(tmp_path):
+    flat = stage_flat_self_host(tmp_path / "flat")
+    baseline = build(tmp_path / "baseline", self_host_dir=flat)
+    for name in SEPARATE_PACKAGE_DIRS:
+        (flat / name).mkdir()
+        (flat / name / "package.yaml").write_bytes(b"not part of the flat bundle\n")
+
+    with_packages = build(tmp_path / "with-packages", self_host_dir=flat)
+
+    assert with_packages.read_bytes() == baseline.read_bytes()
+    names = assert_archive_members_safe(with_packages, TAG)
+    assert_bundle_inventory(names, TAG)
+
+
+@pytest.mark.parametrize("name", SEPARATE_PACKAGE_DIRS)
+@pytest.mark.parametrize("case", ["file", "directory-symlink", "dangling-symlink"])
+def test_separate_package_names_admit_only_real_directories(tmp_path, name, case):
+    flat = stage_flat_self_host(tmp_path / "flat")
+    if case == "file":
+        (flat / name).write_bytes(b"not a package tree\n")
+    elif case == "directory-symlink":
+        target = tmp_path / "elsewhere"
+        target.mkdir()
+        (flat / name).symlink_to(target)
+    else:
+        (flat / name).symlink_to(tmp_path / "missing-target")
+
+    result = build_refusal(flat, tmp_path / "out")
+    assert "inventory drifted" in result.stderr
+
+
 # ── Archive safety ────────────────────────────────────────────────────
 
 

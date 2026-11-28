@@ -1,9 +1,32 @@
 'use client'
 
-import { Lock, WifiOff, RefreshCw, ExternalLink } from 'lucide-react'
+import { Lock, WifiOff, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
-import { useState } from 'react'
+import { usePathname } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { create } from 'zustand'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { useSyncStore } from '@/app/stores/use-sync-store'
+import { ENDED_TITLES, type EndedHistory } from '@/app/lib/account-notice'
+
+// Same words as the recovery button on /settings/subscription, where this link goes.
+const PLAN_ACTION_LABELS: Record<EndedHistory, string> = {
+  trial: 'Subscribe',
+  subscription: 'Reactivate',
+  unpaid: 'Subscribe',
+}
+
+// True only while the subscription card shows the ended notice with its read-only line and export link.
+const useCardEndedNotice = create<{ shown: boolean }>(() => ({ shown: false }))
+
+/** The subscription page reports whether its card shows the ended notice, so the banner never repeats it. */
+export function useReportCardEndedNotice(shown: boolean) {
+  useEffect(() => {
+    if (!shown) return
+    useCardEndedNotice.setState({ shown: true })
+    return () => useCardEndedNotice.setState({ shown: false })
+  }, [shown])
+}
 
 /**
  * Non-blocking banner shown when subscription has ended.
@@ -12,25 +35,35 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 export function ReadOnlyBanner() {
   const subscriptionStatus = useAuthStore((s) => s.subscriptionStatus)
   const hostedAccess = useAuthStore((s) => s.hostedAccess)
+  const endedHistory = useAuthStore((s) => s.endedHistory)
+  const pathname = usePathname()
+  const cardShowsNotice = useCardEndedNotice((s) => s.shown)
 
-  const title =
-    subscriptionStatus === 'none' || (subscriptionStatus === 'trialing' && hostedAccess === 'trial_ended')
-      ? 'Your trial has ended.'
-      : 'Your subscription has ended.'
+  // Billing's read names what ended; without one, the status alone decides as before.
+  const history = endedHistory
+    ?? (subscriptionStatus === 'none' || (subscriptionStatus === 'trialing' && hostedAccess === 'trial_ended')
+      ? 'trial'
+      : 'subscription')
+  const title = ENDED_TITLES[history]
+
+  // Only when the subscription page's card itself says this and offers the export link; any other
+  // shape of that page (no notice, still loading, failed) keeps the banner.
+  if (pathname === '/settings/subscription' && cardShowsNotice) return null
 
   return (
-    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200 md:mx-4">
-      <Lock className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-      <span className="flex-1">
-        {title} Your data is safe and read-only.
-      </span>
-      <div className="flex items-center gap-3">
+    <div className="mx-3 mt-2 flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200 sm:flex-row sm:items-center md:mx-4">
+      <div className="flex min-w-0 flex-1 items-start gap-2">
+        <Lock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <span>
+          {title} Your data is safe and read-only.
+        </span>
+      </div>
+      <div className="flex shrink-0 items-center gap-3">
         <Link
           href="/settings/subscription"
           className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
         >
-          Choose a plan
-          <ExternalLink className="h-3.5 w-3.5" />
+          {PLAN_ACTION_LABELS[history]}
         </Link>
         <Link
           href="/settings/export"
@@ -46,9 +79,12 @@ export function ReadOnlyBanner() {
 /**
  * Non-blocking banner shown when billing API is unreachable.
  * User retains full read + write access (degraded mode).
+ * Hidden while the browser is offline: billing is then unreachable because the
+ * device has no connection, not because the billing service is down.
  */
 export function DegradedModeBanner() {
   const retryBillingConnection = useAuthStore((s) => s.retryBillingConnection)
+  const isOnline = useSyncStore((s) => s.isOnline)
   const [isRetrying, setIsRetrying] = useState(false)
 
   const handleRetry = async () => {
@@ -59,6 +95,8 @@ export function DegradedModeBanner() {
       setIsRetrying(false)
     }
   }
+
+  if (!isOnline) return null
 
   return (
     <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-800 dark:text-blue-200 md:mx-4">

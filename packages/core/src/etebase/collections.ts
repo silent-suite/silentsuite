@@ -23,6 +23,28 @@ function toEtebaseItemMeta(meta: ItemMeta): ItemMeta {
   return next;
 }
 
+/** An item's stored metadata is not a map of fields, so a save cannot merge into it. */
+class ItemMetaNotAMapError extends Error {
+  constructor() {
+    super('Item metadata is not a map');
+    this.name = 'ItemMetaNotAMapError';
+  }
+}
+
+/**
+ * `meta` merged over the item's current metadata, so fields other clients
+ * wrote (e.g. EteSync Notes) survive. Metadata that is not a plain map (a
+ * string, a list, an object with a foreign prototype) refuses the save, the
+ * same way note moves refuse it, instead of spreading it into index keys.
+ * Metadata that decodes to null or undefined holds no fields.
+ */
+function mergedItemMeta(current: unknown, meta: ItemMeta): ItemMeta {
+  if (current == null) return toEtebaseItemMeta(meta);
+  const prototype = typeof current === 'object' ? Object.getPrototypeOf(current) : undefined;
+  if (prototype !== Object.prototype && prototype !== null) throw new ItemMetaNotAMapError();
+  return toEtebaseItemMeta({ ...(current as ItemMeta), ...meta });
+}
+
 export interface ItemListResponse {
   items: Etebase.Item[];
   stoken: string | null;
@@ -199,8 +221,7 @@ export async function updateItem(
   const itemManager = collectionManager.getItemManager(collection);
   if (meta) {
     // Merge so metadata written by other clients (e.g. EteSync Notes) survives.
-    const currentMeta: ItemMeta = item.getMeta?.() ?? {};
-    await item.setMeta(toEtebaseItemMeta({ ...currentMeta, ...meta }));
+    await item.setMeta(mergedItemMeta(item.getMeta?.(), meta));
   }
   await item.setContent(content);
   await itemManager.batch([item]);
@@ -261,8 +282,7 @@ export async function updateItemIfUnchanged(
   const clone = (item as any)._clone() as Etebase.Item;
   (clone as any).encryptedItem.lastEtag = options.etagOverride ?? (item as any).encryptedItem.lastEtag;
   if (meta) {
-    const currentMeta: ItemMeta = clone.getMeta?.() ?? {};
-    await clone.setMeta(toEtebaseItemMeta({ ...currentMeta, ...meta }));
+    await clone.setMeta(mergedItemMeta(clone.getMeta?.(), meta));
   }
   await clone.setContent(content);
   options.beforeDispatch?.();
@@ -337,17 +357,4 @@ export async function deleteItem(
   const itemManager = collectionManager.getItemManager(collection);
   item.delete();
   await itemManager.batch([item]);
-}
-
-/**
- * Upload a batch of items at once.
- */
-export async function batchUpload(
-  account: Etebase.Account,
-  collection: Etebase.Collection,
-  items: Etebase.Item[],
-): Promise<void> {
-  const collectionManager = account.getCollectionManager();
-  const itemManager = collectionManager.getItemManager(collection);
-  await itemManager.batch(items);
 }

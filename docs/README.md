@@ -1,22 +1,10 @@
 # SilentSuite Documentation
 
-**Private Sync, By Design.**
+The user guide, self-hosting guide and contributor guides are published at [docs.silentsuite.io](https://docs.silentsuite.io). Their source is in [`apps/docs/`](../apps/docs/index.md).
 
-Welcome to the SilentSuite documentation. Whether you're using the app, running your own instance, or contributing code, you'll find what you need here.
+This folder keeps a few repository-only notes:
 
----
-
-| | Section | Description |
-|---|---|---|
-| **User Guide** | [User Guide](./user-guide/) | How-to guides for calendar, contacts, tasks, and encryption |
-| **Self-Hosting** | [Self-Hosting](./self-hosting/) | Deploy and manage SilentSuite on your own infrastructure |
-| **Contributing** | [Contributing](./contributing/) | Set up a dev environment and contribute to SilentSuite |
-
----
-
-## Quick Links
-
-- **Website:** [silentsuite.io](https://silentsuite.io)
-- **Source Code:** [GitHub](https://github.com/silent-suite/silentsuite)
-- **Status:** [status.silentsuite.io](https://status.silentsuite.io)
-- **License:** AGPL-3.0
+- [`contributing/notes-markdown.md`](./contributing/notes-markdown.md): the Notes Markdown profile and its shared test vectors
+- [`contributing/authenticated-restore-smoke.md`](./contributing/authenticated-restore-smoke.md): the authenticated restore smoke probe
+- [`operator-billing-link-proof-rollout.md`](./operator-billing-link-proof-rollout.md): operator notes for the billing link-proof rollout
+- [`security/`](./security/): reviewed dependency advisory exceptions

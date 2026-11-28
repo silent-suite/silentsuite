@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
 import { fromVEvent } from '@silentsuite/core'
 import {
   expandEventsForRange,
   expandGridEventsForRange,
+  floatingFromDisplay,
+  floatingToDisplay,
   getRequiredTimedHourBounds,
   isTimeGridGestureEligible,
   toScheduleXEvents,
@@ -782,4 +784,64 @@ describe('retained recurrence overrides', () => {
     expect(expandEventsForRange(events, range)).toHaveLength(rule ? 3 : 1)
   })
 
+})
+
+// WEB-05: a floating event shows its stored wall clock in the display zone, whatever the browser zone.
+describe.each(['UTC', 'Europe/Berlin'])('floating events with the browser in %s', (browserZone) => {
+  const originalTz = process.env.TZ
+  beforeEach(() => {
+    process.env.TZ = browserZone
+    return () => { process.env.TZ = originalTz }
+  })
+
+  const floating = (start: string, end: string) => fromVEvent([
+    'BEGIN:VEVENT', 'UID:floating-grid', 'SUMMARY:Lunch',
+    `DTSTART:${start}`, `DTEND:${end}`, 'END:VEVENT',
+  ].join('\r\n'))
+
+  it.each(['UTC', 'Europe/Berlin', 'America/New_York'])('draws 12:00 to 13:00 in display zone %s', (displayZone) => {
+    expect(new Date(2026, 10, 25).getTimezoneOffset()).toBe(browserZone === 'UTC' ? 0 : -60)
+    const event = floating('20261125T120000', '20261125T130000')
+    const dates = { start: Temporal.PlainDate.from('2026-11-23'), end: Temporal.PlainDate.from('2026-11-29') }
+    const range = visibleDateRangeToInstantRange(dates, displayZone)
+    const expansion = expandGridEventsForRange([event], range, displayZone)
+    expect(expansion.events).toHaveLength(1)
+    expect(expansion.events[0]!.floating).toBe(true)
+    // The display event keeps the stored value, so edits from the grid map back unchanged.
+    expect(expansion.events[0]!.startDate.getTime()).toBe(event.startDate.getTime())
+
+    const projection = toScheduleXProjection(expansion.events, new Map(), displayZone, 'week', dates, zdt)
+    const drawn = projection.events[0]!
+    const start = drawn.start as Temporal.ZonedDateTime
+    const end = drawn.end as Temporal.ZonedDateTime
+    expect(start.withTimeZone(displayZone).toPlainDateTime().toString()).toBe('2026-11-25T12:00:00')
+    expect(end.withTimeZone(displayZone).toPlainDateTime().toString()).toBe('2026-11-25T13:00:00')
+    expect(projection.sourceByRenderId.get(drawn.id as string)).toBe(expansion.events[0])
+  })
+
+  it('keeps a floating event at the start of the visible range in view', () => {
+    const event = floating('20261123T003000', '20261123T004500')
+    const dates = { start: Temporal.PlainDate.from('2026-11-23'), end: Temporal.PlainDate.from('2026-11-29') }
+    const range = visibleDateRangeToInstantRange(dates, 'UTC')
+    expect(expandGridEventsForRange([event], range, 'UTC').events).toHaveLength(1)
+  })
+
+  it('repeats a floating series at the same wall clock in the display zone', () => {
+    const event = fromVEvent([
+      'BEGIN:VEVENT', 'UID:floating-series', 'SUMMARY:Standup',
+      'DTSTART:20261123T090000', 'DTEND:20261123T091500', 'RRULE:FREQ=DAILY;COUNT=3', 'END:VEVENT',
+    ].join('\r\n'))
+    const dates = { start: Temporal.PlainDate.from('2026-11-23'), end: Temporal.PlainDate.from('2026-11-29') }
+    const expansion = expandGridEventsForRange([event], visibleDateRangeToInstantRange(dates, 'UTC'), 'UTC')
+    const projection = toScheduleXProjection(expansion.events, new Map(), 'UTC', 'week', dates, zdt)
+    expect(projection.events.map((e) => (e.start as Temporal.ZonedDateTime).toPlainDateTime().toString()))
+      .toEqual(['2026-11-23T09:00:00', '2026-11-24T09:00:00', '2026-11-25T09:00:00'])
+  })
+
+  it('maps a dropped display time back to the floating wall clock', () => {
+    const shown = new Date('2026-11-25T14:30:00Z')
+    const stored = floatingFromDisplay(shown, 'UTC')
+    expect([stored.getHours(), stored.getMinutes()]).toEqual([14, 30])
+    expect(floatingToDisplay(stored, 'UTC').getTime()).toBe(shown.getTime())
+  })
 })

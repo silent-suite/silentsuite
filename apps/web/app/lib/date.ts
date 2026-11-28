@@ -102,3 +102,75 @@ export function formatDate(input: Date | string | number, format: DateFormat = '
 }
 
 export default formatDate
+
+// ── Typed date fields ──
+// Text date fields (event and task editors) show and accept the date-format preference.
+// 'system' falls back to ISO so a typed value is never ambiguous.
+
+function effectiveDateFormat(dateFormat: DateFormat): Exclude<DateFormat, 'system'> {
+  return dateFormat === 'system' ? 'YYYY-MM-DD' : dateFormat
+}
+
+export function dateFormatExample(dateFormat: DateFormat): string {
+  return formatEventDateInput('2026-06-09', dateFormat)
+}
+
+export function formatEventDateInput(isoDate: string, dateFormat: DateFormat): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate)
+  if (!match) return isoDate
+  const [, y, m, d] = match
+
+  switch (effectiveDateFormat(dateFormat)) {
+    case 'DD/MM/YYYY':
+      return `${d}/${m}/${y}`
+    case 'MM/DD/YYYY':
+      return `${m}/${d}/${y}`
+    case 'DD.MM.YYYY':
+      return `${d}.${m}.${y}`
+    case 'YYYY/MM/DD':
+      return `${y}/${m}/${d}`
+    case 'YYYY-MM-DD':
+      return `${y}-${m}-${d}`
+  }
+}
+
+function isValidIsoDate(y: number, m: number, d: number): boolean {
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false
+  if (y < 1 || m < 1 || m > 12 || d < 1 || d > 31) return false
+  const date = new Date(y, m - 1, d)
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d
+}
+
+export function parseEventDateInput(input: string, dateFormat: DateFormat): string | null {
+  const value = input.trim()
+  if (!value) return null
+
+  const format = effectiveDateFormat(dateFormat)
+  const separator = format.includes('.') ? '\\.' : format.includes('/') ? '/' : '-'
+  const match = new RegExp(`^(\\d{1,4})${separator}(\\d{1,2})${separator}(\\d{1,4})$`).exec(value)
+  if (!match) return null
+
+  const a = Number(match[1])
+  const b = Number(match[2])
+  const c = Number(match[3])
+  let y: number
+  let m: number
+  let d: number
+
+  switch (format) {
+    case 'DD/MM/YYYY':
+    case 'DD.MM.YYYY':
+      d = a; m = b; y = c
+      break
+    case 'MM/DD/YYYY':
+      m = a; d = b; y = c
+      break
+    case 'YYYY/MM/DD':
+    case 'YYYY-MM-DD':
+      y = a; m = b; d = c
+      break
+  }
+
+  if (y < 1000 || !isValidIsoDate(y, m, d)) return null
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}

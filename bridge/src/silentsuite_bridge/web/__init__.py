@@ -37,6 +37,17 @@ REAUTH_REQUIRED_TEXT = (
     "its changes are synced."
 )
 
+# Shown next to Sync Now when a sync cannot start.
+SYNC_NO_ACCOUNT_TEXT = "Sign in to an account first."
+SYNC_NOT_RUNNING_TEXT = "Sync isn't running yet. Try again in a moment, or restart the bridge."
+
+# Shown under the Birthdays buttons on each account card (#738).
+BIRTHDAYS_BUTTONS_HELP_TEXT = (
+    "The dashboard does not show whether the Birthdays calendar is on for this account. "
+    "Turn on adds it, or updates it from your contacts. "
+    "Turn off removes the generated birthdays; your own events are kept."
+)
+
 # Global sync log (thread-safe deque)
 _sync_log = deque(maxlen=50)
 _bridge_status = {
@@ -785,7 +796,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         .container { max-width: 680px; margin: 0 auto; }
         h1 { font-size: 28px; color: #fff; margin-bottom: 4px; }
-        .version { color: #666; font-size: 13px; margin-bottom: 32px; }
+        .version { color: #888; font-size: 13px; margin-bottom: 32px; }
 
         .status-card {
             background: #1a1a1a;
@@ -834,6 +845,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
+        .network-details summary {
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
         .url-box {
             background: #111;
             border: 1px solid #2a2a2a;
@@ -846,7 +863,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         .url-box label {
             font-size: 12px;
-            color: #666;
+            color: #888;
             display: block;
             margin-bottom: 2px;
         }
@@ -861,6 +878,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             font-size: 11px;
         }
         .copy-btn:hover { background: #444; }
+        #syncNowBtn:disabled { opacity: 0.5; cursor: default; }
         .account-card {
             background: #111;
             border: 1px solid #2a2a2a;
@@ -888,7 +906,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             margin-bottom: 8px;
         }
         .fingerprint-box label {
-            color: #666;
+            color: #888;
             display: block;
             font-size: 12px;
             margin-bottom: 4px;
@@ -906,15 +924,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             white-space: pre-wrap;
             word-break: break-word;
         }
-        .fingerprint-row code.hidden { color: #777; font-family: inherit; }
+        .fingerprint-row code.hidden { color: #888; font-family: inherit; }
         .fingerprint-actions {
             display: flex;
             flex-shrink: 0;
             gap: 6px;
         }
         .fingerprint-help {
-            color: #777;
-            font-size: 11px;
+            color: #888;
+            font-size: 12px;
             line-height: 1.4;
             margin-top: 6px;
         }
@@ -1025,14 +1043,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             border-bottom: 1px solid #1a1a1a;
             color: #888;
         }
-        .log-entry .time { color: #555; margin-right: 8px; }
+        .log-entry .time { color: #888; margin-right: 8px; }
         .log-entry .type-sync { color: #4ade80; }
         .log-entry .type-error { color: #ef4444; }
         .log-entry .type-info { color: #60a5fa; }
         .log-empty {
             text-align: center;
             padding: 20px;
-            color: #555;
+            color: #888;
             font-size: 13px;
         }
 
@@ -1069,12 +1087,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <span class="info-label">{{COLLECTIONS_LABEL}}</span>
                 <span class="info-value">{{COLLECTIONS}}</span>
                 <span class="info-label">Sync interval</span>
-                <span class="info-value">{{SYNC_INTERVAL_DISPLAY}}</span>
-            </div>
-
-            <div class="url-section">
-                <h3>Network</h3>
-                {{NETWORK_CARD}}
+                <span class="info-value" id="syncIntervalValue">{{SYNC_INTERVAL_DISPLAY}}</span>
             </div>
 
             <div class="url-section">
@@ -1098,16 +1111,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         </details>
                         <div class="login-actions">
                             <button id="dashboardLoginSubmit" class="account-action-btn primary" type="submit">Sign in</button>
-                            <button class="account-action-btn" type="button" onclick="hideLoginPanel()">Cancel</button>
+                            {{LOGIN_CANCEL}}
                         </div>
                     </form>
                 </div>
                 {{ACCOUNT_LIST}}
             </div>
+
+            <details class="url-section network-details">
+                <summary>Advanced: network</summary>
+                {{NETWORK_CARD}}
+            </details>
         </div>
 
         <div class="status-card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-            <button id="syncNowBtn" class="copy-btn" style="padding:8px 18px;font-size:13px;background:#1a7f37;color:#fff;" onclick="triggerSync()">Sync Now</button>
+            <button id="syncNowBtn" class="copy-btn" style="padding:8px 18px;font-size:13px;background:#1a7f37;color:#fff;" onclick="triggerSync()"{{SYNC_NOW_DISABLED}}>Sync Now</button>
+            <span id="syncNowStatus" role="status" style="font-size:12px;color:#888;">{{SYNC_NOW_HINT}}</span>
             <label style="font-size:13px;color:#888;">Sync every</label>
             <select id="syncInterval" onchange="updateInterval()" style="background:#111;color:#ccc;border:1px solid #333;border-radius:6px;padding:6px 10px;font-size:13px;">
                 <option value="60">1 min</option>
@@ -1116,21 +1135,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <option value="1800">30 min</option>
                 <option value="3600">1 hr</option>
             </select>
-            <span id="syncIntervalStatus" style="font-size:12px;color:#555;"></span>
+            <span id="syncIntervalStatus" style="font-size:12px;color:#888;"></span>
             <span id="syncProgress" style="font-size:12px;color:#888;margin-left:auto;"></span>
         </div>
 
         <div class="status-card">
             <label style="font-size:13px;color:#ccc;"><input type="checkbox" id="e2eeLockPrefix" onchange="updateE2eeLockPrefix(this)"{{E2EE_LOCK_PREFIX_CHECKED}}> Show a lock (🔒) on events, tasks and contacts in your apps</label>
-            <span id="e2eeLockPrefixStatus" style="font-size:12px;color:#555;margin-left:8px;"></span>
+            <span id="e2eeLockPrefixStatus" style="font-size:12px;color:#888;margin-left:8px;"></span>
             <div class="fingerprint-help">Apps update as items change or after a re-sync.</div>
         </div>
 
         <div class="status-card">
             <h3 style="font-size:14px;color:#888;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px;">Experimental</h3>
             <label style="font-size:13px;color:#ccc;"><input type="checkbox" id="experimentalBirthdays" onchange="updateExperimentalBirthdays(this)"{{EXPERIMENTAL_BIRTHDAYS_CHECKED}}> Birthdays calendar</label>
-            <span id="experimentalBirthdaysStatus" style="font-size:12px;color:#555;margin-left:8px;"></span>
-            <div class="fingerprint-help">Adds a Birthdays calendar made from your contacts. Turn it on per account on the dashboard.</div>
+            <span id="experimentalBirthdaysStatus" style="font-size:12px;color:#888;margin-left:8px;"></span>
+            <div class="fingerprint-help">Adds a Birthdays calendar made from your contacts. Once this is ticked, turn it on with the Birthdays buttons on each card under Configured Accounts.</div>
         </div>
         <script>
             (function() {
@@ -1304,28 +1323,35 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                             setTimeout(function() { pollSyncRequest(requestId, btn); }, 750);
                         }
                     })
-                    .catch(function() {
-                        btn.textContent = 'Error';
-                        btn.disabled = false;
-                    });
+                    .catch(function() { syncNowFailed(btn); });
+            }
+            // Puts the button back and says why, using the bridge's own reason when it gave one.
+            function syncNowFailed(btn, reason) {
+                btn.textContent = 'Sync Now';
+                btn.disabled = false;
+                var st = document.getElementById('syncNowStatus');
+                if (st) {
+                    st.textContent = reason || "Couldn't reach the bridge. Check that it is still running.";
+                    st.style.color = '#f87171';
+                }
             }
             function triggerSync() {
                 var btn = document.getElementById('syncNowBtn');
+                var st = document.getElementById('syncNowStatus');
+                if (st) st.textContent = '';
                 btn.textContent = 'Requesting...';
                 btn.disabled = true;
                 fetch('/.web/api/sync', {method:'POST', headers:{'X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}})
                     .then(function(r) {
-                        if (!r.ok) throw new Error('Sync request failed');
-                        return r.json();
+                        return r.json().catch(function() { return {}; }).then(function(data) {
+                            if (!r.ok || !data.request_id) {
+                                syncNowFailed(btn, data.error);
+                                return;
+                            }
+                            pollSyncRequest(data.request_id, btn);
+                        });
                     })
-                    .then(function(data) {
-                        if (!data.request_id) throw new Error('Missing sync request ID');
-                        pollSyncRequest(data.request_id, btn);
-                    })
-                    .catch(function() {
-                        btn.textContent = 'Error';
-                        btn.disabled = false;
-                    });
+                    .catch(function() { syncNowFailed(btn); });
             }
             // Interval saves are serialized: one request in flight at a time, the
             // selector disabled meanwhile, and the latest choice made while a save
@@ -1348,7 +1374,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 }
                 select.disabled = true;
                 st.textContent = 'Saving...';
-                st.style.color = '#555';
+                st.style.color = '#888';
                 // The promise is returned so the chain can be awaited in tests.
                 intervalSave.pending = fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({syncInterval: parseInt(val)})})
                     .then(handleJsonResponse)
@@ -1357,8 +1383,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         var acknowledged = String(data.syncInterval);
                         select.setAttribute('data-saved', acknowledged);
                         select.value = acknowledged;
+                        // Same wording as the server-rendered status card value.
+                        var card = document.getElementById('syncIntervalValue');
+                        var n = data.syncInterval;
+                        if (card) card.textContent = n >= 3600 ? Math.floor(n / 3600) + ' hr' : n >= 60 ? Math.floor(n / 60) + ' min' : n + ' sec';
                         st.textContent = 'Saved';
-                        st.style.color = '#555';
+                        st.style.color = '#888';
                         intervalSave.clearTimer = setTimeout(function() {
                             intervalSave.clearTimer = null;
                             st.textContent = '';
@@ -1389,7 +1419,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 var wanted = box.checked;
                 box.disabled = true;
                 st.textContent = 'Saving...';
-                st.style.color = '#555';
+                st.style.color = '#888';
                 return fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({e2eeLockPrefix: wanted})})
                     .then(handleJsonResponse)
                     .then(function(data) {
@@ -1408,7 +1438,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 var wanted = box.checked;
                 box.disabled = true;
                 st.textContent = 'Saving...';
-                st.style.color = '#555';
+                st.style.color = '#888';
                 return fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({experimentalBirthdays: wanted})})
                     .then(handleJsonResponse)
                     .then(function(data) {
@@ -1435,7 +1465,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         el.textContent = 'Syncing\u2026' + (elapsed != null ? ' (' + elapsed + 's)' : '');
                         el.style.color = '#4ade80';
                     } else if (p.last_sync_duration != null) {
-                        el.textContent = 'Last sync: ' + p.last_sync_duration.toFixed(1) + 's';
+                        el.textContent = 'Last sync took ' + p.last_sync_duration.toFixed(1) + ' s';
                         el.style.color = '#888';
                     } else {
                         el.textContent = '';
@@ -1507,6 +1537,24 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </script>
 </body>
 </html>"""
+
+
+def _format_interval(seconds: int) -> str:
+    """Sync interval in the dashboard's wording: "1 hr", "15 min" or "45 sec"."""
+    if seconds >= 3600:
+        return f"{seconds // 3600} hr"
+    if seconds >= 60:
+        return f"{seconds // 60} min"
+    return f"{seconds} sec"
+
+
+def _format_interval_exact(seconds: int) -> str:
+    """Sync interval for the log without rounding: "15 min", but "90 s"."""
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600} hr"
+    if seconds % 60 == 0:
+        return f"{seconds // 60} min"
+    return f"{seconds} s"
 
 
 def _render_network_card() -> str:
@@ -1605,15 +1653,18 @@ def _render_network_card() -> str:
         )
 
     parts.append(
-        '<div style="margin-top:8px;font-size:12px;color:#666;">'
-        'Source rule: the dashboard answers only when bridge-owned evidence proves '
-        'the request arrived on a bound loopback listener (never a wildcard or '
-        'remote bind), was accepted on a loopback local address on that '
-        'listener\'s port, and came from a loopback peer matching REMOTE_ADDR. '
-        'The Host header must then be a strict loopback authority whose port '
-        'matches the listener, and mutating requests must also carry the CSRF '
-        'token. Anything else gets a plain 404. Append /&lt;account email&gt;/ to a '
-        'bound endpoint above for that account\'s CalDAV/CardDAV URL.'
+        '<div style="margin-top:8px;font-size:12px;color:#888;">'
+        'Only this computer can open this page. It answers a request only when '
+        'the bridge can show the request arrived on a bound loopback listener '
+        '(never a wildcard or remote bind), was accepted on a loopback address on '
+        'that listener\'s port, and came from a loopback peer matching '
+        'REMOTE_ADDR. The Host header must also name that loopback address and '
+        'port, and changes must carry the page\'s CSRF token. Anything else gets '
+        'a plain 404 (not found).'
+        '</div>'
+        '<div style="margin-top:8px;font-size:12px;color:#888;">'
+        'Your CalDAV/CardDAV address is a listener address above followed by '
+        '/&lt;account email&gt;/.'
         '</div>'
     )
     return "\n".join(parts)
@@ -1678,7 +1729,14 @@ def _render_dashboard():
     filtered_account_cols = [account_cols[user] for user in users if user in account_cols]
     if filtered_account_cols:
         cols = _aggregate_collections(filtered_account_cols)
-    col_text = f"{cols.get('calendars', 0)} calendars, {cols.get('contacts', 0)} contacts, {cols.get('tasks', 0)} tasks"
+    def count(n, one, many):
+        return f"{n} {one if n == 1 else many}"
+
+    col_text = " \u00b7 ".join([
+        count(cols.get("calendars", 0), "calendar", "calendars"),
+        count(cols.get("contacts", 0), "address book", "address books"),
+        count(cols.get("tasks", 0), "task list", "task lists"),
+    ])
     collections_label = f"Collections ({collections_scope})"
 
     error_banner = ""
@@ -1704,6 +1762,7 @@ def _render_dashboard():
     if users:
         login_panel_class = "hidden"
         login_required = "false"
+        login_cancel = '<button class="account-action-btn" type="button" onclick="hideLoginPanel()">Cancel</button>'
         login_title = "Add or re-authenticate an account"
         login_copy = "Sign in with your SilentSuite account. Existing accounts stay configured; signing in again refreshes credentials for that account."
         account_html = ""
@@ -1719,6 +1778,8 @@ def _render_dashboard():
                     '<div>'
                     '<label>CalDAV/CardDAV URL</label>'
                     f'<code id="{url_id}">{esc(dav_url)}</code>'
+                    '<div class="fingerprint-help">Username: your SilentSuite email &middot; '
+                    'Password: your SilentSuite password</div>'
                     '</div>'
                     f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
                     '</div>'
@@ -1779,6 +1840,13 @@ def _render_dashboard():
                 if config.EXPERIMENTAL_BIRTHDAYS is True
                 else ""
             )
+            # Whether Birthdays is on needs a full server read under the account lock, so the
+            # card keeps both buttons and says what each does instead of showing a state.
+            birthdays_help = (
+                f'<div class="fingerprint-help">{esc(BIRTHDAYS_BUTTONS_HELP_TEXT)}</div>'
+                if config.EXPERIMENTAL_BIRTHDAYS is True
+                else ""
+            )
             reauth_html = (
                 '<div style="font-size:13px;color:#f59e0b;margin:6px 0;">'
                 f'{esc(REAUTH_REQUIRED_TEXT)}'
@@ -1801,14 +1869,41 @@ def _render_dashboard():
                 'onclick="removeAccount(this)">Remove account</button>'
                 f'{birthdays_buttons}'
                 '</div>'
+                f'{birthdays_help}'
                 '</div>'
             )
     else:
         login_panel_class = ""
         login_required = "true"
+        # Nothing to go back to without an account, so no Cancel.
+        login_cancel = ""
         login_title = "Set up your bridge account"
         login_copy = "Sign in here to store this account locally, start its sync thread, and reveal your CalDAV/CardDAV URL."
         account_html = '<div class="log-empty">No accounts configured yet. Sign in above to get started.</div>'
+
+    # Logout keeps the decrypted local copy; keep a row so it can still be removed.
+    try:
+        from ..accounts import list_signed_out_accounts
+
+        signed_out_users = list_signed_out_accounts(credentials=creds)
+    except Exception as exc:  # noqa: BLE001 - the dashboard must still render
+        logger.warning(
+            "Could not list signed-out accounts (%s)",
+            bounded_exception_class(exc),
+        )
+        signed_out_users = []
+    for user in signed_out_users:
+        account_attr = esc(user)
+        account_html += (
+            '<div class="account-card">'
+            f'<h4>{esc(user)}</h4>'
+            '<div class="account-meta">Signed out, local copy kept</div>'
+            '<div class="account-actions">'
+            f'<button class="account-action-btn danger" data-account="{account_attr}" '
+            'onclick="removeAccount(this)">Remove local data</button>'
+            '</div>'
+            '</div>'
+        )
 
     page = DASHBOARD_HTML
     page = page.replace("{{VERSION}}", esc(__version__))
@@ -1825,20 +1920,16 @@ def _render_dashboard():
     page = page.replace("{{CSRF_TOKEN}}", json.dumps(_dashboard_csrf_token))
     page = page.replace("{{LOGIN_PANEL_CLASS}}", login_panel_class)
     page = page.replace("{{LOGIN_REQUIRED}}", login_required)
+    page = page.replace("{{LOGIN_CANCEL}}", login_cancel)
     page = page.replace("{{LOGIN_TITLE}}", esc(login_title))
     page = page.replace("{{LOGIN_COPY}}", esc(login_copy))
     page = page.replace("{{SERVER_URL}}", esc(config.ETEBASE_SERVER_URL))
+    page = page.replace("{{SYNC_NOW_DISABLED}}", "" if users else " disabled")
+    page = page.replace("{{SYNC_NOW_HINT}}", "" if users else esc(SYNC_NO_ACCOUNT_TEXT))
 
-    # Sync interval display
     interval = config.SYNC_INTERVAL
-    if interval >= 3600:
-        interval_display = f"{interval // 3600} hr"
-    elif interval >= 60:
-        interval_display = f"{interval // 60} min"
-    else:
-        interval_display = f"{interval} sec"
     page = page.replace("{{SYNC_INTERVAL}}", str(interval))
-    page = page.replace("{{SYNC_INTERVAL_DISPLAY}}", esc(interval_display))
+    page = page.replace("{{SYNC_INTERVAL_DISPLAY}}", esc(_format_interval(interval)))
     page = page.replace("{{NETWORK_CARD}}", _render_network_card())
     page = page.replace("{{EXPERIMENTAL_BIRTHDAYS_CHECKED}}", " checked" if config.EXPERIMENTAL_BIRTHDAYS is True else "")
     page = page.replace("{{E2EE_LOCK_PREFIX_CHECKED}}", " checked" if config.E2EE_LOCK_PREFIX else "")
@@ -1947,6 +2038,10 @@ def _report_diagnostics():
         account_count = len(users)
         if users:
             server_urls = [creds.get_server_url(user) for user in users]
+        else:
+            # Same rule as the dashboard: no accounts means Disconnected, not
+            # a sync that is still starting.
+            state = "disconnected"
     except Exception:
         pass
 
@@ -2428,9 +2523,11 @@ class Web(BaseWeb):
                 return _csrf_error()
             request = _create_sync_request()
             if request is None:
+                from ..accounts import list_accounts
+
                 return _json_response(503, {
                     "ok": False,
-                    "error": "No sync workers available",
+                    "error": SYNC_NOT_RUNNING_TEXT if list_accounts() else SYNC_NO_ACCOUNT_TEXT,
                 })
             log_sync_event("info", "Manual sync triggered from dashboard")
             return _json_response(202, {"ok": True, **request})
@@ -2516,7 +2613,7 @@ class Web(BaseWeb):
                     if thread.is_alive():
                         thread.set_interval(new_interval)
 
-                log_sync_event("info", f"Sync interval changed to {new_interval}s")
+                log_sync_event("info", f"Sync interval changed to {_format_interval_exact(new_interval)}")
 
             if "experimentalBirthdays" in data:
                 enabled = data["experimentalBirthdays"]

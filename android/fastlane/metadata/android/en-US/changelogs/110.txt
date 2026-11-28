@@ -1,1 +1,0 @@
-* Change default collection names to be more descriptive

@@ -1,6 +1,6 @@
 import { act, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import SettingsLayout from '../layout'
+import SettingsLayout, { metadata } from '../layout'
 import SettingsPage from '../page'
 
 const state = vi.hoisted(() => ({
@@ -138,8 +138,19 @@ describe('settings navigation', () => {
     )
 
     expect(screen.getAllByRole('navigation', { name: 'Settings' })).toHaveLength(1)
-    expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).not.toHaveClass('sr-only')
+    // The app header holds the page's one h1; the settings title is an h2.
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
+    expect(screen.getByRole('heading', { level: 2, name: 'Settings' })).not.toHaveClass('sr-only')
     expect(document.querySelector('a[href="/settings"]')).toBeNull()
+  })
+
+  it('gives every settings route the Settings document title', () => {
+    expect(metadata.title).toBe('Settings | SilentSuite')
+  })
+
+  it('adds no h1 on detail routes', () => {
+    renderDetail('/settings/account')
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
   })
 
   it('omits Subscription from the overview and the rail when self-hosted', () => {

@@ -69,7 +69,7 @@ export default function FileDropZone({ accept, onFiles, multiple = true, disable
         }`}
       >
         <Upload
-          className={`h-8 w-8 ${isDragOver ? 'text-[rgb(var(--primary))]' : 'text-[rgb(var(--muted))]'}`}
+          className={`h-8 w-8 ${isDragOver ? 'text-[rgb(var(--primary-text))]' : 'text-[rgb(var(--muted))]'}`}
         />
         <div className="text-center">
           <p className="text-sm font-medium text-[rgb(var(--foreground))]">
@@ -98,7 +98,7 @@ export default function FileDropZone({ accept, onFiles, multiple = true, disable
               key={`${file.name}-${i}`}
               className="flex items-center gap-2 rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
             >
-              <FileIcon className="h-4 w-4 shrink-0 text-[rgb(var(--primary))]" />
+              <FileIcon className="h-4 w-4 shrink-0 text-[rgb(var(--primary-text))]" />
               <span className="truncate">{file.name}</span>
               <span className="ml-auto shrink-0 text-xs text-[rgb(var(--muted))]">
                 {(file.size / 1024).toFixed(1)} KB

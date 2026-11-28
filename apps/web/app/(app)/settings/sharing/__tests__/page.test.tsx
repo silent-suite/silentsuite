@@ -121,7 +121,7 @@ function switchAccount() {
 }
 
 function startInvite(username = 'friend@example.com', access = 'readWrite') {
-  fireEvent.change(screen.getByPlaceholderText('friend@example.com'), { target: { value: username } })
+  fireEvent.change(screen.getByLabelText('Invite by username or email'), { target: { value: username } })
   fireEvent.change(screen.getByRole('combobox'), { target: { value: access } })
   const inviteButton = screen.getByRole('button', { name: 'Invite' })
   inviteButton.focus()
@@ -240,7 +240,7 @@ describe('SharingSettingsPage invite fingerprint confirmation', () => {
 
     startInvite()
     await inviteDialog()
-    fireEvent.change(screen.getByPlaceholderText('friend@example.com'), { target: { value: 'other@example.com' } })
+    fireEvent.change(screen.getByLabelText('Invite by username or email'), { target: { value: 'other@example.com' } })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 
     startInvite()
@@ -284,7 +284,7 @@ describe('SharingSettingsPage invite fingerprint confirmation', () => {
       useBirthdayMarkerStore.setState({ snapshot: { epoch: getAccountEpoch(), fingerprint: 'account-1-fp', activeIds: ['bday-1'] } })
       renderWithIntl(<SharingSettingsPage />)
 
-      expect(screen.getAllByPlaceholderText('friend@example.com')).toHaveLength(1)
+      expect(screen.getAllByLabelText('Invite by username or email')).toHaveLength(1)
       expect(screen.getByText(/birthdays calendar is generated from your contacts and can’t be shared/i)).toBeInTheDocument()
     })
 
@@ -380,10 +380,33 @@ async function changeFieldAsDialogCommits(field: () => HTMLInputElement | HTMLSe
   }
 }
 
+describe('SharingSettingsPage invite field', () => {
+  it('labels the recipient field and keeps Invite disabled until it has a value', () => {
+    const { invitationManager } = setupPage()
+
+    const field = screen.getByLabelText('Invite by username or email')
+    expect(field).toHaveValue('')
+    expect(field).toHaveAttribute('placeholder', 'e.g. friend@example.com')
+    const inviteButton = screen.getByRole('button', { name: 'Invite' })
+    expect(inviteButton).toBeDisabled()
+
+    fireEvent.change(field, { target: { value: '   ' } })
+    expect(inviteButton).toBeDisabled()
+    fireEvent.click(inviteButton)
+    expect(invitationManager.fetchUserProfile).not.toHaveBeenCalled()
+
+    fireEvent.change(field, { target: { value: 'friend@example.com' } })
+    expect(inviteButton).toBeEnabled()
+
+    fireEvent.change(field, { target: { value: '' } })
+    expect(inviteButton).toBeDisabled()
+  })
+})
+
 describe('SharingSettingsPage invite form input as the dialog commits', () => {
   it.each([
     ['access selection', () => screen.getByRole('combobox') as HTMLSelectElement, 'admin'],
-    ['username', () => screen.getByPlaceholderText('friend@example.com') as HTMLInputElement, 'other@example.com'],
+    ['username', () => screen.getByLabelText('Invite by username or email') as HTMLInputElement, 'other@example.com'],
   ] as const)('keeps the %s chosen as the dialog commits and closes the pending invite', async (_label, field, value) => {
     const { invitationManager } = setupPage()
     invitationManager.fetchUserProfile.mockResolvedValueOnce({ pubkey: sharingKey(17) })
@@ -501,7 +524,7 @@ describe('SharingSettingsPage phone touch targets', () => {
     const controls = [
       ...['Refresh', 'Reject', 'Accept', 'Load members', 'Invite', 'Save', 'Remove'].map((name) =>
         screen.getByRole('button', { name })),
-      screen.getByPlaceholderText('friend@example.com'),
+      screen.getByLabelText('Invite by username or email'),
       ...screen.getAllByRole('combobox'),
     ]
     for (const control of controls) expect(control.className).toContain('max-md:min-h-[44px]')

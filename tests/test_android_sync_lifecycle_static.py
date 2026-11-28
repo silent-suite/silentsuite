@@ -196,7 +196,6 @@ def test_node_security_floor_matches_manifest_docs_and_sharp_lock_requirement():
     manifest = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     lock = (ROOT / "pnpm-lock.yaml").read_text(encoding="utf-8")
     docs = [
-        ROOT / "docs/contributing/dev-setup.md",
         ROOT / "apps/docs/contributing/dev-setup.md",
     ]
 

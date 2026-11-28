@@ -3,22 +3,11 @@ import 'fake-indexeddb/auto'
 import {
   getItemsByType,
   putItem,
-  putItems,
-  deleteItem,
-  replaceItemsForType,
-  replaceItemsForCollection,
-  getCollection,
-  putCollection,
-  getStoken,
-  setStoken,
-  clearStoken,
   getMeta,
   putMeta,
   clearAll,
   ensureFingerprint,
   ensureEncryptedEnvelope,
-  getCacheCapabilityStatus,
-  isCacheEnabled,
   CACHE_SCHEMA_VERSION,
   _resetForTests,
   _setEncryptedCacheAvailableForTests,
@@ -95,6 +84,44 @@ async function rawCryptoKeys(): Promise<unknown[]> {
   }
 }
 
+function openRawDb(): Promise<IDBDatabase> {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open('silentsuite-data-cache')
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+/** Writes a sync-cursor row as a build with the removed instant-reload cache did. */
+async function seedLeftoverStoken(collectionUid: string, stoken: string): Promise<void> {
+  await getMeta() // opens and, on a fresh database, creates the v5 schema
+  const db = await openRawDb()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('collections', 'readwrite')
+      tx.objectStore('collections').put({ collectionType: 'tasks', collectionUid, stoken, lastFullSyncAt: 1 })
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function rawCollections(): Promise<unknown[]> {
+  const db = await openRawDb()
+  try {
+    return await new Promise<unknown[]>((resolve, reject) => {
+      const tx = db.transaction('collections', 'readonly')
+      const req = tx.objectStore('collections').getAll()
+      req.onsuccess = () => resolve(req.result ?? [])
+      req.onerror = () => reject(req.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
 async function corruptRawItem(itemUid: string): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open('silentsuite-data-cache')
@@ -125,41 +152,11 @@ async function corruptRawItem(itemUid: string): Promise<void> {
 
 describe('data-cache', () => {
   describe('encryption guard', () => {
-    it('reports cache capability without touching IndexedDB', () => {
-      const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
-      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
-      const openSpy = vi.spyOn(indexedDB, 'open')
-
-      expect(getCacheCapabilityStatus()).toEqual({
-        featureFlagEnabled: true,
-        encryptedEnvelopeAvailable: true,
-        enabled: true,
-      })
-      expect(openSpy).not.toHaveBeenCalled()
-
-      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
-      openSpy.mockRestore()
-    })
-
-    it('does not enable cache when the env flag is true but encryption is unavailable', () => {
-      const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
-      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
-      _setEncryptedCacheAvailableForTests(false)
-      _setEnvelopeKeyForTests(null)
-
-      expect(isCacheEnabled()).toBe(false)
-
-      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
-    })
-
     it('refuses plaintext item writes without an encrypted cache envelope', async () => {
       _setEncryptedCacheAvailableForTests(false)
       _setEnvelopeKeyForTests(null)
 
       await putItem(makeItem('plain-1', 'tasks', 'PRIVATE TASK SUMMARY'))
-      await putItems([makeItem('plain-2', 'tasks', 'PRIVATE BULK TASK')])
-      await replaceItemsForType('tasks', [makeItem('plain-3', 'tasks', 'PRIVATE REPLACE TYPE')])
-      await replaceItemsForCollection('col-1', [makeItem('plain-4', 'tasks', 'PRIVATE REPLACE COLLECTION')])
 
       expect(await getItemsByType('tasks')).toEqual([])
       expect(await rawItems()).toEqual([])
@@ -184,10 +181,8 @@ describe('data-cache', () => {
     })
 
     it('skips a corrupt cached item without poisoning other cached items', async () => {
-      await putItems([
-        makeItem('good', 'tasks', 'PRIVATE GOOD TASK'),
-        makeItem('bad', 'tasks', 'PRIVATE BAD TASK'),
-      ])
+      await putItem(makeItem('good', 'tasks', 'PRIVATE GOOD TASK'))
+      await putItem(makeItem('bad', 'tasks', 'PRIVATE BAD TASK'))
 
       await corruptRawItem('bad')
 
@@ -212,18 +207,6 @@ describe('data-cache', () => {
       expect(items[0]!.content).toBe('A')
     })
 
-    it('bulk-inserts via putItems', async () => {
-      await putItems([
-        makeItem('a', 'tasks'),
-        makeItem('b', 'tasks'),
-        makeItem('c', 'contacts'),
-      ])
-      const tasks = await getItemsByType('tasks')
-      const contacts = await getItemsByType('contacts')
-      expect(tasks).toHaveLength(2)
-      expect(contacts).toHaveLength(1)
-    })
-
     it('separates items by collection type via the index', async () => {
       await putItem(makeItem('a', 'tasks'))
       await putItem(makeItem('b', 'contacts'))
@@ -242,15 +225,7 @@ describe('data-cache', () => {
       expect(items[0]!.content).toBe('new')
     })
 
-    it('deletes a single item by uid', async () => {
-      await putItem(makeItem('x', 'tasks'))
-      await putItem(makeItem('y', 'tasks'))
-      await deleteItem('x')
-      const items = await getItemsByType('tasks')
-      expect(items.map((i) => i.itemUid)).toEqual(['y'])
-    })
-
-    it('aborts queued single-item put and delete commits when the account epoch changes', async () => {
+    it('aborts a queued single-item put when the account epoch changes', async () => {
       await ensureFingerprint('current-account')
       const putEpoch = getAccountEpoch()
       const originalPut = IDBObjectStore.prototype.put
@@ -262,82 +237,6 @@ describe('data-cache', () => {
       await expect(putItem(makeItem('stale-put'), putEpoch)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
       expect((await getItemsByType('tasks')).some((item) => item.itemUid === 'stale-put')).toBe(false)
       putSpy.mockRestore()
-
-      await putItem(makeItem('keep-delete'))
-      const deleteEpoch = getAccountEpoch()
-      const originalDelete = IDBObjectStore.prototype.delete
-      const deleteSpy = vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementation(function (query) {
-        const request = originalDelete.call(this, query)
-        if (query === 'keep-delete') bumpAccountEpoch()
-        return request
-      })
-      await expect(deleteItem('keep-delete', deleteEpoch)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
-      expect((await getItemsByType('tasks')).some((item) => item.itemUid === 'keep-delete')).toBe(true)
-      deleteSpy.mockRestore()
-    })
-
-    it('replaceItemsForType drops existing of that type and inserts the new set', async () => {
-      await putItems([
-        makeItem('a', 'tasks'),
-        makeItem('b', 'tasks'),
-        makeItem('c', 'contacts'),
-      ])
-      await replaceItemsForType('tasks', [makeItem('z', 'tasks', 'fresh')])
-
-      const tasks = await getItemsByType('tasks')
-      expect(tasks).toHaveLength(1)
-      expect(tasks[0]!.itemUid).toBe('z')
-
-      // Other types untouched
-      const contacts = await getItemsByType('contacts')
-      expect(contacts).toHaveLength(1)
-      expect(contacts[0]!.itemUid).toBe('c')
-    })
-
-    it('replaceItemsForCollection only drops items in that collection', async () => {
-      await putItems([
-        makeItem('a', 'tasks', 'old-a', 'col-a'),
-        makeItem('b', 'tasks', 'old-b', 'col-b'),
-      ])
-      await replaceItemsForCollection('col-a', [makeItem('z', 'tasks', 'fresh', 'col-a')])
-
-      const tasks = await getItemsByType('tasks')
-      expect(tasks.map((item) => item.itemUid).sort()).toEqual(['b', 'z'])
-      expect(tasks.find((item) => item.itemUid === 'b')!.collectionUid).toBe('col-b')
-    })
-
-    it('aborts a collection replacement when encryption crosses an account boundary', async () => {
-      await putItem(makeItem('existing', 'tasks', 'current cache', 'col-a'))
-      await ensureFingerprint('current-account')
-      const accountEpoch = getAccountEpoch()
-      const originalEncrypt = globalThis.crypto.subtle.encrypt.bind(globalThis.crypto.subtle)
-      let releaseEncryption!: () => void
-      let markEncryptionStarted!: () => void
-      const encryptionStarted = new Promise<void>((resolve) => {
-        markEncryptionStarted = resolve
-      })
-      const encryptionGate = new Promise<void>((resolve) => {
-        releaseEncryption = resolve
-      })
-      const encryptSpy = vi.spyOn(globalThis.crypto.subtle, 'encrypt').mockImplementationOnce(async (algorithm, key, data) => {
-        markEncryptionStarted()
-        await encryptionGate
-        return originalEncrypt(algorithm, key, data)
-      })
-
-      const replacement = replaceItemsForCollection(
-        'col-a',
-        [makeItem('stale', 'tasks', 'old account cache', 'col-a')],
-        accountEpoch,
-      )
-      await encryptionStarted
-      bumpAccountEpoch()
-      releaseEncryption()
-
-      await expect(replacement).rejects.toBeInstanceOf(AccountBoundaryChangedError)
-      const tasks = await getItemsByType('tasks')
-      expect(tasks.map((item) => item.itemUid)).toEqual(['existing'])
-      encryptSpy.mockRestore()
     })
 
     it('serializes an account fingerprint switch after a queued stale cache write', async () => {
@@ -356,11 +255,8 @@ describe('data-cache', () => {
         return request
       })
 
-      await expect(replaceItemsForCollection(
-        'col-a',
-        [makeItem('stale', 'tasks', 'old account cache', 'col-a')],
-        accountEpoch,
-      )).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      await expect(putItem(makeItem('stale', 'tasks', 'old account cache', 'col-a'), accountEpoch))
+        .rejects.toBeInstanceOf(AccountBoundaryChangedError)
       await accountSwitch!
 
       expect(await getItemsByType('tasks')).toEqual([])
@@ -369,66 +265,36 @@ describe('data-cache', () => {
     })
   })
 
-  describe('collections / stokens', () => {
-    it('returns null for an unknown collection', async () => {
-      expect(await getCollection('col-tasks')).toBeNull()
-      expect(await getStoken('col-tasks')).toBeNull()
+  describe('sync cursors left by the removed instant-reload cache', () => {
+    it('opens a database a cache-era build wrote without a schema upgrade and leaves queued payloads intact', async () => {
+      const key = await makeTestKey()
+      _setEnvelopeKeyForTests(key)
+      await ensureFingerprint('alice@example.com')
+      await putItem(makeItem('queued-payload', 'tasks', 'QUEUED OFFLINE EDIT'))
+      await seedLeftoverStoken('col-tasks', 'stk-left-behind')
+      await _resetForTests()
+      _setEnvelopeKeyForTests(key)
+      _setEncryptedCacheAvailableForTests(true)
+
+      // A later session for the same account: the payload a queued update replays from survives.
+      expect(await ensureFingerprint('alice@example.com')).toBe(true)
+      expect((await getItemsByType('tasks')).map((item) => item.content)).toEqual(['QUEUED OFFLINE EDIT'])
+
+      const db = await openRawDb()
+      expect(db.version).toBe(5)
+      expect(Array.from(db.objectStoreNames).sort()).toEqual(['collections', 'crypto', 'items', 'meta'])
+      db.close()
+      // Never read again; the row stays until logout or an account change empties the store.
+      expect(await rawCollections()).toHaveLength(1)
     })
 
-    it('persists a collection record', async () => {
-      await putCollection({
-        collectionType: 'tasks',
-        collectionUid: 'col-tasks',
-        stoken: 'stk-1',
-        lastFullSyncAt: 12345,
-      })
-      const col = await getCollection('col-tasks')
-      expect(col).not.toBeNull()
-      expect(col!.stoken).toBe('stk-1')
-      expect(col!.collectionUid).toBe('col-tasks')
-    })
+    it('empties leftover sync cursors on an account change', async () => {
+      await ensureFingerprint('alice@example.com')
+      await seedLeftoverStoken('col-tasks', 'stk-a')
 
-    it('aborts a queued stoken write when the account epoch changes before commit', async () => {
-      await ensureFingerprint('current-account')
-      const accountEpoch = getAccountEpoch()
-      const originalPut = IDBObjectStore.prototype.put
-      const putSpy = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (value, key) {
-        const request = key === undefined
-          ? originalPut.call(this, value)
-          : originalPut.call(this, value, key)
-        if ((value as { collectionUid?: string }).collectionUid === 'old-collection') {
-          bumpAccountEpoch()
-        }
-        return request
-      })
+      expect(await ensureFingerprint('bob@example.com')).toBe(false)
 
-      await expect(setStoken('calendar', 'old-collection', 'old-stoken', accountEpoch))
-        .rejects.toBeInstanceOf(AccountBoundaryChangedError)
-      expect(await getCollection('old-collection')).toBeNull()
-      putSpy.mockRestore()
-    })
-
-    it('setStoken creates and updates the cursor', async () => {
-      await setStoken('tasks', 'col-tasks', 'stk-a')
-      expect(await getStoken('col-tasks')).toBe('stk-a')
-      await setStoken('tasks', 'col-tasks', 'stk-b')
-      expect(await getStoken('col-tasks')).toBe('stk-b')
-    })
-
-    it('stokens are keyed by collectionUid, not collectionType', async () => {
-      await setStoken('tasks', 'col-a', 'stk-a')
-      await setStoken('tasks', 'col-b', 'stk-b')
-      expect(await getStoken('col-a')).toBe('stk-a')
-      expect(await getStoken('col-b')).toBe('stk-b')
-    })
-
-    it('clearStoken nulls the stoken but preserves the row', async () => {
-      await setStoken('tasks', 'col-tasks', 'stk-a')
-      await clearStoken('col-tasks')
-      expect(await getStoken('col-tasks')).toBeNull()
-      const col = await getCollection('col-tasks')
-      expect(col).not.toBeNull()
-      expect(col!.collectionUid).toBe('col-tasks')
+      expect(await rawCollections()).toEqual([])
     })
   })
 
@@ -456,7 +322,7 @@ describe('data-cache', () => {
     })
 
     it('ensureFingerprint wipes when accounts differ', async () => {
-      await setStoken('tasks', 'col-tasks', 'stk-a')
+      await seedLeftoverStoken('col-tasks', 'stk-a')
       await putItem(makeItem('cached-task', 'tasks', 'PRIVATE TASK'))
       await ensureEncryptedEnvelope()
       await ensureFingerprint('alice@example.com')
@@ -465,7 +331,7 @@ describe('data-cache', () => {
       expect(ok).toBe(false)
 
       // Cache should be wiped for the new account.
-      expect(await getStoken('col-tasks')).toBeNull()
+      expect(await rawCollections()).toEqual([])
       expect(await getItemsByType('tasks')).toEqual([])
       expect(await rawCryptoKeys()).toEqual([])
       const meta = await getMeta()
@@ -475,16 +341,16 @@ describe('data-cache', () => {
 
     it('ensureFingerprint accepts the same account on subsequent calls', async () => {
       await ensureFingerprint('alice@example.com')
-      await setStoken('tasks', 'col-tasks', 'stk-a')
+      await putItem(makeItem('kept', 'tasks', 'PRIVATE KEPT'))
 
       const ok = await ensureFingerprint('alice@example.com')
       expect(ok).toBe(true)
-      expect(await getStoken('col-tasks')).toBe('stk-a')
+      expect((await getItemsByType('tasks')).map((item) => item.itemUid)).toEqual(['kept'])
     })
 
     it('aborts a stale destructive fingerprint switch without touching the new account cache', async () => {
       await ensureFingerprint('account-b')
-      await setStoken('tasks', 'b-collection', 'b-stoken')
+      await seedLeftoverStoken('b-collection', 'b-stoken')
       await putItem(makeItem('b-item', 'tasks', 'B PRIVATE', 'b-collection'))
       const cryptoKeys = await rawCryptoKeys()
       const accountEpoch = getAccountEpoch()
@@ -498,7 +364,7 @@ describe('data-cache', () => {
       clearSpy.mockRestore()
 
       expect((await getMeta())?.accountFingerprint).toBe('account-b')
-      expect(await getStoken('b-collection')).toBe('b-stoken')
+      expect(await rawCollections()).toHaveLength(1)
       expect((await getItemsByType('tasks')).map((item) => item.content)).toEqual(['B PRIVATE'])
       expect(await rawCryptoKeys()).toEqual(cryptoKeys)
     })
@@ -544,7 +410,7 @@ describe('data-cache', () => {
   describe('clearAll', () => {
     it('wipes items, collections, meta, and crypto', async () => {
       await putItem(makeItem('x', 'tasks'))
-      await setStoken('tasks', 'col-tasks', 'stk')
+      await seedLeftoverStoken('col-tasks', 'stk')
       await ensureEncryptedEnvelope()
       await putMeta({
         accountFingerprint: 'a',
@@ -555,7 +421,7 @@ describe('data-cache', () => {
       await clearAll()
 
       expect(await getItemsByType('tasks')).toEqual([])
-      expect(await getStoken('col-tasks')).toBeNull()
+      expect(await rawCollections()).toEqual([])
       expect(await getMeta()).toBeNull()
       expect(await rawCryptoKeys()).toEqual([])
     })

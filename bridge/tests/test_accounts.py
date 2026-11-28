@@ -307,6 +307,38 @@ def test_deferred_cleanup_is_cancelled_by_same_account_reauthentication(monkeypa
     assert not cleared.wait(0.1)
 
 
+@pytest.mark.parametrize("marked, expect_cleared", [(True, True), (False, False)])
+def test_deferred_cleanup_rechecks_the_durable_marker(
+    tmp_path, monkeypatch, marked, expect_cleared
+):
+    # A sign-in from another process (``--login``) clears the marker on disk
+    # but cannot bump this process's epoch.
+    username = "alice@example.com"
+    creds_path = str(tmp_path / "creds.json")
+    creds = Credentials(creds_path)
+    if marked:
+        creds.mark_cache_cleanup(username)
+    creds.save()
+    cleared = threading.Event()
+    done = threading.Event()
+
+    @contextmanager
+    def available_maintenance(user, timeout=0):
+        try:
+            yield True
+        finally:
+            done.set()
+
+    monkeypatch.setattr(accounts, "account_maintenance", available_maintenance)
+    monkeypatch.setattr(accounts, "clear_cached_user", lambda user: cleared.set() or True)
+    accounts._pending_cache_cleanups.clear()
+
+    accounts._schedule_deferred_cache_cleanup(username, creds_path=creds_path)
+
+    assert done.wait(1)
+    assert cleared.is_set() is expect_cleared
+
+
 def test_deferred_cleanup_retries_transient_failure(monkeypatch):
     cleaned = threading.Event()
     attempts = 0
@@ -457,3 +489,69 @@ def test_remove_and_reauthentication_share_one_lock_order(tmp_path, monkeypatch)
 
     assert not store_thread.is_alive()
     assert not remove_thread.is_alive()
+
+
+def test_logged_out_account_stays_listed_until_local_data_is_removed(
+    tmp_path, monkeypatch, mem_db,
+):
+    _configure_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(accounts, "stop_sync_thread", lambda user: True)
+    monkeypatch.setattr(accounts, "forget_etesync_user", lambda user: None)
+    accounts.store_authenticated_account(
+        "alice@example.com", PASSWORD, "alice-session", "https://server.test",
+    )
+    accounts.store_authenticated_account(
+        "bob@example.com", PASSWORD, "bob-session", "https://server.test",
+    )
+    _seed_cache("alice@example.com")
+    _seed_cache("bob@example.com")
+
+    assert accounts.list_signed_out_accounts() == []
+
+    accounts.logout_account("alice@example.com")
+
+    assert accounts.list_signed_out_accounts() == ["alice@example.com"]
+
+    result = accounts.remove_account("alice@example.com")
+
+    assert result.existed is True
+    assert result.cache_cleared is True
+    assert accounts.list_signed_out_accounts() == []
+    assert User.get_or_none(User.username == "alice@example.com") is None
+    assert User.get_or_none(User.username == "bob@example.com") is not None
+
+
+def test_signed_out_list_skips_accounts_already_queued_for_deletion(
+    tmp_path, monkeypatch, mem_db,
+):
+    _configure_creds(tmp_path, monkeypatch)
+    creds = Credentials()
+    creds.mark_cache_cleanup("carol@example.com")
+    creds.save()
+    _seed_cache("carol@example.com")
+    _seed_cache("dave@example.com")
+
+    assert accounts.list_signed_out_accounts() == ["dave@example.com"]
+
+
+def test_list_cached_users_reads_cache_file_without_creating_it(tmp_path, monkeypatch):
+    import sqlite3
+
+    from silentsuite_bridge.local_cache import db, list_cached_users
+
+    monkeypatch.setattr(db.database_proxy, "obj", None)
+    missing = tmp_path / "missing.db"
+    monkeypatch.setattr(config, "DATABASE_FILE", str(missing))
+    assert list_cached_users() == []
+    assert not missing.exists()
+
+    path = tmp_path / "bridge_data.db"
+    connection = sqlite3.connect(path)
+    connection.execute('CREATE TABLE "user" (id INTEGER PRIMARY KEY, username VARCHAR(255))')
+    connection.execute('INSERT INTO "user" (username) VALUES (?)', ("bob@example.com",))
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(config, "DATABASE_FILE", str(path))
+
+    assert list_cached_users() == ["bob@example.com"]
+    assert db.database_proxy.obj is None

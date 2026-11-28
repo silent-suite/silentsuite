@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { useLoginEmailChangeEnabled } from '@/app/hooks/use-login-email-change-enabled'
 import { isHostedAccount, requestLoginEmailChange, type LoginEmailRequestResult } from '@/app/lib/login-email-change'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 
@@ -23,7 +22,6 @@ const MESSAGES: Record<LoginEmailRequestResult, string> = {
 }
 
 export function ChangeLoginEmail() {
-  const enabled = useLoginEmailChangeEnabled()
   const user = useAuthStore((state) => state.user)
   const [open, setOpen] = useState(false)
   const [email, setEmail] = useState('')
@@ -31,7 +29,7 @@ export function ChangeLoginEmail() {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<LoginEmailRequestResult | null>(null)
 
-  if (!enabled || !isHostedAccount(user)) return null
+  if (!isHostedAccount(user)) return null
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -99,7 +97,7 @@ export function ChangeLoginEmail() {
         />
       </div>
       {result && (
-        <p role={pending ? 'status' : 'alert'} className={`text-xs ${pending ? 'text-[rgb(var(--primary))]' : 'text-red-400'}`}>
+        <p role={pending ? 'status' : 'alert'} className={`text-xs ${pending ? 'text-[rgb(var(--primary-text))]' : 'text-red-400'}`}>
           {MESSAGES[result]}
         </p>
       )}
@@ -108,7 +106,7 @@ export function ChangeLoginEmail() {
         <button
           type="submit"
           disabled={busy}
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 max-md:min-h-[44px]"
+          className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 max-md:min-h-[44px]"
         >
           {busy ? 'Sending...' : 'Send confirmation link'}
         </button>

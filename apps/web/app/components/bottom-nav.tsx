@@ -33,7 +33,7 @@ export function BottomNav() {
             href={href}
             className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 ${
               isActive
-                ? 'text-[rgb(var(--primary))]'
+                ? 'text-[rgb(var(--primary-text))]'
                 : 'text-[rgb(var(--muted))] active:text-[rgb(var(--foreground))]'
             }`}
             aria-current={isActive ? 'page' : undefined}

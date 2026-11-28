@@ -54,6 +54,12 @@ If you renamed the file, use `./silentsuite-bridge.exe` instead.
 
 `--login` only signs you in; it does not start the bridge. `--background` starts the bridge without a window, so it keeps running after you close PowerShell. `--install-autostart` starts it the same way each time you sign in to Windows. The startup entry points at the file where it is now, so move the file to a permanent folder first if you don't want to keep it in Downloads.
 
+The bridge downloads have no tray icon. To see whether the bridge is running, open the dashboard at `http://localhost:37358/` in your browser. To stop a bridge started with `--background` or at sign-in, run:
+
+```powershell
+Get-Process silentsuite-bridge* | Stop-Process
+```
+
 ::: warning
 If you start the bridge on Windows without `--background` (for example by double-clicking the `.exe` or running it without options), it runs inside that window and stops as soon as you close the window. Your calendar app then can't reach it.
 :::
@@ -102,9 +108,7 @@ After successful login, the dashboard shows your CalDAV/CardDAV URLs:
 | **Username** | Your account email |
 | **Password** | Your account password |
 
-You can always find these URLs by:
-- Opening the dashboard at `http://localhost:37358/`
-- Using the system tray menu account entries (Copy CalDAV URL / Copy CardDAV URL)
+You can always find these URLs on the dashboard at `http://localhost:37358/`.
 
 ### macOS Apple Internet Accounts HTTPS setup
 
@@ -138,7 +142,7 @@ agent, the systemd user service, or any redirected output, stdout is a
 persistent log rather than an operator terminal, so those lines carry only the
 listener kind and outcome and no address, hostname or port. Set
 `SILENTSUITE_LISTENER_DETAIL=1` to print the addresses there anyway, or read them
-from the tray menu or the Network card.
+from the dashboard's Network card.
 
 ### Loopback is special
 
@@ -174,10 +178,10 @@ SILENTSUITE_ALLOW_REMOTE=1 silentsuite-bridge
 
 The loopback entry serves the dashboard and DAV on the Bridge host; the
 remote entry serves DAV only to the private network. The dashboard URL and
-the per-account DAV URLs the tray shows always prefer the bound loopback
+the per-account DAV URLs the dashboard shows always prefer the bound loopback
 listener, so copying a DAV URL gives you the safe local endpoint by
-default. A remote-only bind (no loopback entry) makes the tray show the
-bound remote literal with its configured port for DAV — never a wildcard,
+default. A remote-only bind (no loopback entry) makes the tray menu of a
+source install show the bound remote literal with its configured port for DAV — never a wildcard,
 never an unbound `LISTEN_ADDRESS:LISTEN_PORT`. The dashboard itself is not
 served on a remote-only bind, so its Network card is only visible when a
 loopback listener is also configured and you open the dashboard from the
@@ -255,8 +259,9 @@ The bridge local cache contains decrypted calendar, contact, and task data. Use 
 
 Leave `silentsuite-bridge` running. On Windows, start it with `silentsuite-bridge --background`; a bridge started without it stops when you close its window. The bridge will:
 - Start the CalDAV/CardDAV server on `localhost:37358`
-- Show a system tray icon (green = connected, yellow = warning, red = error)
 - Sync automatically in the background
+
+The bridge downloads have no tray icon. Open the dashboard (below) to check the status, copy your DAV URLs or report a problem.
 
 ## Dashboard
 
@@ -430,7 +435,7 @@ silentsuite-bridge --remove-account EMAIL  # Remove credentials and local cache
 silentsuite-bridge --manual-login     # CLI add/re-authenticate (headless/dev)
 silentsuite-bridge --install-autostart  # Install auto-start
 silentsuite-bridge --remove-autostart   # Remove auto-start
-silentsuite-bridge --no-tray          # Start without system tray
+silentsuite-bridge --no-tray          # Start without the tray icon (source installs)
 ```
 
 ## Updating the Bridge
@@ -513,7 +518,7 @@ silentsuite-bridge --login
    remote bind, test the configured scheme and private-network address instead;
    `Radicale works!` or a similar generic Radicale status response confirms
    listener reachability, not dashboard availability.
-2. Check the tray icon color (green = OK, red = error)
+2. Check the connection status on the dashboard
 3. Check the dashboard sync log for errors
 4. If you installed on Windows, also check `%LOCALAPPDATA%\SilentSuite\install.log` and `%LOCALAPPDATA%\silentsuite\silentsuite-bridge\bridge.log` (written by a bridge started with `--background` or at sign-in)
 5. On macOS with auto-start, check `~/Library/Logs/SilentSuiteBridge/bridge.error.log`. DAV requests, sign-in results and TLS errors are logged there, not in `bridge.log` (see [macOS Calendar & Contacts](./macos.md#where-to-find-the-bridge-logs))
@@ -544,9 +549,9 @@ Do not copy the browser address-bar URL from the temporary sign-in page into Thu
 4. Use your SilentSuite account email as the username and your SilentSuite account password as the password.
 5. If discovery still returns nothing, copy the dashboard sync log plus `%LOCALAPPDATA%\silentsuite\silentsuite-bridge\bridge.log` into a support report. Do not include passwords or session tokens.
 
-### System tray not visible (GNOME)
+### No tray icon
 
-GNOME removed native tray support. Install the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) to restore it. KDE, XFCE, and other desktop environments support the tray natively.
+The bridge downloads have no tray icon on any system. Use the dashboard at `http://localhost:37358/` instead. If you run the bridge from source with the tray installed and use GNOME, install the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) to see the icon.
 
 ### Firewall blocking
 

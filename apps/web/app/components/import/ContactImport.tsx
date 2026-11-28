@@ -389,7 +389,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         <button
           type="button"
           disabled
-          className="inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm font-medium text-white opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary-strong))] px-4 py-2 text-sm font-medium text-white opacity-50"
         >
           {`Importing ${runningImport.saved} of ${runningImport.total}…`}
         </button>

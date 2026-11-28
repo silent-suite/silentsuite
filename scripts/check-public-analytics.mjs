@@ -91,7 +91,7 @@ const requiredContracts = new Map([
   // omission are pinned on the relay entry above).
   ['apps/web/app/(auth)/public-web-vitals.tsx', ["process.env.NEXT_PUBLIC_WEB_VITALS_ENABLED === 'true'", 'webVitalsPageFor(win.location.pathname)']],
   ['Dockerfile.web', ['ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
-  ['.github/workflows/deploy-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true']],
+  ['.github/workflows/deploy-web-standalone.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true']],
   ['.github/workflows/preview-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
   // Baseline pageview transport must be verified in both build flag modes, because it
   // is independent of NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED and must ship in every build.

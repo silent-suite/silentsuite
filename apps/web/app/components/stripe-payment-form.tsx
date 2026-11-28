@@ -48,12 +48,15 @@ interface PaymentFormProps {
   selectedInterval?: 'annual'
   /** Same-origin path for non-signup payment redirects. */
   returnPath?: string
+  /** True while a submitted card is being confirmed with Stripe. */
+  onProcessingChange?: (processing: boolean) => void
 }
 
-function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInterval, returnPath }: Omit<PaymentFormProps, 'clientSecret'>) {
+function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInterval, returnPath, onProcessingChange }: Omit<PaymentFormProps, 'clientSecret'>) {
   const stripe = useStripe()
   const elements = useElements()
   const [loading, setLoading] = useState(false)
+  useEffect(() => { onProcessingChange?.(loading) }, [loading, onProcessingChange])
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
 
@@ -238,6 +241,7 @@ export default function StripePaymentForm(props: PaymentFormProps) {
         mode={props.mode}
         selectedInterval={props.selectedInterval}
         returnPath={props.returnPath}
+        onProcessingChange={props.onProcessingChange}
       />
     </Elements>
   )

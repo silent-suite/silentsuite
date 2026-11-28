@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-// The annual and standalone Docs production workflows must keep identical build-side guards.
-const docsProductionWorkflows = ['deploy-docs.yml', 'deploy-docs-standalone.yml']
+// The Docs production workflow must keep its build-side guards.
+const docsProductionWorkflows = ['deploy-docs-standalone.yml']
 
 for (const name of docsProductionWorkflows) {
   test(`${name}: docs production workflow verifies both built and downloaded bytes`, async () => {

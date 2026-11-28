@@ -1480,7 +1480,9 @@ def test_dashboard_hides_birthdays_buttons_while_off(tmp_path, monkeypatch):
     assert "Experimental" in html
     assert 'id="experimentalBirthdays"' in html
     assert 'id="experimentalBirthdays" onchange="updateExperimentalBirthdays(this)">' in html
-    assert "Adds a Birthdays calendar made from your contacts. Turn it on per account on the dashboard." in html
+    assert ("Adds a Birthdays calendar made from your contacts. Once this is ticked, turn it on with the "
+            "Birthdays buttons on each card under Configured Accounts.") in html
+    assert web_module.BIRTHDAYS_BUTTONS_HELP_TEXT not in html
 
 
 def test_dashboard_settings_checkbox_is_ticked_while_on(tmp_path, monkeypatch):
@@ -1488,6 +1490,21 @@ def test_dashboard_settings_checkbox_is_ticked_while_on(tmp_path, monkeypatch):
 
     assert 'id="experimentalBirthdays" onchange="updateExperimentalBirthdays(this)" checked>' in html
     assert "Turn on Birthdays calendar" in html
+
+
+def test_dashboard_account_card_says_what_each_birthdays_button_does(tmp_path, monkeypatch):
+    # The card cannot show whether Birthdays is on (that needs a full server read under the
+    # account lock), so it keeps both buttons and explains each one, inside the account card.
+    html = _render_with_account(tmp_path, monkeypatch)
+
+    help_text = web_module.BIRTHDAYS_BUTTONS_HELP_TEXT
+    assert "Turn on Birthdays calendar" in html
+    # The explanation closes the account card, right after its action buttons.
+    assert ('Turn off Birthdays calendar</button></div>'
+            f'<div class="fingerprint-help">{help_text}</div></div>') in html
+    assert "does not show whether the Birthdays calendar is on" in help_text
+    assert "Turn on adds it, or updates it from your contacts." in help_text
+    assert "Turn off removes the generated birthdays; your own events are kept." in help_text
 
 
 def _settings_post(body, csrf=True):

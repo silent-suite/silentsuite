@@ -35,6 +35,7 @@ yarn-error.log*
 **/public/sw.js.map
 **/public/workbox-*.js
 **/public/workbox-*.js.map
+**/public/fallback-*.js
 **/public/fallback-*.js.map
 # Generated only in the exact production Docs artifact for post-deploy SHA verification.
 apps/docs/public/deployment-identity.json

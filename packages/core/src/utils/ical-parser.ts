@@ -18,8 +18,11 @@ export interface VEvent {
   location?: string;
   rrule?: string;
   exdate?: string[];
-  /** EXDATE parameters (e.g., TZID) — keyed by index in the exdate array */
+  /** EXDATE parameters (e.g., TZID); for mixed zones, the first TZID seen */
   exdateParams?: Record<string, string>;
+  /** Per-value EXDATE TZID (absent entry: no TZID on that line), aligned with `exdate`.
+   *  Set only when the EXDATE lines do not all share one TZID; it then wins over `exdateParams`. */
+  exdateTzids?: (string | undefined)[];
   created?: string;
   lastModified?: string;
   transp?: string;
@@ -254,6 +257,7 @@ export function parseVEvent(ical: string): VEvent {
   const valarms: VAlarm[] = [];
   const unknownProperties: string[] = [];
   const unknownComponents: string[][] = [];
+  const exdateTzids: (string | undefined)[] = [];
 
   // Lines inside a nested component belong to that component, never to the
   // VEVENT. A complete top-level VALARM is read into the alarm model; any
@@ -321,6 +325,7 @@ export function parseVEvent(ical: string): VEvent {
         // EXDATE can have multiple comma-separated values
         const dates = prop.value.split(',').map((d) => d.trim());
         event.exdate.push(...dates);
+        exdateTzids.push(...dates.map(() => prop.params['TZID']));
         break;
       }
       case 'CREATED':
@@ -349,6 +354,7 @@ export function parseVEvent(ical: string): VEvent {
   }
   if (unknownProperties.length > 0) event.unknownProperties = unknownProperties;
   if (unknownComponents.length > 0) event.unknownComponents = unknownComponents;
+  if (exdateTzids.some((zone) => zone !== exdateTzids[0])) event.exdateTzids = exdateTzids;
 
   // Input validation
   if (!event.uid) {
@@ -402,10 +408,16 @@ export function generateVEvent(event: VEvent): string {
   if (event.rrule) lines.push(foldLine(`RRULE:${event.rrule}`));
 
   if (event.exdate && event.exdate.length > 0) {
-    if (event.exdateParams?.TZID) {
-      lines.push(foldLine(`EXDATE;TZID=${encodeTimeZone(decodeTimeZone(event.exdateParams.TZID))}:${event.exdate.join(',')}`));
-    } else {
-      lines.push(foldLine(`EXDATE:${event.exdate.join(',')}`));
+    // One line per run of values sharing a zone; without per-value zones that is a single line.
+    const runs: { zone: string | undefined; values: string[] }[] = [];
+    event.exdate.forEach((value, i) => {
+      const zone = (event.exdateTzids ? event.exdateTzids[i] : event.exdateParams?.TZID) || undefined;
+      const last = runs[runs.length - 1];
+      if (last && last.zone === zone) last.values.push(value);
+      else runs.push({ zone, values: [value] });
+    });
+    for (const { zone, values } of runs) {
+      lines.push(foldLine(zone ? `EXDATE;TZID=${encodeTimeZone(decodeTimeZone(zone))}:${values.join(',')}` : `EXDATE:${values.join(',')}`));
     }
   }
 
