@@ -369,6 +369,18 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().user).toBeNull()
   })
 
+  it('a hosted signup drops a stale custom server only once the account exists', async () => {
+    const { etebaseSignUp } = await import('@/app/lib/etebase-auth')
+    localStorage.setItem('silentsuite-server-url', 'https://dav.example.test')
+    vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('network unavailable'))
+    useAuthStore.getState().prepareSignupDraft('hosted@example.test')
+    await expect(useAuthStore.getState().createEtebaseAccount('hosted@example.test', 'password123')).rejects.toThrow()
+    expect(localStorage.getItem('silentsuite-server-url')).toBe('https://dav.example.test')
+
+    await useAuthStore.getState().createEtebaseAccount('hosted@example.test', 'password123')
+    expect(localStorage.getItem('silentsuite-server-url')).toBeNull()
+  })
+
   it('reuses an Etebase account created by an ambiguous prior signup attempt', async () => {
     const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
     vi.mocked(etebaseSignUp).mockRejectedValueOnce(Object.assign(new Error('User already exists'), { name: 'ConflictError' }))
