@@ -1172,7 +1172,7 @@ export function EventDialog({
                       <div>
                         <input
                           type="text"
-                          inputMode="numeric"
+                          inputMode="text"
                           placeholder={datePlaceholder}
                           value={startDateInput}
                           onChange={handleStartDateChange}
@@ -1212,7 +1212,7 @@ export function EventDialog({
                       <div>
                         <input
                           type="text"
-                          inputMode="numeric"
+                          inputMode="text"
                           placeholder={datePlaceholder}
                           value={endDateInput}
                           onChange={handleEndDateChange}

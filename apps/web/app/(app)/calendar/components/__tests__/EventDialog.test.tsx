@@ -171,6 +171,9 @@ describe('EventDialog edit calendar selection', () => {
     renderWithIntl(<EventDialog mode="edit" event={makeEvent({ startDate: new Date('2026-06-01T14:00:00Z'), endDate: new Date('2026-06-02T15:30:00Z') })} onClose={mocks.onClose} />)
 
     expect(screen.getByLabelText('Start date')).toHaveAttribute('type', 'text')
+    // iOS numeric keypads have no date separators, so the fields must use the text keyboard.
+    expect(screen.getByLabelText('Start date')).toHaveAttribute('inputmode', 'text')
+    expect(screen.getByLabelText('End date')).toHaveAttribute('inputmode', 'text')
     expect(screen.getByLabelText('Start date')).toHaveValue('01.06.2026')
     expect(screen.getByLabelText('End date')).toHaveValue('02.06.2026')
   })

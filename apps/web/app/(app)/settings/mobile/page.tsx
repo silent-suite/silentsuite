@@ -147,8 +147,8 @@ export default function MobileSettingsPage() {
           </div>
           <div className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-3 text-left space-y-1">
             <p className="text-sm font-medium text-[rgb(var(--foreground))] text-center">iOS</p>
-            <p className="text-xs font-medium text-amber-700 text-center dark:text-amber-300">On the roadmap, coming soon</p>
-            <p className="pt-1 text-center text-xs text-[rgb(var(--muted))]">iOS is not currently supported.</p>
+            <p className="text-xs font-medium text-amber-700 text-center dark:text-amber-300">Native app planned</p>
+            <p className="pt-1 text-center text-xs text-[rgb(var(--muted))]">iOS isn&apos;t supported yet, and the app&apos;s scope and timing haven&apos;t been decided.</p>
           </div>
         </div>
       </div>

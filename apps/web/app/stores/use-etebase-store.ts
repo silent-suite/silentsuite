@@ -32,7 +32,7 @@ import {
 import { secureGet } from '@/app/lib/secure-storage'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
-import { parseVCard } from '@silentsuite/core/utils/vcard-parser'
+import { parseVCard, splitVCardFile } from '@silentsuite/core/utils/vcard-parser'
 import {
   ensureEncryptedEnvelope as cacheEnsureEncryptedEnvelope,
   ensureFingerprint as cacheEnsureFingerprint,
@@ -3979,7 +3979,19 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (item.isDeleted) continue
           const raw = await item.getContent()
           assertCurrentAccountEpoch(accountEpoch)
-          const uid = parseVCard(typeof raw === 'string' ? raw : new TextDecoder().decode(raw), { keepMissingUid: true }).uid
+          // Only one complete, valid UTF-8 vCard vouches for its UID; an unframed or
+          // damaged payload never makes a file card look already imported. A failed read
+          // or decrypt above still aborts the whole check.
+          let text: string
+          try {
+            text = typeof raw === 'string' ? raw : new TextDecoder('utf-8', { fatal: true }).decode(raw)
+          } catch (err) {
+            if (err instanceof TypeError) continue
+            throw err
+          }
+          const { cards, incomplete } = splitVCardFile(text)
+          if (cards.length !== 1 || incomplete !== 0) continue
+          const uid = parseVCard(cards[0]!, { keepMissingUid: true }).uid
           if (uid) uids.add(uid)
         }
         done = page.done
