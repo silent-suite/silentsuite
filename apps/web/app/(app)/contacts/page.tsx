@@ -581,7 +581,7 @@ function ContactForm({
           {/* Birthday & Notes */}
           <fieldset className="space-y-2">
             <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Personal</legend>
-            <input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} aria-label="Birthday" className={INPUT_CLASS} />
+            <BirthdayInput value={birthday} onChange={setBirthday} />
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" aria-label="Notes" rows={3} className={`${INPUT_CLASS} resize-none`} />
           </fieldset>
 
@@ -716,6 +716,77 @@ function EditableField({
       onBlur={handleBlur}
       placeholder={placeholder}
       className={INPUT_CLASS}
+    />
+  )
+}
+
+const YEARLESS_BIRTHDAY = /^--(\d{2})-?(\d{2})$/
+// A leap year, so a yearless 29 February still shows in the date picker.
+const NO_YEAR_PICKER_YEAR = '2000'
+
+/**
+ * Birthday as the contact model holds it: `YYYY-MM-DD`, or `--MM-DD` when "No year"
+ * is ticked. The picker needs some year, so a yearless birthday shows in 2000; that
+ * year is never saved. Turning "No year" off clears the picker rather than keeping
+ * 2000, and any other stored value stays as it is until a date is picked.
+ */
+function BirthdayInput({ value, onChange, onDateBlur }: {
+  value: string
+  onChange: (value: string, fromCheckbox: boolean) => void
+  onDateBlur?: () => void
+}) {
+  const yearless = YEARLESS_BIRTHDAY.exec(value)
+  const [noYear, setNoYear] = useState(!!yearless)
+  useEffect(() => {
+    if (value) setNoYear(YEARLESS_BIRTHDAY.test(value))
+  }, [value])
+  const dateValue = yearless ? (noYear ? `${NO_YEAR_PICKER_YEAR}-${yearless[1]}-${yearless[2]}` : '') : value
+  const toValue = (date: string, withoutYear: boolean) => (date && withoutYear ? `--${date.slice(5)}` : date)
+
+  return (
+    <div className="flex items-center gap-3">
+      <input
+        type="date"
+        value={dateValue}
+        onChange={(e) => onChange(toValue(e.target.value, noYear), false)}
+        onBlur={onDateBlur}
+        aria-label="Birthday"
+        className={INPUT_CLASS}
+      />
+      <label className="flex shrink-0 items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+        <input
+          type="checkbox"
+          checked={noYear}
+          onChange={(e) => {
+            const withoutYear = e.target.checked
+            setNoYear(withoutYear)
+            // A yearless birthday has no year to restore: wait for a picked date.
+            if (!yearless && /^\d{4}-\d{2}-\d{2}$/.test(value)) onChange(toValue(value, withoutYear), true)
+          }}
+        />
+        No year
+      </label>
+    </div>
+  )
+}
+
+/** The detail editor's birthday: a picked date saves on blur, "No year" at once. */
+function EditableBirthday({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [localValue, setLocalValue] = useState(value)
+  useEffect(() => {
+    setLocalValue(value)
+  }, [value])
+
+  return (
+    <BirthdayInput
+      value={localValue}
+      onChange={(next, fromCheckbox) => {
+        setLocalValue(next)
+        if (fromCheckbox && next !== value) onChange(next)
+      }}
+      onDateBlur={() => {
+        if (localValue !== value) onChange(localValue)
+      }}
     />
   )
 }
@@ -1215,11 +1286,9 @@ function ContactDetail({
 
         {/* Personal */}
         <DetailSection icon={<Cake className="h-4 w-4" />} title="Personal">
-          <EditableField
+          <EditableBirthday
             value={contact.birthday ?? ''}
             onChange={(v) => handleFieldUpdate({ birthday: v || null })}
-            placeholder="Birthday"
-            type="date"
           />
           <EditableField
             value={contact.notes}
