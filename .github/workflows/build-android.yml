@@ -828,17 +828,23 @@ jobs:
       - name: Verify the web bundle is in the debug APK only
         run: |
           set -euo pipefail
+          # Each listing is written out in full first: a grep that stops early
+          # would otherwise end unzip with a broken pipe and hide its own result.
           debug_apk=(app/build/outputs/apk/debug/*.apk)
-          unzip -Z1 "${debug_apk[0]}" | grep -Fxq 'assets/webapp/manifest.json'
-          bundled=$(unzip -Z1 "${debug_apk[0]}" | grep -c '^assets/webapp/files/')
+          unzip -Z1 "${debug_apk[0]}" > "$RUNNER_TEMP/debug-apk-listing.txt"
+          grep -Fxq 'assets/webapp/manifest.json' "$RUNNER_TEMP/debug-apk-listing.txt"
+          bundled=$(grep -c '^assets/webapp/files/' "$RUNNER_TEMP/debug-apk-listing.txt")
           manifest=$(find "$GITHUB_WORKSPACE/apps/web/android-bundle/dist/webapp/files" -type f | wc -l)
           [[ "$bundled" -eq "$manifest" ]] || { echo "debug APK carries $bundled bundle files, expected $manifest" >&2; exit 1; }
           for artifact in app/build/outputs/apk/release/*.apk app/build/outputs/bundle/release/*.aab; do
-            if unzip -Z1 "$artifact" | grep -q 'assets/webapp/'; then
+            unzip -Z1 "$artifact" > "$RUNNER_TEMP/release-listing.txt"
+            test -s "$RUNNER_TEMP/release-listing.txt"
+            if grep -q '^assets/webapp/' "$RUNNER_TEMP/release-listing.txt"; then
               echo "::error::$artifact carries the web bundle; only debug builds may" >&2
               exit 1
             fi
           done
+          test -s build/privacy-evidence/dependencies/release-runtime.txt
           if grep -q 'androidx.webkit' build/privacy-evidence/dependencies/release-runtime.txt; then
             echo "::error::the release classpath carries androidx.webkit; it is a debug-only dependency" >&2
             exit 1

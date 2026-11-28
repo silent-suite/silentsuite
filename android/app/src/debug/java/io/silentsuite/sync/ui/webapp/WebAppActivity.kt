@@ -10,6 +10,7 @@ package io.silentsuite.sync.ui.webapp
 
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.accounts.OnAccountsUpdateListener
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -58,6 +59,8 @@ class WebAppActivity : BaseActivity() {
     private var webView: WebView? = null
     private var boundAccount: Account? = null
     private var boundProfile: String? = null
+    private var listeningForAccounts = false
+    private val accountsListener = OnAccountsUpdateListener { closeUnlessStillBound() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,36 +69,50 @@ class WebAppActivity : BaseActivity() {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
             return showMessage("This screen needs a newer Android System WebView.")
         }
+        deleteStaleProfiles(bundle)
         val account = selectedAccount()
         val profile = account?.let { profileFor(it, bundle) }
-        deleteStaleProfiles(profile)
         if (account == null || profile == null) {
             return showMessage("This screen needs one SilentSuite account on the hosted service.")
         }
         boundAccount = account
         boundProfile = profile
-        showWebView(bundle, account, profile, savedInstanceState)
+        // Saved history belongs to the profile it was made in; for any other account it is dropped.
+        val history = savedInstanceState?.takeIf { it.getString(STATE_PROFILE) == profile }
+        showWebView(bundle, account, profile, history)
+        AccountManager.get(this).addOnAccountsUpdatedListener(accountsListener, null, false, arrayOf(App.accountType))
+        listeningForAccounts = true
     }
 
     override fun onResume() {
         super.onResume()
-        // The account may have been removed, or removed and added again, while this screen was away.
+        closeUnlessStillBound()
+    }
+
+    /**
+     * Closes the screen when its account was removed, or removed and added
+     * again. Runs on every resume and whenever the app's accounts change.
+     */
+    private fun closeUnlessStillBound() {
         val account = boundAccount ?: return
         val bundle = WebAppBundle.load(assets)
         val stillBound = bundle != null && accountExists(account) && profileFor(account, bundle) == boundProfile
         if (!stillBound) {
+            boundAccount = null
             destroyWebView()
-            deleteStaleProfiles(null)
             finish()
         }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        webView?.saveState(outState)
+        val view = webView ?: return
+        view.saveState(outState)
+        outState.putString(STATE_PROFILE, boundProfile)
     }
 
     override fun onDestroy() {
+        if (listeningForAccounts) AccountManager.get(this).removeOnAccountsUpdatedListener(accountsListener)
         destroyWebView()
         super.onDestroy()
     }
@@ -117,14 +134,20 @@ class WebAppActivity : BaseActivity() {
         return WebAppAccountBinding.profileName(account.type, account.name, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
     }
 
-    private fun deleteStaleProfiles(current: String?) {
+    /**
+     * Deletes the profiles of accounts that are no longer registered. Every
+     * registered account keeps its profile, whichever account this launch is for.
+     */
+    private fun deleteStaleProfiles(bundle: WebAppBundle) {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) return
+        val live = AccountManager.get(this).getAccountsByType(App.accountType).mapNotNull { profileFor(it, bundle) }.toSet()
         val store = ProfileStore.getInstance()
-        for (name in WebAppAccountBinding.staleProfiles(store.allProfileNames, current)) {
+        for (name in WebAppAccountBinding.staleProfiles(store.allProfileNames, live)) {
             try {
                 store.deleteProfile(name)
             } catch (_: IllegalStateException) {
-                // Still in use by another instance of this screen; the next start deletes it.
+                // A profile this process has already loaded cannot be deleted; the
+                // first start in a new process deletes it.
             }
         }
     }
@@ -262,5 +285,6 @@ class WebAppActivity : BaseActivity() {
     companion object {
         /** Name of the account to open; without it the device's only account is used. */
         const val EXTRA_ACCOUNT = "account"
+        private const val STATE_PROFILE = "webapp.profile"
     }
 }

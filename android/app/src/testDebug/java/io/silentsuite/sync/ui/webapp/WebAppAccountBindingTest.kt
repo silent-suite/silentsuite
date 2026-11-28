@@ -40,10 +40,12 @@ class WebAppAccountBindingTest {
     }
 
     @Test
-    fun profilesOfOtherAccountsAreStaleButForeignProfilesAreLeftAlone() {
-        val all = listOf("Default", "webapp-aaa", "webapp-bbb", "someone-elses")
-        assertEquals(listOf("webapp-bbb"), WebAppAccountBinding.staleProfiles(all, "webapp-aaa"))
-        assertEquals(listOf("webapp-aaa", "webapp-bbb"), WebAppAccountBinding.staleProfiles(all, null))
+    fun onlyProfilesOfUnregisteredAccountsAreStale() {
+        val all = listOf("Default", "webapp-aaa", "webapp-bbb", "webapp-gone", "someone-elses")
+        // Both registered accounts keep their profiles, whichever one a launch is for.
+        assertEquals(listOf("webapp-gone"), WebAppAccountBinding.staleProfiles(all, setOf("webapp-aaa", "webapp-bbb")))
+        // No account left: every profile of this feature goes, foreign ones stay.
+        assertEquals(listOf("webapp-aaa", "webapp-bbb", "webapp-gone"), WebAppAccountBinding.staleProfiles(all, emptySet()))
     }
 
     @Test
@@ -59,5 +61,7 @@ class WebAppAccountBindingTest {
         assertFalse(WebAppAccountBinding.isHostedAccount("http://server.silentsuite.io/", builtIn, hosted))
         assertFalse(WebAppAccountBinding.isHostedAccount("https://server.silentsuite.io:8443/", builtIn, hosted))
         assertFalse(WebAppAccountBinding.isHostedAccount("not a url", builtIn, hosted))
+        // Another server behind a path on the hosted address is not the hosted service.
+        assertFalse(WebAppAccountBinding.isHostedAccount("https://server.silentsuite.io/other/", builtIn, hosted))
     }
 }
