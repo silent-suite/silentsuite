@@ -17,6 +17,7 @@ import html as html_mod
 import http.server
 import json
 import logging
+import re
 import secrets
 import socket
 import sys
@@ -884,7 +885,9 @@ def _start_command():
         if getattr(sys, "frozen", False):
             # The download keeps its platform-specific name and is often not
             # on PATH, so name the running executable (PowerShell syntax).
-            quoted = "'" + sys.executable.replace("'", "''") + "'"
+            # PowerShell also ends a single-quoted string at U+2018-U+201B,
+            # so double those like the ASCII quote.
+            quoted = "'" + re.sub("(['\u2018\u2019\u201a\u201b])", r"\1\1", sys.executable) + "'"
             return f"& {quoted} --background"
         return "silentsuite-bridge --background"
     return "silentsuite-bridge"

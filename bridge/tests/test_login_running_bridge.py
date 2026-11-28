@@ -91,6 +91,14 @@ def test_cli_login_start_hint_on_windows_names_the_running_executable(monkeypatc
     )
 
 
+def test_windows_start_hint_doubles_typographic_single_quotes(monkeypatch):
+    monkeypatch.setattr(config, "get_platform", lambda: "windows")
+    monkeypatch.setattr(auth_browser.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(auth_browser.sys, "executable", "C:\\Users\\O\u2019Neil\\silentsuite-bridge.exe")
+
+    assert auth_browser._start_command() == "& 'C:\\Users\\O\u2019\u2019Neil\\silentsuite-bridge.exe' --background"
+
+
 @pytest.mark.parametrize("platform", ["linux", "windows"])
 def test_tray_login_prints_no_start_hint(monkeypatch, capsys, platform):
     monkeypatch.setattr(config, "SERVER_HOSTS", f"127.0.0.1:{PORT}")
