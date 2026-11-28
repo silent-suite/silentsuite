@@ -24,6 +24,24 @@ object ICalPreprocessor {
 
     private val TZOFFSET_REGEXP = Regex("^(TZOFFSET(FROM|TO):[+\\-]?)((18|19|[2-6]\\d)\\d\\d)$", RegexOption.MULTILINE)
 
+    /** A line fold as ical4j's relaxed unfolding removes it: CRLF or LF followed by a space or tab. */
+    private val FOLD_REGEXP = Regex("\\r?\\n[ \\t]")
+
+    /**
+     * A TRIGGER, DURATION or REFRESH-INTERVAL content line (in unfolded text) whose duration has
+     * weeks and also days or a time, like `TRIGGER:-P1W2DT15H`. RFC 5545 allows weeks only on their
+     * own, but Proton Calendar, for example, exports reminders of all-day events like this.
+     *
+     * The line must start after LF or at the beginning and end before CRLF, LF or the end, so other
+     * line separators (like U+2028 inside a DESCRIPTION) don't count. Parameters may contain quoted
+     * colons. The lookahead keeps plain `P2W` (which parses) out.
+     */
+    private val WEEK_DURATION_REGEXP = Regex(
+        "(?:\\A|(?<=\\n))((?:TRIGGER|DURATION|REFRESH-INTERVAL)(?:;(?:\"[^\"\\r\\n]*\"|[^\":\\r\\n])*)?:)" +
+                "([+\\-]?)P(\\d+)W(?=[\\dT])(?:(\\d+)D)?(T[\\dHMS]+)?(?=\\r?\\n|\\z)",
+        RegexOption.IGNORE_CASE
+    )
+
     private val propertyRules = arrayOf(
             CreatedPropertyRule(),      // make sure CREATED is UTC
             DatePropertyRule(),
@@ -71,6 +89,39 @@ object ICalPreprocessor {
         // not modified, return original iCalendar
         reader.reset()
         return reader
+    }
+
+
+    /**
+     * ical4j 3 passes a duration with days or a time to [java.time.Duration.parse], which can't
+     * read weeks, so a single `TRIGGER:-P1W2DT15H` made the whole iCalendar unparseable
+     * (DateTimeParseException) and stopped the calendar's sync.
+     *
+     * Rewrites such durations (see [WEEK_DURATION_REGEXP]) with the weeks as days, in upper case
+     * so that ical4j reads whole days as a [java.time.Period] like any other `P…D` value. A week is
+     * always 7 days in iCalendar, so the length stays the same. When something is rewritten, the
+     * returned iCalendar is unfolded, which ical4j does anyway; otherwise it's the original text.
+     *
+     * @param reader Reader that reads the potentially broken iCalendar (which for instance contains `TRIGGER:-P1W2DT15H`)
+     * @return Reader that reads the fixed iCalendar (for instance `TRIGGER:-P9DT15H`)
+     */
+    fun fixWeekDurations(reader: Reader): Reader {
+        val original = reader.readText()
+        val unfolded = original.replace(FOLD_REGEXP, "")
+        if (!WEEK_DURATION_REGEXP.containsMatchIn(unfolded))
+            return StringReader(original)
+
+        return StringReader(unfolded.replace(WEEK_DURATION_REGEXP) {
+            val days = runCatching {
+                Math.addExact(Math.multiplyExact(it.groupValues[3].toLong(), 7L), it.groupValues[4].ifEmpty { "0" }.toLong())
+            }.getOrNull()
+            if (days == null)
+                it.value        // too large to rewrite, leave it to ical4j
+            else {
+                Ical4Android.log.log(Level.FINE, "Rewriting weeks as days in duration", it.value)
+                "${it.groupValues[1]}${it.groupValues[2]}P${days}D${it.groupValues[5].uppercase()}"
+            }
+        })
     }
 
 
