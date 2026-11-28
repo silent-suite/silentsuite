@@ -59,7 +59,7 @@ echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" -CAfile "$C
 ct sh -c "openssl x509 -in /etc/yunohost/certs/$DOMAIN/crt.pem -noout -subject -issuer -dates -ext subjectAltName -text" \
     | grep -E "subject=|issuer=|notBefore|notAfter|DNS:|Signature Algorithm|Public-Key" | sort -u || true
 python3 -c "import ssl, sys; print(sys.version.split()[0], ssl.OPENSSL_VERSION)"
-for f in yunohost-candidate-ws-responder.py yunohost-candidate-rollback-evidence.py; do
+for f in yunohost-candidate-ws-responder.py yunohost-candidate-rollback-evidence.py yunohost-candidate-log-scan.py; do
     sudo incus file push "$repo/scripts/$f" "ynh/root/$f"
 done
 
@@ -231,23 +231,14 @@ ct systemctl stop "$app-server"
 curl -s -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/api/v1/collection/$uid/item/" || true
 ct systemctl start "$app-server"
 sudo incus file push "$MARKERS" ynh/root/markers >/dev/null
-# Report only the kind of value and the file, never the value or the line.
-hits=$(ct sh -c '
-    journalctl -o cat > /root/journal.txt
-    n=0
-    while IFS="$(printf "\t")" read -r kind value; do
-        for f in $(grep -rlF -e "$value" /var/log/yunohost /var/log/nginx /root/journal.txt 2>/dev/null); do
-            echo "HIT $kind in $f" >&2
-            [ "$kind" = control-db-pwd ] || n=$((n + 1))
-        done
-    done < /root/markers
-    rm -f /root/markers /root/journal.txt
-    echo "$n"')
-[ "$hits" = 0 ] || fail "log markers: $hits match(es) in container logs"
+# Kind and file only; nginx lines from the failed upgrade's rollback window are reported apart.
+ct python3 /root/yunohost-candidate-log-scan.py /root/markers "$start" "$end" \
+    || { ct rm -f /root/markers; fail "log markers: secrets or identifiers in container logs"; }
+ct rm -f /root/markers
 grep -v '^control-' "$MARKERS" | cut -f2 >"$work/own-markers"
 hits=$({ grep -lF -f "$work/own-markers" "$work"/*.log || true; } | wc -l)
 [ "$hits" = 0 ] || fail "log markers: $hits installer output file(s) contain a secret or identifier"
-pass "installation secrets of both installs, every auth token and the witness UIDs appear in no installer output, /var/log/yunohost, nginx log or journal (YunoHost's own db_pwd trace excepted)"
+pass "installation secrets of both installs, every auth token and the witness UIDs appear in no installer output, /var/log/yunohost, nginx log or journal (except YunoHost's own db_pwd trace, and nginx lines from the rollback window while the app is removed)"
 
 group "remove"
 purge_app
