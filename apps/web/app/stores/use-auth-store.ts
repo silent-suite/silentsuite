@@ -1145,7 +1145,11 @@ function clearSignupInProgressMarker() {
   }
 }
 
-async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth', ownerCurrent?: (epoch: number) => boolean) {
+async function clearLocalAuthMaterial(
+  reason: 'logout' | 'invalid-hosted-auth',
+  ownerCurrent?: (epoch: number) => boolean,
+  { keepLocalData = false }: { keepLocalData?: boolean } = {},
+) {
   // The reset assigns this cleanup's own invalidation token before yielding;
   // later teardown may only replace it with the token that teardown produced.
   const owner: AccountBoundaryOwner = { epoch: getAccountEpoch(), etebaseDestroyed: false }
@@ -1171,18 +1175,23 @@ async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth', 
     }
   }
 
-  try {
-    if (!current()) return
-    await clearLocalDataCache()
-  } catch (err) {
-    logger.warn(`[auth-store] Failed to clear local data cache during ${reason}:`, err)
-  }
+  // keepLocalData: a Billing outage, not a rejection. The queue holds only the
+  // verified account's work and the cache is erased on the next restore if a
+  // different account signs in, so both survive for the retry.
+  if (!keepLocalData) {
+    try {
+      if (!current()) return
+      await clearLocalDataCache()
+    } catch (err) {
+      logger.warn(`[auth-store] Failed to clear local data cache during ${reason}:`, err)
+    }
 
-  try {
-    if (!current()) return
-    await clearOfflineQueue()
-  } catch (err) {
-    logger.warn(`[auth-store] Failed to clear offline queue during ${reason}:`, err)
+    try {
+      if (!current()) return
+      await clearOfflineQueue()
+    } catch (err) {
+      logger.warn(`[auth-store] Failed to clear offline queue during ${reason}:`, err)
+    }
   }
 
   try {
@@ -2019,9 +2028,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         credentials: 'include',
       })
 
-      if (res.status === 429) {
-        await clearLocalAuthMaterial('invalid-hosted-auth')
-        set({ isLoading: false, error: AUTH_RATE_LIMIT_MESSAGE }); return
+      // Rate limit or Billing outage: the credentials were fine, so the session
+      // is dropped but queued work and the cache are kept for the retry.
+      if (res.status === 429 || res.status >= 500) {
+        await clearLocalAuthMaterial('invalid-hosted-auth', undefined, { keepLocalData: true })
+        set({ isLoading: false, error: res.status === 429 ? AUTH_RATE_LIMIT_MESSAGE : AUTH_TEMPORARY_UNAVAILABLE_MESSAGE }); return
       }
       if (res.status === 404 || res.status === 409) {
         await clearLocalAuthMaterial('invalid-hosted-auth')
