@@ -650,6 +650,21 @@ describe('ContactsPage birthdays without a year', () => {
     expect(storeMock.contactState.createContact).toHaveBeenCalledWith(expect.objectContaining({ birthday: '1990-05-14' }))
   })
 
+  it('saves no birthday when "No year" is turned off again in a new contact', async () => {
+    renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'New Contact' }))
+    const form = screen.getByRole('dialog', { name: 'New Contact' })
+    fireEvent.change(within(form).getByRole('textbox', { name: 'Given name' }), { target: { value: 'Grace' } })
+    const noYear = within(form).getByRole('checkbox', { name: 'No year' })
+    fireEvent.click(noYear)
+    fireEvent.change(within(form).getByLabelText('Birthday'), { target: { value: '2000-05-14' } })
+    fireEvent.click(noYear)
+    expect(within(form).getByLabelText('Birthday')).toHaveValue('')
+    fireEvent.click(within(form).getByRole('button', { name: 'Save Contact' }))
+    await waitFor(() => expect(storeMock.contactState.createContact).toHaveBeenCalledTimes(1))
+    expect(storeMock.contactState.createContact).toHaveBeenCalledWith(expect.objectContaining({ birthday: null }))
+  })
+
   it('shows an existing birthday without a year in the editor and keeps it yearless', () => {
     renderWithIntl(<ContactsPage />)
     fireEvent.click(screen.getByText('Lin'))

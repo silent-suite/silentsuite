@@ -581,7 +581,7 @@ function ContactForm({
           {/* Birthday & Notes */}
           <fieldset className="space-y-2">
             <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Personal</legend>
-            <BirthdayInput value={birthday} onChange={setBirthday} />
+            <BirthdayInput value={birthday} onChange={setBirthday} onYearlessCleared={() => setBirthday('')} />
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" aria-label="Notes" rows={3} className={`${INPUT_CLASS} resize-none`} />
           </fieldset>
 
@@ -730,10 +730,12 @@ const NO_YEAR_PICKER_YEAR = '2000'
  * year is never saved. Turning "No year" off clears the picker rather than keeping
  * 2000, and any other stored value stays as it is until a date is picked.
  */
-function BirthdayInput({ value, onChange, onDateBlur }: {
+function BirthdayInput({ value, onChange, onDateBlur, onYearlessCleared }: {
   value: string
   onChange: (value: string, fromCheckbox: boolean) => void
   onDateBlur?: () => void
+  /** "No year" was turned off on a yearless birthday, so the picker is now empty. */
+  onYearlessCleared?: () => void
 }) {
   const yearless = YEARLESS_BIRTHDAY.exec(value)
   const [noYear, setNoYear] = useState(!!yearless)
@@ -760,8 +762,10 @@ function BirthdayInput({ value, onChange, onDateBlur }: {
           onChange={(e) => {
             const withoutYear = e.target.checked
             setNoYear(withoutYear)
-            // A yearless birthday has no year to restore: wait for a picked date.
-            if (!yearless && /^\d{4}-\d{2}-\d{2}$/.test(value)) onChange(toValue(value, withoutYear), true)
+            // A yearless birthday has no year to restore: the picker clears, a
+            // draft follows it (onYearlessCleared), the editor waits for a date.
+            if (yearless && !withoutYear) onYearlessCleared?.()
+            else if (!yearless && /^\d{4}-\d{2}-\d{2}$/.test(value)) onChange(toValue(value, withoutYear), true)
           }}
         />
         No year
