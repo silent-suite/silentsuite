@@ -713,6 +713,27 @@ jobs:
       - name: Provision the pinned reproducible JDK
         run: scripts/reproducible-build-contract.sh provision-jdk
 
+      # Debug builds carry a static copy of the web app's login and calendar pages
+      # (apps/web/android-bundle/README.md). It is built here, before any debug
+      # packaging; release builds never read it. Its own checks, including the
+      # double build, run in android-web-bundle.yml.
+      - name: Setup pnpm for the web bundle
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js for the web bundle
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.5'
+          cache: 'pnpm'
+
+      - name: Build the web bundle for debug builds
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          node apps/web/android-bundle/build.mjs
+          test -s apps/web/android-bundle/dist/webapp/manifest.json
+
       - name: Run debug unit tests, lint, and assemble instrumentation APKs
         # Assemble each Android module's androidTest APK so AGP merges and
         # validates its instrumentation manifest. Runtime coverage stays
@@ -803,6 +824,27 @@ jobs:
               exit 1
             }
           done
+
+      - name: Verify the web bundle is in the debug APK only
+        run: |
+          set -euo pipefail
+          debug_apk=(app/build/outputs/apk/debug/*.apk)
+          unzip -Z1 "${debug_apk[0]}" | grep -Fxq 'assets/webapp/manifest.json'
+          bundled=$(unzip -Z1 "${debug_apk[0]}" | grep -c '^assets/webapp/files/')
+          manifest=$(find "$GITHUB_WORKSPACE/apps/web/android-bundle/dist/webapp/files" -type f | wc -l)
+          [[ "$bundled" -eq "$manifest" ]] || { echo "debug APK carries $bundled bundle files, expected $manifest" >&2; exit 1; }
+          for artifact in app/build/outputs/apk/release/*.apk app/build/outputs/bundle/release/*.aab; do
+            if unzip -Z1 "$artifact" | grep -q 'assets/webapp/'; then
+              echo "::error::$artifact carries the web bundle; only debug builds may" >&2
+              exit 1
+            fi
+          done
+          if grep -q 'androidx.webkit' build/privacy-evidence/dependencies/release-runtime.txt; then
+            echo "::error::the release classpath carries androidx.webkit; it is a debug-only dependency" >&2
+            exit 1
+          fi
+          ls -l "${debug_apk[0]}" app/build/outputs/apk/release/*.apk
+          du -sh "$GITHUB_WORKSPACE/apps/web/android-bundle/dist/webapp"
 
       - name: Generate universal split set from unsigned AAB
         env:

@@ -1,0 +1,99 @@
+name: Android web bundle
+
+# The static copy of the web app that Android debug builds carry
+# (apps/web/android-bundle/README.md). This workflow checks the bundle itself
+# whenever one of its inputs changes: what it contains, that two builds of one
+# commit are byte-identical, and that it carries no tracker signature. The
+# debug APK that packages it is built by build-android.yml.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'patches/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'android/scripts/scan-tracker-signatures.py'
+      - 'android/security/tracker-signatures.json'
+      - '.github/workflows/android-web-bundle.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'patches/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'android/scripts/scan-tracker-signatures.py'
+      - 'android/security/tracker-signatures.json'
+      - '.github/workflows/android-web-bundle.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: Build and check the Android web bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.5'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check the bundle rules
+        run: node --test apps/web/android-bundle/bundle-contract.test.mjs
+
+      - name: Build the bundle
+        run: |
+          set -euo pipefail
+          node apps/web/android-bundle/build.mjs
+          cp -r apps/web/android-bundle/dist "$RUNNER_TEMP/first-build"
+
+      - name: Build it again and compare
+        run: |
+          set -euo pipefail
+          rm -rf apps/web/.next
+          node apps/web/android-bundle/build.mjs
+          diff -r "$RUNNER_TEMP/first-build" apps/web/android-bundle/dist
+          sha256sum apps/web/android-bundle/dist/webapp/manifest.json
+
+      - name: Verify the packaged bundle
+        run: node apps/web/android-bundle/verify.mjs
+
+      - name: Scan the bundle for tracker signatures
+        run: |
+          python3 android/scripts/scan-tracker-signatures.py \
+            --manifest android/security/tracker-signatures.json \
+            --summary "$RUNNER_TEMP/web-bundle-tracker-scan.json" \
+            apps/web/android-bundle/dist
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-web-bundle-${{ github.sha }}
+          path: apps/web/android-bundle/dist/webapp
+          if-no-files-found: error
+          retention-days: 14
