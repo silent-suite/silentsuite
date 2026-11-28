@@ -803,14 +803,18 @@ export function EventDialog({
         setScopeDialog(null)
         onClose()
       } else if (scopeDialog.mode === 'edit' && scopeDialog.pendingPatch) {
+        const patch = scope === 'all'
+          ? (scopeDialog.seriesPatch ?? scopeDialog.pendingPatch)
+          : scope === 'this_and_future'
+            ? (scopeDialog.futurePatch ?? scopeDialog.pendingPatch)
+            : scopeDialog.pendingPatch
+        // Nothing for the series to take (a time edit of an occurrence in its own form): only this
+        // occurrence changes, rather than an empty series update or a split.
+        const seriesUntouched = scope !== 'this' && Object.keys(patch).length === 0
         void updateRecurringEvent(
           event.id,
-          scope === 'all'
-            ? (scopeDialog.seriesPatch ?? scopeDialog.pendingPatch)
-            : scope === 'this_and_future'
-              ? (scopeDialog.futurePatch ?? scopeDialog.pendingPatch)
-              : scopeDialog.pendingPatch,
-          scope,
+          seriesUntouched ? scopeDialog.pendingPatch : patch,
+          seriesUntouched ? 'this' : scope,
           effectiveInstanceDate,
         )
         setScopeDialog(null)

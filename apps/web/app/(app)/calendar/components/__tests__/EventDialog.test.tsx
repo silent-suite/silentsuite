@@ -1243,6 +1243,21 @@ describe('EventDialog opens a moved occurrence in its own time form', () => {
 
     expect(mocks.updateRecurringEvent.mock.calls[0]![1]).toEqual(expected)
   })
+
+  it.each([
+    [/All events/],
+    [/This and all future/],
+  ] as const)('a time-only edit for %s changes only that occurrence and leaves the series alone', async (scopeName) => {
+    renderWithIntl(<EventDialog mode="edit" event={series()} instanceDate={moved} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('End time'), { target: { value: '16:30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    const scopeDialog = await screen.findByRole('dialog', { name: 'Edit recurring event' })
+    fireEvent.click(within(scopeDialog).getByRole('button', { name: scopeName }))
+    await waitFor(() => expect(mocks.updateRecurringEvent).toHaveBeenCalledTimes(1))
+
+    const [, patch, scope, instance] = mocks.updateRecurringEvent.mock.calls[0]!
+    expect([patch, scope, instance]).toEqual([{ endDate: new Date('2027-03-15T16:30:00Z') }, 'this', moved])
+  })
 })
 
 // WEB-04: a create that is not saved keeps the dialog and its input.
