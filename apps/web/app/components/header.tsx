@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
+import { isAndroidBundle } from '@/app/lib/android-bundle'
 import { useTranslations } from 'next-intl'
 import { LogOut, Menu, Settings, Lock } from 'lucide-react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -63,7 +64,7 @@ export function Header() {
   // Auto-focus first menu item on open
   useEffect(() => {
     if (menuOpen) {
-      requestAnimationFrame(() => menuItemsRef.current[0]?.focus())
+      requestAnimationFrame(() => menuItemsRef.current.find(Boolean)?.focus())
     }
   }, [menuOpen])
 
@@ -155,7 +156,7 @@ export function Header() {
                   {user?.email}
                 </p>
               </div>
-              <Link
+              {!isAndroidBundle && <Link
                 ref={(el) => { menuItemsRef.current[0] = el }}
                 href="/settings/account"
                 onClick={() => setMenuOpen(false)}
@@ -165,7 +166,7 @@ export function Header() {
               >
                 <Settings className="h-4 w-4" />
                 Account settings
-              </Link>
+              </Link>}
               <button
                 ref={(el) => { menuItemsRef.current[1] = el }}
                 onClick={() => {

@@ -1,1 +1,10 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application><activity android:name="io.silentsuite.sync.ui.setup.StaleLoginHarnessActivity" android:exported="false" /></application></manifest>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application><activity android:name="io.silentsuite.sync.ui.setup.StaleLoginHarnessActivity" android:exported="false" />
+        <!-- Debug builds only. Exported so `adb shell am start` can open it; it reads one
+             extra, an account name it looks up among the app's own accounts. -->
+        <activity
+            android:name="io.silentsuite.sync.ui.webapp.WebAppActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:windowSoftInputMode="adjustResize" />
+</application></manifest>

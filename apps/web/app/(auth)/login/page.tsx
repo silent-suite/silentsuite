@@ -12,6 +12,7 @@ import { Input } from '@silentsuite/ui'
 import { AUTH_REFRESH_RETRY_MESSAGE, useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/lib/server-url'
 import { safeReturnTo } from '@/app/lib/login-return'
+import { androidBoundAccount, isAndroidBundle, isLoginAllowedForAndroidAccount } from '@/app/lib/android-bundle'
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -33,6 +34,8 @@ export default function LoginPage() {
   const {
     register,
     handleSubmit,
+    setError,
+    setValue,
     formState: { errors },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema) as any,
@@ -53,6 +56,14 @@ export default function LoginPage() {
     return () => clearError()
   }, [clearError])
 
+  // Inside the Android app this view belongs to one Android account.
+  const [androidAccount, setAndroidAccount] = useState<string | null>(null)
+  useEffect(() => {
+    const bound = androidBoundAccount()
+    setAndroidAccount(bound)
+    if (bound) setValue('email', bound)
+  }, [setValue])
+
   // The automatic restore gave up on a transient refresh problem: offer the
   // same restore again, as the app runs it at startup. The form stays usable.
   const showRestoreRetry = !isAuthenticated && (isRetryingRestore || error === AUTH_REFRESH_RETRY_MESSAGE)
@@ -68,6 +79,14 @@ export default function LoginPage() {
   }
 
   const onSubmit = async (data: LoginFormData) => {
+    if (!isLoginAllowedForAndroidAccount(data.email, androidAccount)) {
+      setError('email', {
+        message: androidAccount
+          ? `Sign in as ${androidAccount}, the account selected in the app.`
+          : 'Open this screen from the SilentSuite app.',
+      })
+      return
+    }
     const useHostedBilling = !serverUrl.trim()
     const normalizedUrl = useHostedBilling ? undefined : normalizeServerUrl(serverUrl)
     // The store saves this server selection only after the credentials are
@@ -127,6 +146,7 @@ export default function LoginPage() {
             id="email"
             type="email"
             autoFocus
+            readOnly={isAndroidBundle && androidAccount !== null}
             aria-invalid={!!errors.email}
             aria-describedby={errors.email ? 'email-error' : undefined}
             {...register('email')}
@@ -174,7 +194,7 @@ export default function LoginPage() {
         </Button>
 
         {/* Advanced Settings */}
-        <details className="group">
+        {!isAndroidBundle && <details className="group">
           <summary className="flex cursor-pointer items-center gap-2 text-xs text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors">
             <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
             Advanced Settings
@@ -194,15 +214,15 @@ export default function LoginPage() {
               Leave empty to use the default silentsuite.io server. Self-hosters: enter your own server URL.
             </p>
           </div>
-        </details>
+        </details>}
       </form>
 
-      <p className="text-center text-sm text-[rgb(var(--muted))]">
+      {!isAndroidBundle && <p className="text-center text-sm text-[rgb(var(--muted))]">
         Don&apos;t have an account?{' '}
         <Link href="/signup" className="text-emerald-500 hover:underline">
           Sign up
         </Link>
-      </p>
+      </p>}
     </div>
   )
 }

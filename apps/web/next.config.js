@@ -6,7 +6,13 @@ const { glitchtipSourceMapUpload } = require('./sentry-build-options')
 const { runtimeCachingBeforeDefaults } = require('./pwa-runtime-caching')
 const { plainDecodeEntityPlugin } = require('./note-markdown-worker-webpack')
 
-const withNextIntl = createNextIntlPlugin('./i18n/request.ts')
+// The Android app bundles a static copy of the login and calendar pages (see
+// android-bundle/README.md). That build has no server: no route handlers, no
+// middleware, no cookie-read locale, no service worker and no error reporter.
+// Without this variable nothing below changes for the hosted or self-hosted app.
+const androidBundle = process.env.SILENTSUITE_ANDROID_BUNDLE === '1'
+
+const withNextIntl = createNextIntlPlugin(androidBundle ? './i18n/request.android.ts' : './i18n/request.ts')
 // `https:` lets users reach their own Etebase server on any host, port or base path.
 // It also admits every other HTTPS origin, so these routes no longer deny analytics via CSP.
 // `data:` covers libsodium fetching its embedded base64 WASM; the edge policy needs it too.
@@ -29,12 +35,24 @@ function resolveEtebase() {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  output: androidBundle ? 'export' : 'standalone',
+  ...(androidBundle
+    ? {
+        // Only .tsx files are routes here, which leaves out app/api/**/route.ts
+        // and middleware.ts; a static export cannot carry either.
+        pageExtensions: ['tsx', 'jsx'],
+        trailingSlash: true,
+        images: { unoptimized: true },
+        // A fixed ID keeps two builds of one commit byte-identical.
+        generateBuildId: () => 'android-bundle',
+      }
+    : {}),
   // Both browser telemetry gates are inlined as literals, so a build without
   // them carries neither the error reporter nor the speed reporter.
   env: {
     NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN ?? '',
     NEXT_PUBLIC_WEB_VITALS_ENABLED: process.env.NEXT_PUBLIC_WEB_VITALS_ENABLED === 'true' ? 'true' : 'false',
+    NEXT_PUBLIC_ANDROID_BUNDLE: androidBundle ? 'true' : 'false',
   },
   eslint: {
     // ESLint runs as a separate CI step; skip during builds
@@ -42,6 +60,8 @@ const nextConfig = {
   },
   transpilePackages: ['@silentsuite/ui', '@silentsuite/core'],
   async headers() {
+    // The Android app sets its own policy on every bundled response.
+    if (androidBundle) return []
     if (process.env.NEXT_PUBLIC_SELF_HOSTED === 'true') return []
     return [
       {
@@ -65,6 +85,7 @@ const nextConfig = {
     config.resolve.alias = {
       ...config.resolve.alias,
       etebase: resolveEtebase(),
+      ...(androidBundle ? { '@sentry/nextjs$': path.join(__dirname, 'android-bundle', 'sentry-stub.js') } : {}),
     }
     // The Notes preview's worker has no `document`; see the file.
     config.plugins.push(plainDecodeEntityPlugin(webpack))
@@ -74,7 +95,7 @@ const nextConfig = {
 
 const pwaConfig = withPWA({
   dest: 'public',
-  disable: process.env.NODE_ENV === 'development',
+  disable: process.env.NODE_ENV === 'development' || androidBundle,
   register: true,
   skipWaiting: true,
   // A reload on reconnect would erase drafts the app keeps only in memory, such as
@@ -91,7 +112,7 @@ const pwaConfig = withPWA({
   },
 })(withNextIntl(nextConfig))
 
-module.exports = withSentryConfig(pwaConfig, {
+module.exports = androidBundle ? pwaConfig : withSentryConfig(pwaConfig, {
   silent: true,
   // The build plugin sends no usage data of its own.
   telemetry: false,

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "origin": "https://app.silentsuite.io",
+  "startPath": "/login/",
+  "notFoundPath": "/404.html",
+  "syncServerOrigin": "https://server.silentsuite.io",
+  "connectOrigins": [
+    "https://server.silentsuite.io",
+    "https://api.silentsuite.io"
+  ],
+  "files": {
+    "/404.html": {
+      "asset": "files/8e5128785886b208bc61bcf29d9f522f323e35840017d3c272f15b94ed939218.html",
+      "contentType": "text/html",
+      "sha256": "8e5128785886b208bc61bcf29d9f522f323e35840017d3c272f15b94ed939218",
+      "contentSecurityPolicy": "default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-8R2OruAU0dzq3+qPHHU0vyG2N9jKl2+Jhcyjrmj8FGY='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: https://server.silentsuite.io wss://server.silentsuite.io https://api.silentsuite.io; worker-src 'self' blob:; manifest-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    },
+    "/calendar/": {
+      "asset": "files/7e2c877735e9bc2d89323218390841d92f6651e951cc2d776132f893a44c0008.html",
+      "contentType": "text/html",
+      "sha256": "7e2c877735e9bc2d89323218390841d92f6651e951cc2d776132f893a44c0008",
+      "contentSecurityPolicy": "default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-8R2OruAU0dzq3+qPHHU0vyG2N9jKl2+Jhcyjrmj8FGY='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: https://server.silentsuite.io wss://server.silentsuite.io https://api.silentsuite.io; worker-src 'self' blob:; manifest-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    },
+    "/login/": {
+      "asset": "files/b4481e8a3397a6695f35ab0d6d7856cec9d1f92ae22fd0925eb62abd785c4267.html",
+      "contentType": "text/html",
+      "sha256": "b4481e8a3397a6695f35ab0d6d7856cec9d1f92ae22fd0925eb62abd785c4267",
+      "contentSecurityPolicy": "default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-8R2OruAU0dzq3+qPHHU0vyG2N9jKl2+Jhcyjrmj8FGY='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: https://server.silentsuite.io wss://server.silentsuite.io https://api.silentsuite.io; worker-src 'self' blob:; manifest-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    },
+    "/probe.js": {
+      "asset": "files/438d6c70ef88ee24981e0ba693c7defda653f9ac08376d2d4a68c4ce67786186.js",
+      "contentType": "text/javascript",
+      "sha256": "438d6c70ef88ee24981e0ba693c7defda653f9ac08376d2d4a68c4ce67786186"
+    }
+  }
+}

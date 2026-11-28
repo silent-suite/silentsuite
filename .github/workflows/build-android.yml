@@ -14,7 +14,16 @@ on:
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
+      # Debug builds package a static copy of the web app (apps/web/android-bundle),
+      # so the web app and everything its install reads are build inputs too.
+      - 'apps/web/**'
       - 'apps/web/app/globals.css'
+      - 'packages/**'
+      - 'patches/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.npmrc'
       - 'runbooks/android-release.md'
       - 'scripts/check-android-signing-boundary.py'
       - '.github/workflows/**'
@@ -23,7 +32,16 @@ on:
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
+      # Debug builds package a static copy of the web app (apps/web/android-bundle),
+      # so the web app and everything its install reads are build inputs too.
+      - 'apps/web/**'
       - 'apps/web/app/globals.css'
+      - 'packages/**'
+      - 'patches/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.npmrc'
       - 'runbooks/android-release.md'
       - 'scripts/check-android-signing-boundary.py'
       - '.github/workflows/**'
@@ -107,8 +125,9 @@ jobs:
 
   # The trigger stays broad so the static contracts and the signing boundary see
   # every workflow change. Everything that builds or runs the app waits for this
-  # job and runs only when the change touches what those jobs read: android/**
-  # and this workflow. Jobs that need conscrypt-r28 or etebase-16kb skip with
+  # job and runs only when the change touches what those jobs read: android/**,
+  # this workflow, and the web app with its install inputs (debug builds package
+  # a static copy of it, apps/web/android-bundle). Jobs that need conscrypt-r28 or etebase-16kb skip with
   # them. Manual dispatches, and pushes whose base cannot be read, build
   # everything.
   #
@@ -156,7 +175,8 @@ jobs:
             # quoted names (non-ASCII, quotes, control characters) cannot slip
             # through. Exit 1: an Android input changed; 0: none did; other: fail.
             status=0
-            git diff --quiet --no-renames "$base" HEAD -- android .github/workflows/build-android.yml || status=$?
+            git diff --quiet --no-renames "$base" HEAD -- android .github/workflows/build-android.yml \
+              apps/web packages patches package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc || status=$?
             case "$status" in
               0) android=false ;;
               1) ;;
@@ -713,6 +733,27 @@ jobs:
       - name: Provision the pinned reproducible JDK
         run: scripts/reproducible-build-contract.sh provision-jdk
 
+      # Debug builds carry a static copy of the web app's login and calendar pages
+      # (apps/web/android-bundle/README.md). It is built here, before any debug
+      # packaging; release builds never read it. Its own checks, including the
+      # double build, run in android-web-bundle.yml.
+      - name: Setup pnpm for the web bundle
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js for the web bundle
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.5'
+          cache: 'pnpm'
+
+      - name: Build the web bundle for debug builds
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          node apps/web/android-bundle/build.mjs
+          test -s apps/web/android-bundle/dist/webapp/manifest.json
+
       - name: Run debug unit tests, lint, and assemble instrumentation APKs
         # Assemble each Android module's androidTest APK so AGP merges and
         # validates its instrumentation manifest. Runtime coverage stays
@@ -803,6 +844,33 @@ jobs:
               exit 1
             }
           done
+
+      - name: Verify the web bundle is in the debug APK only
+        run: |
+          set -euo pipefail
+          # Each listing is written out in full first: a grep that stops early
+          # would otherwise end unzip with a broken pipe and hide its own result.
+          debug_apk=(app/build/outputs/apk/debug/*.apk)
+          unzip -Z1 "${debug_apk[0]}" > "$RUNNER_TEMP/debug-apk-listing.txt"
+          grep -Fxq 'assets/webapp/manifest.json' "$RUNNER_TEMP/debug-apk-listing.txt"
+          bundled=$(grep -c '^assets/webapp/files/' "$RUNNER_TEMP/debug-apk-listing.txt")
+          manifest=$(find "$GITHUB_WORKSPACE/apps/web/android-bundle/dist/webapp/files" -type f | wc -l)
+          [[ "$bundled" -eq "$manifest" ]] || { echo "debug APK carries $bundled bundle files, expected $manifest" >&2; exit 1; }
+          for artifact in app/build/outputs/apk/release/*.apk app/build/outputs/bundle/release/*.aab; do
+            unzip -Z1 "$artifact" > "$RUNNER_TEMP/release-listing.txt"
+            test -s "$RUNNER_TEMP/release-listing.txt"
+            if grep -q '^assets/webapp/' "$RUNNER_TEMP/release-listing.txt"; then
+              echo "::error::$artifact carries the web bundle; only debug builds may" >&2
+              exit 1
+            fi
+          done
+          test -s build/privacy-evidence/dependencies/release-runtime.txt
+          if grep -q 'androidx.webkit' build/privacy-evidence/dependencies/release-runtime.txt; then
+            echo "::error::the release classpath carries androidx.webkit; it is a debug-only dependency" >&2
+            exit 1
+          fi
+          ls -l "${debug_apk[0]}" app/build/outputs/apk/release/*.apk
+          du -sh "$GITHUB_WORKSPACE/apps/web/android-bundle/dist/webapp"
 
       - name: Generate universal split set from unsigned AAB
         env:

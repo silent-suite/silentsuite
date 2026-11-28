@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import { CalendarDays, CheckSquare, StickyNote, Users, Settings } from 'lucide-react'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
+import { isAndroidBundle } from '@/app/lib/android-bundle'
 
 const items = [
   { href: '/calendar', labelKey: 'calendar', icon: CalendarDays },
@@ -18,6 +19,9 @@ export function BottomNav() {
   const notesEnabled = useNotesEnabled()
   const t = useTranslations('Navigation')
   const pathname = usePathname()
+
+  // The Android bundle has the calendar only, so there is nothing to switch between.
+  if (isAndroidBundle) return null
 
   return (
     <nav
