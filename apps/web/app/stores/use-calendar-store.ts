@@ -13,7 +13,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
-import { getAccountEpoch } from '@/app/lib/account-epoch'
+import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { selectManagedBirthdayCalendarIds, useBirthdayMarkerStore } from '@/app/lib/birthday-calendar/markers'
 import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard, isOfflineQueueBoundaryCancellation } from '@/app/lib/offline-queue-account'
 
@@ -182,6 +182,36 @@ function untilBeforeOccurrence(master: CalendarEvent, instanceDate: Date): strin
   return untilTimeBefore(instanceDate, timeZone, wallClock)
 }
 
+/**
+ * Creates still waiting for the server, keyed by the temporary local id. Each resolves to the
+ * acknowledged item UID, or null when the create was not acknowledged (queued offline or failed).
+ */
+const savingCreates = new Map<string, Promise<string | null>>()
+
+/** Mark a create of `tempId` as pending; call the result once the local id was replaced. */
+function trackCreate(tempId: string): (itemUid: string | null) => void {
+  let settle!: (itemUid: string | null) => void
+  savingCreates.set(tempId, new Promise((resolve) => { settle = resolve }))
+  return (itemUid) => {
+    savingCreates.delete(tempId)
+    settle(itemUid)
+  }
+}
+
+/**
+ * The id to sync an edit or delete under. An event edited while its create is still in flight has
+ * only a temporary id with no Etebase item behind it yet, so wait for the create and use the item
+ * UID it was given (the temporary id if the create was not acknowledged). Without a pending create
+ * this returns the id synchronously: the caller must not yield before capturing its account. After
+ * a wait, the caller must still check that its account epoch is current before reading any account
+ * state.
+ */
+function syncTargetId(id: string): string | Promise<string> {
+  const saving = savingCreates.get(id)
+  if (!saving) return id
+  return saving.then((itemUid) => itemUid ?? id)
+}
+
 /** Sync a single event to Etebase (used by create/update helpers) */
 async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update', tempId?: string, sourceCalendarId?: string): Promise<string | null> {
   const etebase = useEtebaseStore.getState()
@@ -328,16 +358,22 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     if (!etebase.account) return withdraw(false)
 
     // Sync to Etebase (pass tempId for offline queue mapping)
-    const itemUid = await syncEventToEtebase(event, 'create', tempId)
-    if (itemUid) {
-      void useLabelSuggestionsStore.getState().recordUsage('calendar', event.categories ?? [])
-      set((state) => ({
-        events: state.events.map((e) =>
-          e.id === tempId ? { ...e, id: itemUid } : e,
-        ),
-      }))
-      return { ...event, id: itemUid }
+    const settleCreate = trackCreate(tempId)
+    let itemUid: string | null = null
+    try {
+      itemUid = await syncEventToEtebase(event, 'create', tempId)
+      if (itemUid) {
+        void useLabelSuggestionsStore.getState().recordUsage('calendar', event.categories ?? [])
+        set((state) => ({
+          events: state.events.map((e) =>
+            e.id === tempId ? { ...e, id: itemUid! } : e,
+          ),
+        }))
+      }
+    } finally {
+      settleCreate(itemUid)
     }
+    if (itemUid) return { ...event, id: itemUid }
 
     // Not acknowledged. A create admitted to the offline queue is durable local custody awaiting
     // replay, so the temp event stays; anything else may or may not exist remotely.
@@ -368,14 +404,19 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     next[index] = updated
     set({ events: next })
 
+    // Wait for a pending create (see syncTargetId); drop the sync if the account changed.
+    const accountEpoch = getAccountEpoch()
+    const target = syncTargetId(id)
+    const targetId = typeof target === 'string' ? target : await target
+    if (!isCurrentAccountEpoch(accountEpoch)) return
     // Sync to Etebase
-    const syncedItemUid = await syncEventToEtebase(updated, 'update', undefined, events[index].calendarId)
-    if (syncedItemUid && syncedItemUid !== id) {
+    const syncedItemUid = await syncEventToEtebase({ ...updated, id: targetId }, 'update', undefined, events[index].calendarId)
+    if (syncedItemUid && syncedItemUid !== targetId) {
       set((state) => ({
         events: state.events.map((e) =>
-          e.id === id ? { ...e, id: syncedItemUid } : e,
+          e.id === targetId ? { ...e, id: syncedItemUid } : e,
         ),
-        selectedEventId: state.selectedEventId === id ? syncedItemUid : state.selectedEventId,
+        selectedEventId: state.selectedEventId === targetId ? syncedItemUid : state.selectedEventId,
       }))
     }
   },
@@ -387,15 +428,20 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     // Optimistic update
     set((state) => ({ events: state.events.filter((e) => e.id !== id) }))
 
+    // Wait for a pending create (see syncTargetId); drop the sync if the account changed.
+    const accountEpoch = getAccountEpoch()
+    const target = syncTargetId(id)
+    const targetId = typeof target === 'string' ? target : await target
+    if (!isCurrentAccountEpoch(accountEpoch)) return
     // Sync to Etebase
     const etebase = useEtebaseStore.getState()
     if (etebase.account) {
       const guard = captureOfflineQueueAccountGuard(etebase)
       if (!guard) return
-      const itemInCache = etebase.itemCache.has(id)
+      const itemInCache = etebase.itemCache.has(targetId)
       if (itemInCache) {
         try {
-          await etebase.deleteItem('calendar', id)
+          await etebase.deleteItem('calendar', targetId)
         } catch (err) {
           // If the error is a network/offline error, enqueue for later replay.
           // Non-offline errors are logged and the optimistic removal stands.
@@ -403,7 +449,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           try { assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState()) } catch { return }
           if (isOfflineError(err)) {
             try {
-              await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(id), itemUid: id }, guard)
+              await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(targetId), itemUid: targetId }, guard)
               assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
             } catch (queueError) {
               if (isOfflineQueueBoundaryCancellation(queueError)) return
@@ -443,10 +489,40 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
 
     const now = new Date()
 
+    /** Save a scoped edit: the master's new EXDATE or UNTIL, and the edited copy as a new item. */
+    const saveScopedEdit = async (updatedMaster: CalendarEvent, copy: CalendarEvent) => {
+      const next = [...events]
+      next[events.indexOf(master)] = updatedMaster
+      next.push(copy)
+      set({ events: next })
+
+      const settleCopy = trackCreate(copy.id)
+      let copyItemUid: string | null = null
+      try {
+        // Wait for a pending create (see syncTargetId); drop the sync if the account changed.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return
+
+        // Sync both changes to Etebase
+        await syncEventToEtebase({ ...updatedMaster, id: targetId }, 'update', undefined, master.calendarId)
+        copyItemUid = await syncEventToEtebase(copy, 'create')
+        if (copyItemUid) {
+          set((state) => ({
+            events: state.events.map((e) =>
+              e.id === copy.id ? { ...e, id: copyItemUid! } : e,
+            ),
+          }))
+        }
+      } finally {
+        settleCopy(copyItemUid)
+      }
+    }
+
     switch (scope) {
       case 'this': {
         // Add EXDATE to master event, create standalone modified event
-        const masterIndex = events.findIndex((e) => e.id === id)
         const updatedMaster = {
           ...master,
           exceptions: [...master.exceptions, instanceDate],
@@ -475,27 +551,12 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           created: now,
           updated: now,
         }
-        const next = [...events]
-        next[masterIndex] = updatedMaster
-        next.push(standaloneEvent)
-        set({ events: next })
-
-        // Sync both changes to Etebase
-        await syncEventToEtebase(updatedMaster, 'update', undefined, master.calendarId)
-        const newItemUid = await syncEventToEtebase(standaloneEvent, 'create')
-        if (newItemUid) {
-          set((state) => ({
-            events: state.events.map((e) =>
-              e.id === newTempId ? { ...e, id: newItemUid } : e,
-            ),
-          }))
-        }
+        await saveScopedEdit(updatedMaster, standaloneEvent)
         break
       }
       case 'this_and_future': {
         // End the master's RRULE just before instanceDate
         const until = untilBeforeOccurrence(master, instanceDate)
-        const masterIndex = events.findIndex((e) => e.id === id)
         // Retained RDATEs at or after the cut leave the original series with its RRULE.
         const retainedDates = splitRetainedRecurrenceDates(master, instanceDate)
         const updatedMaster = {
@@ -531,21 +592,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           updated: now,
         }
 
-        const next = [...events]
-        next[masterIndex] = updatedMaster
-        next.push(newRecurring)
-        set({ events: next })
-
-        // Sync both changes to Etebase
-        await syncEventToEtebase(updatedMaster, 'update', undefined, master.calendarId)
-        const newItemUid = await syncEventToEtebase(newRecurring, 'create')
-        if (newItemUid) {
-          set((state) => ({
-            events: state.events.map((e) =>
-              e.id === newTempId ? { ...e, id: newItemUid } : e,
-            ),
-          }))
-        }
+        await saveScopedEdit(updatedMaster, newRecurring)
         break
       }
       case 'all': {
@@ -556,14 +603,19 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         next[masterIndex] = updated
         set({ events: next })
 
+        // Wait for a pending create (see syncTargetId); drop the sync if the account changed.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         // Sync to Etebase
-        const movedItemUid = await syncEventToEtebase(updated, 'update', undefined, master.calendarId)
-        if (movedItemUid && movedItemUid !== id) {
+        const movedItemUid = await syncEventToEtebase({ ...updated, id: targetId }, 'update', undefined, master.calendarId)
+        if (movedItemUid && movedItemUid !== targetId) {
           set((state) => ({
             events: state.events.map((e) =>
-              e.id === id ? { ...e, id: movedItemUid } : e,
+              e.id === targetId ? { ...e, id: movedItemUid } : e,
             ),
-            selectedEventId: state.selectedEventId === id ? movedItemUid : state.selectedEventId,
+            selectedEventId: state.selectedEventId === targetId ? movedItemUid : state.selectedEventId,
           }))
         }
         break
@@ -599,8 +651,13 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         next[masterIndex] = updatedMaster
         set({ events: next })
 
+        // Wait for a pending create (see syncTargetId); drop the sync if the account changed.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         // Sync to Etebase
-        await syncEventToEtebase(updatedMaster, 'update')
+        await syncEventToEtebase({ ...updatedMaster, id: targetId }, 'update')
         break
       }
       case 'this_and_future': {
@@ -623,29 +680,39 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         next[masterIndex] = updatedMaster
         set({ events: next })
 
+        // Wait for a pending create (see syncTargetId); drop the sync if the account changed.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         // Sync to Etebase
-        await syncEventToEtebase(updatedMaster, 'update')
+        await syncEventToEtebase({ ...updatedMaster, id: targetId }, 'update')
         break
       }
       case 'all': {
         // Delete the master event entirely
         set({ events: events.filter((e) => e.id !== id) })
 
+        // Wait for a pending create (see syncTargetId); drop the sync if the account changed.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
           const guard = captureOfflineQueueAccountGuard(etebase)
           if (!guard) break
-          const itemInCache = etebase.itemCache.has(id)
+          const itemInCache = etebase.itemCache.has(targetId)
           if (itemInCache) {
             try {
-              await etebase.deleteItem('calendar', id)
+              await etebase.deleteItem('calendar', targetId)
             } catch (err) {
               const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
               try { assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState()) } catch { break }
               if (isOfflineError(err)) {
                 try {
-                  await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(id), itemUid: id }, guard)
+                  await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(targetId), itemUid: targetId }, guard)
                   assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
                 } catch (queueError) {
                   if (isOfflineQueueBoundaryCancellation(queueError)) break

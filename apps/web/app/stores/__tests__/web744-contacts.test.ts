@@ -469,6 +469,42 @@ describe('#744 the contact store saves through the captured record base', () => 
     expect(server.transactions.slice(sent).map((write) => write.deps?.map((dep: any) => dep.uid))).toEqual([[collection.uid]])
   })
 
+  async function replayedFavoriteAfterRefusedEdit() {
+    const shown = await shownSavedContact()
+    server.offline = true
+    await useContactStore.getState().setContactFavorite(shown.item.uid, true)
+    await useContactStore.getState().updateContact(shown.item.uid, { organization: 'Offline org 744' })
+    expect(saveStateOf(shown.item.uid)).toBe('refused')
+    server.offline = false
+    await replayQueue()
+    expect(await serverFavorite(shown.account, shown.collection, shown.item.uid)).toBe(true)
+    expect(await readAllRecords('silentsuite-offline-queue', 'mutations')).toEqual([])
+    // The refused draft stays shown and refused until a later save carries it.
+    expect([stored(shown.item.uid).organization, stored(shown.item.uid).favorite, saveStateOf(shown.item.uid)]).toEqual(['Offline org 744', true, 'refused'])
+    return shown
+  }
+
+  it('saves a later edit after a queued favorite replayed over a refused edit', async () => {
+    const { account, collection, item } = await replayedFavoriteAfterRefusedEdit()
+
+    expect(await useContactStore.getState().updateContact(item.uid, { notes: 'Later note 744' })).toBe(true)
+
+    const onServer = deserializeContact((await serverText(account, collection, item.uid))!)
+    expect([onServer.favorite, onServer.organization, onServer.notes]).toEqual([true, 'Offline org 744', 'Later note 744'])
+    const serverItem = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+    expect([stored(item.uid).revision, saveStateOf(item.uid)]).toEqual([serverItem.etag, undefined])
+  })
+
+  it('deletes a contact after a queued favorite replayed over a refused edit', async () => {
+    const { account, collection, item } = await replayedFavoriteAfterRefusedEdit()
+
+    expect(await useContactStore.getState().deleteContact(item.uid)).toBe(true)
+
+    const serverItem = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+    expect(serverItem.isDeleted).toBe(true)
+    expect([stored(item.uid), saveStateOf(item.uid)]).toEqual([undefined, undefined])
+  })
+
   it('#744 holds an offline favorite as base-changed and sends nothing when an unseen peer replaced its base', async () => {
     const { account, collection, item } = await shownSavedContact()
     server.offline = true

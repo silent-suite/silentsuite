@@ -3781,8 +3781,13 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           if (written.kind === 'saved' && kind === 'favorite') {
             const { contactSealedFavoriteAcknowledged } = await import('@/app/stores/use-contact-store')
             assertOfflineQueueAccountGuard(guard, get())
+            // The record now on the server, paired with the revision this write produced.
+            const accepted = {
+              over: provedRevision,
+              record: { ...core.deserializeContact(payload.body.content), id: itemUid, listId: entry.collectionUid, revision: written.etag },
+            }
             const onAcknowledged = () => {
-              if (getAccountEpoch() === guard.accountEpoch) contactSealedFavoriteAcknowledged(itemUid)
+              if (getAccountEpoch() === guard.accountEpoch) contactSealedFavoriteAcknowledged(itemUid, accepted)
             }
             return { remoteMutationConfirmed: true, acknowledgeRev: rev, onAcknowledged }
           }

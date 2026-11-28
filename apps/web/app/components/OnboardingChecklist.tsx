@@ -25,6 +25,29 @@ interface ChecklistItem {
   completed: boolean
 }
 
+// Tailwind's `md`, where the desktop sidebar (and its checklist) appears.
+const SIDEBAR_QUERY = '(min-width: 768px)'
+
+/**
+ * Mounts the checklist only at one side of `md`. The sidebar copy (md-up) and the phone
+ * settings copy (below-md) share one saved state, so they must never be mounted together:
+ * a copy that still thinks the list is open would write that back over a dismissal.
+ */
+export function OnboardingChecklistAt({ width }: { width: 'md-up' | 'below-md' }) {
+  const [wide, setWide] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const mq = window.matchMedia(SIDEBAR_QUERY)
+    const update = () => setWide(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
+
+  if (wide === null || wide !== (width === 'md-up')) return null
+  return <OnboardingChecklist />
+}
+
 export function OnboardingChecklist() {
   const [isOpen, setIsOpen] = useState(true)
   const [dismissed, setDismissed] = useState(false)
