@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useCalendarStore } from '../use-calendar-store'
 import { parseVCalendar, serializeCalendarEvent, deserializeCalendarEvent } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
 import { expandEventsForRange } from '@/app/(app)/calendar/lib/calendar-grid-events'
 import { vEventToImportEvent } from '@/app/components/import/import-mappers'
+import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { _setEncryptedQueuePersistenceAvailableForTests, getAll } from '@/app/lib/offline-queue'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
@@ -1713,5 +1714,142 @@ describe('file series import', () => {
     expect(restored).toMatchObject({ uid: 'file-series', status: 'CONFIRMED', transp: 'TRANSPARENT' })
     expect(restored.overrides).toHaveLength(2)
     expect(expandEventsForRange([restored], { start: new Date('2026-11-17Z'), end: new Date('2026-11-21Z') }).map(e => e.startDate.toISOString())).toEqual(['2026-11-17T09:00:00.000Z', '2026-11-18T11:00:00.000Z'])
+  })
+})
+
+describe('useCalendarStore edits while the create is still being saved', () => {
+  const input = { title: 'Quick', startDate: new Date('2026-06-01T09:00:00Z'), endDate: new Date('2026-06-01T10:00:00Z'), calendarId: 'cal-1' }
+
+  function deferredCreate() {
+    let finish!: () => void
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    etebaseMock.state.account = {}
+    etebaseMock.state.accountFingerprint = TEST_FINGERPRINT
+    etebaseMock.state.itemCache = new Map()
+    etebaseMock.state.createItem.mockImplementation(async () => {
+      await gate
+      etebaseMock.state.itemCache = new Map([...etebaseMock.state.itemCache, ['remote-event', {}]])
+      return 'remote-event'
+    })
+    etebaseMock.state.updateItem.mockResolvedValue(undefined)
+    etebaseMock.state.deleteItem.mockResolvedValue(undefined)
+    return finish
+  }
+
+  beforeEach(async () => {
+    await resetRealOfflineQueue()
+    resetStore()
+    // Production has no encrypted queue content store.
+    _setEncryptedQueuePersistenceAvailableForTests(false)
+    toastMock.showErrorToast.mockReset()
+  })
+  afterEach(() => _setEncryptedQueuePersistenceAvailableForTests(true))
+
+  it('uploads an edit made before the create was acknowledged', async () => {
+    const finish = deferredCreate()
+    const creating = useCalendarStore.getState().createEvent(input)
+    const tempId = useCalendarStore.getState().events[0]!.id
+
+    const editing = useCalendarStore.getState().updateEvent(tempId, { title: 'Renamed' })
+    finish()
+    await creating
+    await editing
+
+    expect(useCalendarStore.getState().events.map((e) => [e.id, e.title])).toEqual([['remote-event', 'Renamed']])
+    expect(etebaseMock.state.updateItem).toHaveBeenCalledTimes(1)
+    expect(etebaseMock.state.updateItem.mock.calls[0]![1]).toBe('remote-event')
+    expect(etebaseMock.state.updateItem.mock.calls[0]![2]).toContain('SUMMARY:Renamed')
+    expect(await getAll()).toHaveLength(0)
+    expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('deletes on the server an event removed before the create was acknowledged', async () => {
+    const finish = deferredCreate()
+    const creating = useCalendarStore.getState().createEvent(input)
+    const tempId = useCalendarStore.getState().events[0]!.id
+
+    const deleting = useCalendarStore.getState().deleteEvent(tempId)
+    finish()
+    await creating
+    await deleting
+
+    expect(useCalendarStore.getState().events).toHaveLength(0)
+    expect(etebaseMock.state.deleteItem).toHaveBeenCalledWith('calendar', 'remote-event')
+    expect(await getAll()).toHaveLength(0)
+  })
+
+  it.each([
+    ['an "all" edit', (id: string) => useCalendarStore.getState().updateRecurringEvent(id, { title: 'Renamed' }, 'all', new Date('2026-06-03T09:00:00Z')), 'update'],
+    ['a "this" edit', (id: string) => useCalendarStore.getState().updateRecurringEvent(id, { title: 'Renamed' }, 'this', new Date('2026-06-03T09:00:00Z')), 'update'],
+    ['a "this and future" edit', (id: string) => useCalendarStore.getState().updateRecurringEvent(id, { title: 'Renamed' }, 'this_and_future', new Date('2026-06-03T09:00:00Z')), 'update'],
+    ['a "this" delete', (id: string) => useCalendarStore.getState().deleteRecurringEvent(id, 'this', new Date('2026-06-03T09:00:00Z')), 'update'],
+    ['a "this and future" delete', (id: string) => useCalendarStore.getState().deleteRecurringEvent(id, 'this_and_future', new Date('2026-06-03T09:00:00Z')), 'update'],
+    ['an "all" delete', (id: string) => useCalendarStore.getState().deleteRecurringEvent(id, 'all', new Date('2026-06-03T09:00:00Z')), 'delete'],
+  ] as const)('syncs %s of a new series to its item once the create is acknowledged', async (_name, run, kind) => {
+    const finish = deferredCreate()
+    const creating = useCalendarStore.getState().createEvent({ ...input, recurrenceRule: 'FREQ=DAILY' })
+    const tempId = useCalendarStore.getState().events[0]!.id
+    // A scoped copy is a new item of its own.
+    etebaseMock.state.createItem.mockImplementationOnce(etebaseMock.state.createItem.getMockImplementation()!)
+      .mockImplementationOnce(async () => 'remote-copy')
+
+    const operation = run(tempId)
+    finish()
+    await creating
+    await operation
+
+    if (kind === 'update') {
+      expect(etebaseMock.state.updateItem).toHaveBeenCalledTimes(1)
+      expect(etebaseMock.state.updateItem.mock.calls[0]![1]).toBe('remote-event')
+    } else {
+      expect(etebaseMock.state.deleteItem).toHaveBeenCalledWith('calendar', 'remote-event')
+    }
+    expect(await getAll()).toHaveLength(0)
+    expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('drops an edit whose pending create finishes after the account changed', async () => {
+    const finish = deferredCreate()
+    const creating = useCalendarStore.getState().createEvent(input)
+    const tempId = useCalendarStore.getState().events[0]!.id
+
+    const editing = useCalendarStore.getState().updateEvent(tempId, { title: 'Renamed' })
+    bumpAccountEpoch()
+    etebaseMock.state.accountFingerprint = 'account-b'
+    etebaseMock.state.itemCache = new Map()
+    finish()
+    await creating.catch(() => {})
+    await editing
+
+    expect(etebaseMock.state.updateItem).not.toHaveBeenCalled()
+    expect(await getAll()).toHaveLength(0)
+  })
+
+  it('a scoped copy edited before its create was acknowledged is uploaded under its item id', async () => {
+    const master = makeRecurringEvent()
+    etebaseMock.state.account = {}
+    etebaseMock.state.accountFingerprint = TEST_FINGERPRINT
+    etebaseMock.state.itemCache = new Map([[master.id, {}]])
+    etebaseMock.state.updateItem.mockResolvedValue(undefined)
+    let finish!: () => void
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    etebaseMock.state.createItem.mockImplementation(async () => {
+      await gate
+      etebaseMock.state.itemCache = new Map([...etebaseMock.state.itemCache, ['remote-copy', {}]])
+      return 'remote-copy'
+    })
+    useCalendarStore.setState({ events: [master] })
+
+    const scoped = useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2026-06-03T09:00:00Z'))
+    await vi.waitFor(() => expect(etebaseMock.state.createItem).toHaveBeenCalled())
+    const copyId = useCalendarStore.getState().events.find((e) => e.id !== master.id)!.id
+    const editing = useCalendarStore.getState().updateEvent(copyId, { title: 'Copy renamed' })
+    finish()
+    await scoped
+    await editing
+
+    const copyUpdate = etebaseMock.state.updateItem.mock.calls.find((call) => call[1] === 'remote-copy')
+    expect(copyUpdate?.[2]).toContain('SUMMARY:Copy renamed')
+    expect(await getAll()).toHaveLength(0)
   })
 })
