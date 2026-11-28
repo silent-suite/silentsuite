@@ -166,15 +166,20 @@ async function writeLoop(file, acks, stop) {
   let refused = 0
   while (!existsSync(stop) && Date.now() < deadline) {
     const content = randomBytes(1024)
+    let item
     try {
-      const item = await itemManager.create({ type: 'text/calendar', name: 'loop.ics', mtime: Date.now() }, new Uint8Array(content))
+      item = await itemManager.create({ type: 'text/calendar', name: 'loop.ics', mtime: Date.now() }, new Uint8Array(content))
       await itemManager.batch([item])
-      // Redirects are not followed (see strictFetch), so this success came from the server.
-      appendFileSync(acks, `${item.uid} ${sha256(content)} ${Date.now()}\n`, { mode: 0o600 })
-      acknowledged += 1
     } catch {
       // Server stopped, or the app removed during a rollback: a refused write is fine.
+      item = undefined
       refused += 1
+    }
+    if (item) {
+      // Redirects are not followed (see strictFetch), so this success came from the server.
+      // Outside the catch: failing to record an acknowledgement must fail the run.
+      appendFileSync(acks, `${item.uid} ${sha256(content)} ${Date.now()}\n`, { mode: 0o600 })
+      acknowledged += 1
     }
     await new Promise((resolve) => setTimeout(resolve, 500))
   }

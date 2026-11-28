@@ -9,10 +9,10 @@ the journal. Prints only the kind and the file, never a value or a line. Kinds s
 with "control-" are reported but not counted.
 
 One exemption: request identifiers (collection and item UIDs) in nginx lines timestamped
-inside one of WINDOWS ("start:end,...", epoch seconds): the time a failed upgrade's
-rollback had the app removed, taken from YunoHost's operation log. The app's nginx
-locations, which turn request logging off, do not exist then, and the domain's default
-logs record the request paths. Those are reported separately. Credentials are never
+inside one of WINDOWS ("start:end,...", inclusive epoch seconds): a failed upgrade's
+removal-to-restore operation interval from YunoHost's operation log. In that interval
+YunoHost removes the app's nginx locations (which turn request logging off) and puts them
+back, so the domain's default logs can record the request paths. Those are reported separately. Credentials are never
 exempt, and a line whose time cannot be read counts as a hit.
 Exit status: the number of counted hits (capped at 100).
 """

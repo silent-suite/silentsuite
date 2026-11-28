@@ -8,9 +8,10 @@ Created archive: the name in this attempt's "Backup created: <name>" message.
 Restored archive: basename of metadata.env.YNH_BACKUP_DIR of the one successful
 backup_restore_app operation for silentsuite that started inside the attempt,
 found by walking `yunohost log list --with-suboperations` (nested operations
-included). Prints check names only, then one line "WINDOW <start> <end>": from the start of
-this attempt's app_remove to the end of that restore (epoch seconds), the time YunoHost had
-the app removed.
+included). Prints check names only, then one line "WINDOW <start> <end>": the
+removal-to-restore operation interval of this attempt, from the start of app_remove to the
+end of that restore, as inclusive whole epoch seconds. The operations bracket YunoHost's
+nginx changes; they do not time the moment each route changed.
 """
 
 import datetime
@@ -82,7 +83,9 @@ def main():
     if len(removal_starts) != 1:
         print(f"FAIL rollback: expected one app removal inside the attempt, found {len(removal_starts)}")
         return 1
-    print(f"WINDOW {int(removal_starts[0].timestamp())} {int(restore_ends[0].timestamp()) + 1}")
+    # Inclusive whole-second bounds: the second the removal started and the last second
+    # the restore overlaps.
+    print(f"WINDOW {int(removal_starts[0].timestamp())} {int(restore_ends[0].timestamp())}")
     return 0
 
 
