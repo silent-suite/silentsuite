@@ -168,51 +168,65 @@ ct yunohost app upgrade "$app" -u /root/silentsuite_ynh --force >"$work/upgrade.
 check_perms "upgrade"
 check_data "upgrade"
 
-#=== Failed upgrade after the swap, rollback =================================
-group "failed upgrade"
-cp -r "$pkg" "$work/broken_ynh"
-common="$work/broken_ynh/scripts/_common.sh"
-web_ref=$(sed -n 's/^web_digest_amd64="\(.*\)"$/\1/p' "$common")
-sed -i -e 's|^server_repo=.*|server_repo="ghcr.io/silent-suite/silentsuite-web-selfhost"|' \
-    -e "s|^server_digest_amd64=.*|server_digest_amd64=\"$web_ref\"|" \
-    -e '/server\/usr\/local\/bin\/python" ] || ynh_die/d' "$common"
-grep -q 'silentsuite-web-selfhost"$' <(grep '^server_repo=' "$common") || fail "failed upgrade: test copy not built"
-push_pkg "$work/broken_ynh" broken_ynh
-# A writer keeps syncing during the attempt: every write the server acknowledged must
-# survive the rollback (the services stop before YunoHost's safety-backup dump).
-node "$repo/scripts/yunohost-candidate-witness.mjs" write-loop --state "$STATE" "$work/acks" "$work/stop-writer" &
-writer=$!
-sleep 5
-start=$(ct date -u +%s)
-if ct yunohost app upgrade "$app" -u /root/broken_ynh --force >"$work/failed-upgrade.log" 2>&1; then
-    fail "failed upgrade: upgrade unexpectedly succeeded"
-fi
-end=$(ct date -u +%s)
-sleep 10
-touch "$work/stop-writer"
-wait "$writer" || fail "failed upgrade: write loop"
-echo "INFO failed upgrade attempt from $start to $end (epoch seconds)"
-grep -n -i -E "safety backup|BACKUP_CORE_ONLY|Backing up|Stopping|swapped|Restor|Backup created|removed" "$work/failed-upgrade.log" | cut -c1-160 || true
-grep -q "silentsuite: image trees swapped" "$work/failed-upgrade.log" || fail "failed upgrade: swap marker missing"
-pass "failed upgrade: swap completed"
-ct journalctl -u "$app-server" --since "@$start" --until "@$end" -o cat | grep -q "status=203/EXEC" \
-    || fail "failed upgrade: no 203/EXEC from the swapped server tree"
-pass "failed upgrade: replacement server failed to start (203/EXEC)"
-sudo incus file push "$work/failed-upgrade.log" ynh/root/failed-upgrade.log
-ct python3 /root/yunohost-candidate-rollback-evidence.py /root/failed-upgrade.log "$start" "$end"
-ct test -x "$install_dir/server/usr/local/bin/python" || fail "rollback: original server tree not back"
-curl -fsS -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/api/v1/authentication/is_etebase/" || fail "rollback: server not ready"
-curl -fsS -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/signup" || fail "rollback: web not ready"
-check_perms "rollback"
-check_data "rollback"
-if ! node "$repo/scripts/yunohost-candidate-witness.mjs" verify-acks --state "$STATE" "$work/acks"; then
-    # Diagnostics: unit start/stop timeline and server errors since the attempt, with
-    # long ID-like strings removed.
-    ct journalctl -u "$app-server" -u "$app-web" -u postgresql --since "@$((start - 5))" -o short-unix --no-pager \
-        | grep -E "Start|Stopp|Stopped|Failed|status=|Error|Exception|Traceback|raise |File \"" \
-        | sed -E 's/[A-Za-z0-9_-]{20,}/<id>/g' | cut -c1-200 | head -80
-    fail "rollback: an acknowledged write was lost"
-fi
+#=== Failed upgrades after the swap, rollback ================================
+# Two lanes: the replacement server tree is broken, or the replacement web tree is. A writer
+# keeps syncing through each attempt; every write the server acknowledged must survive
+# YunoHost's rollback. The server starts last in the upgrade, so with a broken web tree it
+# must never have started before YunoHost began removing the app.
+WINDOWS=""   # app-removal windows "start:end,..." from YunoHost's operation log
+failed_upgrade() {
+    local broken=$1 other copy="$work/broken-$1_ynh" common start end window acks stop writer
+    [ "$broken" = server ] && other=web || other=server
+    group "failed upgrade (broken $broken tree)"
+    cp -r "$pkg" "$copy"
+    common="$copy/scripts/_common.sh"
+    local other_repo other_digest bin
+    other_repo=$(sed -n "s/^${other}_repo=\"\(.*\)\"$/\1/p" "$common")
+    other_digest=$(sed -n "s/^${other}_digest_amd64=\"\(.*\)\"$/\1/p" "$common")
+    [ "$broken" = server ] && bin=python || bin=node
+    sed -i -e "s|^${broken}_repo=.*|${broken}_repo=\"$other_repo\"|" \
+        -e "s|^${broken}_digest_amd64=.*|${broken}_digest_amd64=\"$other_digest\"|" \
+        -e "/${broken}\/usr\/local\/bin\/${bin}\" ] || ynh_die/d" "$common"
+    grep -q "^${broken}_repo=\"$other_repo\"$" "$common" || fail "failed upgrade ($broken): test copy not built"
+    push_pkg "$copy" "broken-${broken}_ynh"
+    acks="$work/acks-$broken"; stop="$work/stop-writer-$broken"
+    node "$repo/scripts/yunohost-candidate-witness.mjs" write-loop --state "$STATE" "$acks" "$stop" &
+    writer=$!
+    sleep 5
+    start=$(ct date -u +%s)
+    if ct yunohost app upgrade "$app" -u "/root/broken-${broken}_ynh" --force >"$work/failed-upgrade-$broken.log" 2>&1; then
+        fail "failed upgrade ($broken): upgrade unexpectedly succeeded"
+    fi
+    end=$(ct date -u +%s)
+    sleep 10
+    touch "$stop"
+    wait "$writer" || fail "failed upgrade ($broken): write loop"
+    grep -q "silentsuite: image trees swapped" "$work/failed-upgrade-$broken.log" || fail "failed upgrade ($broken): swap marker missing"
+    pass "failed upgrade ($broken): swap completed"
+    ct journalctl -u "$app-$broken" --since "@$start" --until "@$end" -o cat | grep -q "status=203/EXEC" \
+        || fail "failed upgrade ($broken): no 203/EXEC from the swapped $broken tree"
+    pass "failed upgrade ($broken): replacement $broken failed to start (203/EXEC)"
+    sudo incus file push "$work/failed-upgrade-$broken.log" "ynh/root/failed-upgrade-$broken.log" >/dev/null
+    window=$(ct python3 /root/yunohost-candidate-rollback-evidence.py "/root/failed-upgrade-$broken.log" "$start" "$end" \
+        | tee /dev/stderr | sed -n 's/^WINDOW \([0-9]*\) \([0-9]*\)$/\1:\2/p')
+    [ -n "$window" ] || fail "failed upgrade ($broken): no app-removal window in the operation log"
+    WINDOWS="${WINDOWS:+$WINDOWS,}$window"
+    if [ "$broken" = web ]; then
+        ! ct journalctl -u "$app-server" --since "@$start" --until "@${window%%:*}" -o cat | grep -q "Started $app-server" \
+            || fail "failed upgrade (web): the replacement server started before the rollback"
+        pass "failed upgrade (web): the replacement server never started"
+    fi
+    ct test -x "$install_dir/server/usr/local/bin/python" || fail "rollback ($broken): original server tree not back"
+    ct test -x "$install_dir/web/usr/local/bin/node" || fail "rollback ($broken): original web tree not back"
+    curl -fsS -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/api/v1/authentication/is_etebase/" || fail "rollback ($broken): server not ready"
+    curl -fsS -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/signup" || fail "rollback ($broken): web not ready"
+    check_perms "rollback ($broken)"
+    check_data "rollback ($broken)"
+    node "$repo/scripts/yunohost-candidate-witness.mjs" verify-acks --state "$STATE" "$acks" \
+        || fail "rollback ($broken): an acknowledged write was lost"
+}
+failed_upgrade server
+failed_upgrade web
 
 #=== Backup, purge, restore ==================================================
 group "backup and restore"
@@ -228,17 +242,20 @@ group "log markers"
 # A marked upstream error: the server is down and the request path carries a collection UID.
 uid=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["collectionUid"])' "$STATE")
 ct systemctl stop "$app-server"
-curl -s -o /dev/null --cacert "$CA_FILE" "https://$DOMAIN/api/v1/collection/$uid/item/" || true
+code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$CA_FILE" "https://$DOMAIN/api/v1/collection/$uid/item/" || true)
+[ "$code" = 502 ] || fail "log markers: marked request got $code, not the package's 502"
 ct systemctl start "$app-server"
+# Every auth token the witness obtained, from every login.
+while read -r token; do add_marker auth-token "$token"; done <"$STATE.tokens"
 sudo incus file push "$MARKERS" ynh/root/markers >/dev/null
-# Kind and file only; nginx lines from the failed upgrade's rollback window are reported apart.
-ct python3 /root/yunohost-candidate-log-scan.py /root/markers "$start" "$end" \
+# Kind and file only; request IDs in nginx lines from the app-removal windows are reported apart.
+ct python3 /root/yunohost-candidate-log-scan.py /root/markers "$WINDOWS" \
     || { ct rm -f /root/markers; fail "log markers: secrets or identifiers in container logs"; }
 ct rm -f /root/markers
 grep -v '^control-' "$MARKERS" | cut -f2 >"$work/own-markers"
 hits=$({ grep -lF -f "$work/own-markers" "$work"/*.log || true; } | wc -l)
 [ "$hits" = 0 ] || fail "log markers: $hits installer output file(s) contain a secret or identifier"
-pass "installation secrets of both installs, every auth token and the witness UIDs appear in no installer output, /var/log/yunohost, nginx log or journal (except YunoHost's own db_pwd trace, and nginx lines from the rollback window while the app is removed)"
+pass "installation secrets of both installs, every auth token the witness obtained and the witness IDs appear in no installer output, /var/log/yunohost, nginx log or journal (except YunoHost's own db_pwd trace, and request IDs in nginx lines while YunoHost had the app removed)"
 
 group "remove"
 purge_app

@@ -2,16 +2,18 @@
 """CI only: look for secrets and identifiers in the YunoHost container's logs.
 
 Runs inside the test container as root:
-    log-scan.py MARKERS WINDOW_START WINDOW_END
+    log-scan.py MARKERS WINDOWS
 
 MARKERS holds "kind<TAB>value" lines. Searched: /var/log/yunohost, /var/log/nginx and
 the journal. Prints only the kind and the file, never a value or a line. Kinds starting
 with "control-" are reported but not counted.
 
-One exemption: nginx lines timestamped inside [WINDOW_START, WINDOW_END] (epoch seconds,
-a failed upgrade's rollback). YunoHost has the app removed then, so its nginx locations,
-which turn request logging off, do not exist and the domain's default logs record the
-requests. That is reported separately. A line whose time cannot be read counts as a hit.
+One exemption: request identifiers (collection and item UIDs) in nginx lines timestamped
+inside one of WINDOWS ("start:end,...", epoch seconds): the time a failed upgrade's
+rollback had the app removed, taken from YunoHost's operation log. The app's nginx
+locations, which turn request logging off, do not exist then, and the domain's default
+logs record the request paths. Those are reported separately. Credentials are never
+exempt, and a line whose time cannot be read counts as a hit.
 Exit status: the number of counted hits (capped at 100).
 """
 
@@ -21,6 +23,7 @@ import re
 import subprocess
 import sys
 
+EXEMPTIBLE = {"collection-uid", "item-uid"}
 ACCESS_TIME = re.compile(r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\]")
 ERROR_TIME = re.compile(r"^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})")
 
@@ -44,7 +47,8 @@ def files():
 
 
 def main():
-    markers_path, start, end = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+    markers_path = sys.argv[1]
+    windows = [tuple(int(x) for x in w.split(":")) for w in sys.argv[2].split(",") if w]
     markers = {}
     for raw in open(markers_path, encoding="utf-8"):
         kind, _, value = raw.rstrip("\n").partition("\t")
@@ -67,11 +71,12 @@ def main():
             matching = [line for line in lines if value in line]
             if not matching:
                 continue
-            if name.startswith("/var/log/nginx/"):
+            if name.startswith("/var/log/nginx/") and kind in EXEMPTIBLE:
                 inside = [line for line in matching
-                          if (t := line_time(line)) is not None and start <= t <= end]
+                          if (t := line_time(line)) is not None
+                          and any(a <= t <= b for a, b in windows)]
                 if inside:
-                    print(f"INFO {kind} in {name}: {len(inside)} line(s) inside the rollback window")
+                    print(f"INFO {kind} in {name}: {len(inside)} line(s) while the app was removed")
                 matching = [line for line in matching if line not in inside]
                 if not matching:
                     continue

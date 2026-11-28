@@ -8,7 +8,9 @@ Created archive: the name in this attempt's "Backup created: <name>" message.
 Restored archive: basename of metadata.env.YNH_BACKUP_DIR of the one successful
 backup_restore_app operation for silentsuite that started inside the attempt,
 found by walking `yunohost log list --with-suboperations` (nested operations
-included). Prints check names only.
+included). Prints check names only, then one line "WINDOW <start> <end>": from the start of
+this attempt's app_remove to the end of that restore (epoch seconds), the time YunoHost had
+the app removed.
 """
 
 import datetime
@@ -54,13 +56,20 @@ def main():
     names = [e.get("name", "") for e in walk(listing.get("operation", []))]
     candidates = [n for n in names if "backup_restore_app" in n and "silentsuite" in n]
 
-    matches = []
+    matches, restore_ends = [], []
     for name in candidates:
         meta = yunohost_json("log", "show", name).get("metadata", {})
         if meta.get("success") is not True or "started_at" not in meta:
             continue
         if start_t <= parse_time(meta["started_at"]) <= end_t:
             matches.append(os.path.basename(str(meta.get("env", {}).get("YNH_BACKUP_DIR", "")).rstrip("/")))
+            restore_ends.append(parse_time(meta.get("ended_at") or meta["started_at"]))
+
+    removal_starts = []
+    for name in (n for n in names if "app_remove" in n and "silentsuite" in n):
+        meta = yunohost_json("log", "show", name).get("metadata", {})
+        if "started_at" in meta and start_t <= parse_time(meta["started_at"]) <= end_t:
+            removal_starts.append(parse_time(meta["started_at"]))
 
     if len(matches) != 1:
         print(f"FAIL rollback: expected one successful restore in the attempt, found {len(matches)}")
@@ -70,6 +79,10 @@ def main():
         print("FAIL rollback: restored archive differs from the one created in the attempt")
         return 1
     print("PASS rollback: restored archive is the one created in the attempt")
+    if len(removal_starts) != 1:
+        print(f"FAIL rollback: expected one app removal inside the attempt, found {len(removal_starts)}")
+        return 1
+    print(f"WINDOW {int(removal_starts[0].timestamp())} {int(restore_ends[0].timestamp()) + 1}")
     return 0
 
 

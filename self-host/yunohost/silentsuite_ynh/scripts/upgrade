@@ -48,9 +48,10 @@ _silentsuite_set_permissions
 #=================================================
 ynh_script_progression "Starting $app's systemd services..."
 
-# Migrations run when the server starts. On failure YunoHost restores its safety backup.
-_silentsuite_start
+# The old trees are not needed for a rollback (YunoHost restores its safety backup), and
+# nothing may run after the server starts. Migrations run when the server starts.
 _silentsuite_remove_old_images
+_silentsuite_start
 
 #=================================================
 # END OF SCRIPT

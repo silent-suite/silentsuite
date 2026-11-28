@@ -37,14 +37,16 @@ ynh_backup "/etc/systemd/system/$app-web.service"
 #=================================================
 ynh_print_info "Backing up the PostgreSQL database..."
 
-# YunoHost sets BACKUP_CORE_ONLY only for the safety backup it takes right before an
-# upgrade, and restores that backup if the upgrade fails. Stop the services first, so no
-# sync write can be accepted after this dump and then lost by that restore. The upgrade
+# Right before an upgrade YunoHost takes a safety backup named <app>-pre-upgrade1 or -2,
+# and restores it if the upgrade fails. For that backup only, stop the services first, so
+# no sync write can be accepted after this dump and then lost by that restore. The upgrade
 # (or the restore) starts them again.
-if [ "${BACKUP_CORE_ONLY:-0}" = 1 ]; then
-    ynh_systemctl --service="$app-web" --action="stop"
-    ynh_systemctl --service="$app-server" --action="stop"
-fi
+case "$(basename "${YNH_BACKUP_DIR:-}")" in
+    "$app-pre-upgrade1" | "$app-pre-upgrade2")
+        ynh_systemctl --service="$app-web" --action="stop"
+        ynh_systemctl --service="$app-server" --action="stop"
+        ;;
+esac
 
 ynh_psql_dump_db > db.sql
 

@@ -7,8 +7,8 @@
 //                         compare its sha256 with the state, store the fresh auth token
 //   write-loop --state FILE ACKS STOP
 //                         keep writing small items into the witness collection until the file STOP
-//                         exists (failures while the server is down are expected); a write counts
-//                         as acknowledged once the server reads it back, and goes to ACKS
+//                         exists (failures while the server is down are expected); each write the
+//                         server acknowledged goes to ACKS (redirects are not followed)
 //   verify-acks --state FILE ACKS
 //                         every acknowledged item from ACKS must still exist with the same content
 //
@@ -24,7 +24,17 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-const Etebase = createRequire(join(repoRoot, 'packages/core/package.json'))('etebase')
+const coreRequire = createRequire(join(repoRoot, 'packages/core/package.json'))
+// In Node the SDK sends every request through require("node-fetch"), which follows
+// redirects. While YunoHost has the app removed (during a rollback), SSOwat answers its
+// URLs with a portal redirect, and a followed redirect would look like a successful write.
+// Make redirects plain non-2xx responses, so a write only succeeds if the server took it.
+const sdkRequire = createRequire(coreRequire.resolve('etebase/package.json'))
+const realFetch = sdkRequire('node-fetch')
+const strictFetch = (url, options = {}) => realFetch(url, { ...options, redirect: 'manual' })
+Object.assign(strictFetch, realFetch, { default: strictFetch })
+sdkRequire.cache[sdkRequire.resolve('node-fetch')].exports = strictFetch
+const Etebase = coreRequire('etebase')
 const DOMAIN = process.env.DOMAIN || 'domain.tld'
 const ORIGIN = `https://${DOMAIN}`
 const SERVER_URL = `${ORIGIN}/`
@@ -64,6 +74,11 @@ function https(method, path, headers, body) {
 }
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+
+// Every auth token this script obtains, for the log-marker scan (mode 600).
+function recordToken(file, token) {
+  appendFileSync(`${file}.tokens`, `${token}\n`, { mode: 0o600 })
+}
 
 function writeState(file, state) {
   writeFileSync(file, `${JSON.stringify(state)}\n`, { mode: 0o600 })
@@ -107,6 +122,7 @@ async function create(file) {
     await itemManager.batch([created])
     return created
   })
+  recordToken(file, account.authToken)
   writeState(file, {
     username,
     password,
@@ -132,6 +148,7 @@ async function verify(file) {
   })
   if (sha256(Buffer.from(content)) !== state.contentSha256) fail('witness content sha256 matches')
   pass('witness content sha256 matches')
+  recordToken(file, account.authToken)
   writeState(file, { ...state, authToken: account.authToken })
   pass('state auth token refreshed')
 }
@@ -140,37 +157,28 @@ async function writeLoop(file, acks, stop) {
   await Etebase.ready
   const state = JSON.parse(readFileSync(file, 'utf8'))
   const account = await step('write loop: SDK login', () => Etebase.Account.login(state.username, state.password, SERVER_URL))
+  recordToken(file, account.authToken)
   const collectionManager = account.getCollectionManager()
   const collection = await step('write loop: fetch the witness collection', () => collectionManager.fetch(state.collectionUid))
   const itemManager = collectionManager.getItemManager(collection)
   const deadline = Date.now() + 30 * 60_000
   let acknowledged = 0
-  let unconfirmed = 0
+  let refused = 0
   while (!existsSync(stop) && Date.now() < deadline) {
     const content = randomBytes(1024)
-    let item
     try {
-      item = await itemManager.create({ type: 'text/calendar', name: 'loop.ics', mtime: Date.now() }, new Uint8Array(content))
+      const item = await itemManager.create({ type: 'text/calendar', name: 'loop.ics', mtime: Date.now() }, new Uint8Array(content))
       await itemManager.batch([item])
+      // Redirects are not followed (see strictFetch), so this success came from the server.
+      appendFileSync(acks, `${item.uid} ${sha256(content)} ${Date.now()}\n`, { mode: 0o600 })
+      acknowledged += 1
     } catch {
-      // The server is stopped during part of the upgrade: a refused write is fine.
-      item = undefined
-    }
-    if (item) {
-      // Acknowledged means the SilentSuite server reads it back. While YunoHost has the app
-      // removed during a rollback, SSOwat answers its URLs with a portal redirect, which the
-      // SDK follows and does not report as an error; such a write is "unconfirmed".
-      try {
-        await itemManager.fetch(item.uid)
-        appendFileSync(acks, `${item.uid} ${sha256(content)} ${Date.now()}\n`, { mode: 0o600 })
-        acknowledged += 1
-      } catch {
-        unconfirmed += 1
-      }
+      // Server stopped, or the app removed during a rollback: a refused write is fine.
+      refused += 1
     }
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
-  console.log(`INFO write loop: ${acknowledged} acknowledged writes, ${unconfirmed} unconfirmed`)
+  console.log(`INFO write loop: ${acknowledged} acknowledged writes, ${refused} refused`)
 }
 
 async function verifyAcks(file, acks) {
@@ -180,6 +188,7 @@ async function verifyAcks(file, acks) {
   if (lines.length === 0) fail('write loop acknowledged at least one write')
   pass('write loop acknowledged at least one write')
   const account = await step('acks: SDK login', () => Etebase.Account.login(state.username, state.password, SERVER_URL))
+  recordToken(file, account.authToken)
   const collectionManager = account.getCollectionManager()
   const collection = await step('acks: fetch the witness collection', () => collectionManager.fetch(state.collectionUid))
   const itemManager = collectionManager.getItemManager(collection)

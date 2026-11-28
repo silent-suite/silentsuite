@@ -169,9 +169,11 @@ _silentsuite_wait_ready() {
     ynh_die "$service did not answer HTTP 200 within 120 seconds"
 }
 
+# The server starts last: once it answers, it accepts sync writes, so no step that can
+# still fail (and make YunoHost restore the pre-upgrade dump) may come after it.
 _silentsuite_start() {
-    ynh_systemctl --service="$app-server" --action="start"
-    _silentsuite_wait_ready "http://127.0.0.1:$port_server/api/v1/authentication/is_etebase/" "$app-server"
     ynh_systemctl --service="$app-web" --action="start"
     _silentsuite_wait_ready "http://127.0.0.1:$port_web/signup" "$app-web"
+    ynh_systemctl --service="$app-server" --action="start"
+    _silentsuite_wait_ready "http://127.0.0.1:$port_server/api/v1/authentication/is_etebase/" "$app-server"
 }
