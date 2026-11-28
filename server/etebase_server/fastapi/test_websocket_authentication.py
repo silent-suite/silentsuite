@@ -375,6 +375,19 @@ class TestWebsocketTicketLifetime:
         assert close_code == status.WS_1008_POLICY_VIOLATION
         assert fake_redis.subscriptions == []
 
+    def test_websocket_is_refused_when_redis_is_not_configured(self, ws_client, fake_redis, monkeypatch):
+        from etebase_server.fastapi.redis import redisw
+
+        # Self-host stacks run without Redis: `redis_uri` is None and the
+        # wrapper never gets a client.
+        monkeypatch.setattr(redisw, "redis_uri", None)
+        monkeypatch.delattr(redisw, "redis")
+
+        close_code, frame = _connect(ws_client, _uid("never-issued"))
+
+        assert frame is None
+        assert close_code == status.WS_1008_POLICY_VIOLATION
+
 
 @pytest.mark.django_db(transaction=True)
 class TestWebsocketUpdates:
