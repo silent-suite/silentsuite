@@ -337,12 +337,78 @@ describe('subscription card clarity', () => {
     expect(within(card()).getByRole('button', { name: action })).toBeInTheDocument()
   })
 
+  it('shows the card for a prepaid cryptocurrency account whose trialPath is crypto_annual', async () => {
+    route({ status: 'active', trialPath: 'crypto_annual' })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Early Adopter')).toBeInTheDocument()
+    expect(screen.queryByText('Unable to load subscription details.')).not.toBeInTheDocument()
+  })
+
+  // Shape from Billing's status route: a trialing account with an active trial and its stored trialPath.
+  const activeTrialWithPath = (trialPath: string) => ({
+    status: 'trialing', trialPath, renewalDate: null,
+    trial: { active: true, endsAt: future(10), daysRemaining: 10 },
+    capabilities: { ...capabilities, trialActive: true },
+  })
+
+  it('shows no trial type for an active trial whose path is crypto_annual', async () => {
+    route(activeTrialWithPath('crypto_annual'))
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(screen.queryByText('Trial type')).not.toBeInTheDocument()
+    expect(screen.queryByText('Paid + 14-day bonus')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['immediate', 'Paid + 14-day bonus'],
+    ['30day', '30-day trial'],
+  ])('keeps the trial type label for the known %s path', async (trialPath, label) => {
+    route(activeTrialWithPath(trialPath))
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText(label)).toBeInTheDocument()
+  })
+
   it('says a past-due payment failed and what Subscribe does (SIGNUP-05)', async () => {
     route({ status: 'past_due', capabilities: { ...capabilities, canStartPaidSubscription: true } })
     render(<SubscriptionPage />)
     await screen.findByText('Plan')
     expect(within(card()).getByText("Your last payment didn't go through. Subscribe to start a new yearly plan.")).toBeInTheDocument()
     expect(within(card()).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+  })
+
+  const pastDueWithFlowRead = (flowReply: () => unknown) => {
+    route({ status: 'past_due', capabilities: { ...capabilities, canStartPaidSubscription: true } })
+    const routed = vi.mocked(fetch)
+    const plain = routed.getMockImplementation()!
+    routed.mockImplementation(async (url, init) => String(url).startsWith('https://billing.test/subscription/payment-flows/current')
+      ? flowReply() as Response
+      : plain(url, init))
+  }
+
+  it('says Subscribe opens the cryptocurrency payment already started once the open flow is confirmed', async () => {
+    const cryptoFlow = {
+      flowKind: 'btcpay_annual', createdAt: '2026-11-20T10:00:00.000Z', cancellable: true,
+      checkoutUrl: null, status: 'pending_provider_flow', authorityId: null, disclosure: null,
+    }
+    pastDueWithFlowRead(() => ({ ok: true, json: async () => ({ flow: cryptoFlow }) }))
+    render(<SubscriptionPage />)
+    await screen.findByText('You have a cryptocurrency payment in progress.')
+    expect(within(card()).getByText("Your last payment didn't go through. Subscribe to open the cryptocurrency payment you already started.")).toBeInTheDocument()
+    expect(within(card()).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+  })
+
+  it.each([
+    ['failed', () => ({ ok: false, status: 503, json: async () => ({}) })],
+    ['pending', () => new Promise(() => {})],
+  ])('keeps the new-plan sentence while the open-flow read is %s', async (_state, flowReply) => {
+    pastDueWithFlowRead(flowReply)
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('https://billing.test/subscription/payment-flows/current'))).toBe(true))
+    expect(within(card()).getByText("Your last payment didn't go through. Subscribe to start a new yearly plan.")).toBeInTheDocument()
+    expect(screen.queryByText('You have a cryptocurrency payment in progress.')).not.toBeInTheDocument()
   })
 
   it('names no action for a past-due payment when Billing offers none', async () => {

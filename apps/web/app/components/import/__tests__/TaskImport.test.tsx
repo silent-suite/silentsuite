@@ -372,3 +372,13 @@ describe('TaskImport Todoist due time of day', () => {
     expect(task.due_date).toEqual(new Date(2026, 11, 5))
   })
 })
+
+describe('TaskImport platform instructions', () => {
+  it('says Google Tasks file import is not supported instead of pointing to Takeout', () => {
+    renderWithIntl(<TaskImport onImportComplete={mocks.onImportComplete} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Google Tasks' }))
+
+    expect(screen.getByText(/Importing a Google Tasks file isn't supported yet/)).toBeTruthy()
+    expect(screen.queryByText(/select Tasks/)).toBeNull()
+  })
+})

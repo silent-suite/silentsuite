@@ -21,6 +21,9 @@ import type { ImportIncompleteError, ImportPositionOutcome } from '@/app/lib/imp
 // Large address books with long notes can exceed 10 MB; each batch still uploads separately.
 export const MAX_CONTACT_IMPORT_FILE_BYTES = 50 * 1024 * 1024
 
+// Android stores a contact in one provider batch; a note far past this (an estimate) can stop its sync.
+export const LONG_CONTACT_NOTE_CHARS = 200_000
+
 const sourceKeyOf = (contact: VCard) => (contact as VCard & { sourceKey?: string }).sourceKey
 
 function hasProviderContacts(contacts: VCard[]): boolean {
@@ -141,6 +144,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
   const [providerNotice, setProviderNotice] = useState<string | null>(null)
   const [unreadableNotice, setUnreadableNotice] = useState<string | null>(null)
+  const [longNoteNotice, setLongNoteNotice] = useState<string | null>(null)
   // Progress lives in the store, so a page that was left and reopened still shows the running import.
   const runningImport = useContactStore((s) => s.fileImport) ?? null
   const busy = isImporting || runningImport !== null
@@ -180,6 +184,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setImportedCount(null)
     setProviderNotice(null)
     setUnreadableNotice(null)
+    setLongNoteNotice(null)
     const token = ++selection.current
     const current = () => token === selection.current
 
@@ -212,6 +217,12 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
       const assigned = await assignImportUids(readable)
       if (!current()) return
       if (unreadable > 0) setUnreadableNotice(unreadable === 1 ? "1 contact couldn't be read." : `${unreadable} contacts couldn't be read.`)
+      const longNotes = assigned.filter((contact) => (contact.note?.length ?? 0) > LONG_CONTACT_NOTE_CHARS).length
+      if (longNotes > 0) {
+        setLongNoteNotice(longNotes === 1
+          ? '1 contact has a note over 200,000 characters and may not sync to Android.'
+          : `${longNotes} contacts have notes over 200,000 characters and may not sync to Android.`)
+      }
       setContacts(assigned)
     } catch (err) {
       if (!current()) return
@@ -223,6 +234,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const handleProviderLoaded = useCallback((provider: 'Google' | 'Microsoft', loaded: VCard[]) => {
     setError(null)
     setUnreadableNotice(null)
+    setLongNoteNotice(null)
     setImportedCount(null)
     // A first look against what this device shows; the write re-checks against the server.
     const { contacts: pending, skipped } = withoutImported(loaded, importSourceKeys(useContactStore.getState().contacts))
@@ -337,6 +349,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setImportedCount(null)
     setProviderNotice(null)
     setUnreadableNotice(null)
+    setLongNoteNotice(null)
   }, [])
 
   return (
@@ -401,6 +414,10 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
 
       {unreadableNotice && (
         <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{unreadableNotice}</p>
+      )}
+
+      {longNoteNotice && (
+        <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{longNoteNotice}</p>
       )}
 
       {error && (

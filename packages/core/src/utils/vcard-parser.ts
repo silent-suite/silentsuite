@@ -52,6 +52,9 @@ export interface VCard {
    *  `true` is meaningful; absence means a date. */
   bdayIsText?: boolean;
   photo?: string;
+  /** `photo` was declared `VALUE=URI`/`VALUE=URL`, so it is written back as a
+   *  link even when it looks like base64. Only `true` is meaningful. */
+  photoIsUri?: boolean;
   rev?: string;
   /** SilentSuite-owned favorite flag, wire form `X-SILENTSUITE-FAVORITE:1`.
    *  `true` means favorite; absence means not favorite. Only `true` is ever
@@ -706,12 +709,16 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
       case 'PHOTO': {
         const val = prop.value;
         // Skip oversized photos (base64 > 1MB ≈ 750KB image)
+        delete vcard.photoIsUri;
         if (val.length > 1_000_000) {
           vcard.photo = undefined;
           break;
         }
         const valueType = (prop.params['VALUE'] ?? '').toUpperCase();
-        if (valueType === 'URI' || valueType === 'URL' || val.startsWith('data:') || val.startsWith('http://') || val.startsWith('https://')) {
+        if (valueType === 'URI' || valueType === 'URL') {
+          vcard.photo = val;
+          vcard.photoIsUri = true;
+        } else if (val.startsWith('data:') || val.startsWith('http://') || val.startsWith('https://')) {
           vcard.photo = val;
         } else {
           const encoding = (prop.params['ENCODING'] ?? '').toUpperCase();
@@ -868,7 +875,7 @@ export function generateVCard(vcard: VCard): string {
       lines.push(foldLine(`PHOTO;ENCODING=b;TYPE=${type}:${inline[2]}`));
     } else if (vcard.photo.startsWith('data:') || vcard.photo.startsWith('http://') || vcard.photo.startsWith('https://')) {
       lines.push(foldLine(`PHOTO;VALUE=URI:${vcard.photo}`));
-    } else if (/^[A-Za-z0-9+/]+={0,2}$/.test(vcard.photo) && vcard.photo.length % 4 === 0) {
+    } else if (vcard.photoIsUri !== true && /^[A-Za-z0-9+/]+={0,2}$/.test(vcard.photo) && vcard.photo.length % 4 === 0) {
       lines.push(foldLine(`PHOTO;ENCODING=b;TYPE=JPEG:${vcard.photo}`));
     } else {
       // Not base64 (file:, cid:, a relative path): claiming ENCODING=b would make the card unreadable.
