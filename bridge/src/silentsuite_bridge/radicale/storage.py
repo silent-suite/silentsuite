@@ -616,8 +616,15 @@ def _vcard4_media_line_to_3(name, params, value, group):
         if any(flag.strip().lower() == "base64" for flag in flags):
             # A data URI may percent-escape base64 characters (%3D for =).
             value = urllib.parse.unquote(match.group(2))
-            if value != match.group(2) and not _BASE64_REGEX.match(value):
-                return None  # never emit decoded line breaks or other text
+            # Never emit decoded line breaks or other text, and keep a payload
+            # that does not decode: an undecodable ENCODING=b line would make
+            # the whole card unreadable.
+            if len(value) % 4 or not _BASE64_REGEX.match(value):
+                return None
+            try:
+                base64.b64decode(value, validate=True)
+            except ValueError:
+                return None
         else:
             value = base64.b64encode(
                 urllib.parse.unquote_to_bytes(match.group(2))
@@ -668,6 +675,21 @@ def _vcard4_media_to_3(content, data_uris_only=False):
                 changed = True
         lines.append(line)
     return "\r\n".join(lines) + "\r\n" if changed else content
+
+
+def _read_rewritten(item, content, stored_content):
+    """Parse rewritten card text, or keep the already parsed stored card.
+
+    A photo rewrite must never make a readable contact unreadable.
+    """
+    if content == stored_content:
+        return item
+    try:
+        return vobject.readOne(content)
+    except MemoryError:
+        raise
+    except Exception:
+        return item
 
 
 # vCard 3.0 has no year-less date. A vCard 4 --MMDD / --MM-DD birthday is served
@@ -1121,9 +1143,9 @@ class Collection(BaseCollection):
                 if hasattr(item, "kind") and item.kind.value.lower() == "group":
                     pass
                 else:
-                    content = _vcard4_media_to_3(stored_content)
-                    if content != stored_content:
-                        item = vobject.readOne(content)
+                    item = _read_rewritten(
+                        item, _vcard4_media_to_3(stored_content), stored_content
+                    )
 
                     item.contents["version"][0].value = "3.0"
                     _mark_yearless_birthdays(item)
@@ -1132,9 +1154,11 @@ class Collection(BaseCollection):
                 and item.contents["version"][0].value == "3.0"
             ):
                 # Older web writes put data: URI photos into vCard 3.0 cards.
-                content = _vcard4_media_to_3(stored_content, data_uris_only=True)
-                if content != stored_content:
-                    item = vobject.readOne(content)
+                item = _read_rewritten(
+                    item,
+                    _vcard4_media_to_3(stored_content, data_uris_only=True),
+                    stored_content,
+                )
 
             if config.E2EE_LOCK_PREFIX:
                 for _key, line in _title_lines(item):

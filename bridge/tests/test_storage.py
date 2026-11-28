@@ -24,6 +24,7 @@ from silentsuite_bridge.radicale.storage import (
     MetaMappingTaskList,
     Storage,
     _get_attributes_from_path,
+    _vcard4_media_line_to_3,
 )
 from silentsuite_bridge.radicale.rights import Rights as BridgeRights
 from tests.conftest import (
@@ -1076,3 +1077,22 @@ class TestVCard3DataUriPhoto:
     def test_other_vcard3_photos_are_served_as_stored(self, mem_db, user, media_line, value, params):
         card = self._serve(mem_db, user, media_line.format(url=self.URL, b64=self.B64))
         assert self._media(card, "photo") == [(None, value, params)], f"BEHAVIOR: {media_line} unchanged"
+
+    @pytest.mark.parametrize("payload", ["TQ", "TQ=", "T", "TQ==TQ", "TQ%3D"])
+    def test_undecodable_base64_photo_keeps_the_contact(self, mem_db, user, payload):
+        stored_line = f"PHOTO;VALUE=URI:data:image/jpeg;base64,{payload}"
+        card = self._serve(mem_db, user, stored_line)  # raises if the contact is left out
+        assert card.fn.value == "Synthetic Person", "BEHAVIOR: contact still served"
+        assert len(card.contents.get("photo", [])) == 1, "BEHAVIOR: one photo in, one photo out"
+        assert "ENCODING" not in card.photo.params, "BEHAVIOR: undecodable payload not served as binary"
+
+    @pytest.mark.parametrize("value", ["data:image/jpeg;base64,TQ", "data:image/jpeg;base64,TQ%3D"])
+    def test_undecodable_base64_line_is_kept_unchanged(self, value):
+        assert _vcard4_media_line_to_3("PHOTO", [], value, None) is None
+
+
+def test_vcard4_undecodable_base64_photo_keeps_the_contact(mem_db, user):
+    _, _, _, card = TestVCard4PhotoDowngrade._serve(mem_db, user, "PHOTO:data:image/jpeg;base64,TQ")
+    assert card.fn.value == "Synthetic Person", "BEHAVIOR: contact still served"
+    assert len(card.contents.get("photo", [])) == 1, "BEHAVIOR: one photo in, one photo out"
+    assert "ENCODING" not in card.photo.params, "BEHAVIOR: undecodable payload not served as binary"
