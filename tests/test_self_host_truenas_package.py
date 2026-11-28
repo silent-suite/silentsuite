@@ -101,7 +101,7 @@ def test_router_keeps_requests_out_of_logs_and_guards_owner_login():
 def test_wrapper_inspects_data_before_touching_it():
     checks = WRAPPER.index("os.lstat(path)")
     assert checks < WRAPPER.index("config.write(handle)")
-    assert checks < WRAPPER.index("os.chmod(path, 0o600)")
+    assert checks < WRAPPER.index("private(path, 0o600)")
     assert checks < WRAPPER.index("os.O_EXCL | os.O_NOFOLLOW")
     assert "--no-access-log" in WRAPPER
 

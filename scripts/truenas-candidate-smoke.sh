@@ -90,9 +90,9 @@ PY
   rm -f "$app/templates/test_values/neg-values.yaml"
   pass "render refuses $name"
 }
-negative "a trailing space in the database password" "must not start or end with spaces" 'v["silentsuite"]["db_password"] += " "'
-negative "a leading space in the database password" "must not start or end with spaces" 'v["silentsuite"]["db_password"] = " " + v["silentsuite"]["db_password"]'
-negative "a line break in the database password" "must not start or end with spaces" 'v["silentsuite"]["db_password"] = "abc\ndef"'
+negative "a trailing space in the database password" "start or end with spaces" 'v["silentsuite"]["db_password"] += " "'
+negative "a leading space in the database password" "start or end with spaces" 'v["silentsuite"]["db_password"] = " " + v["silentsuite"]["db_password"]'
+negative "a line break in the database password" "start or end with spaces" 'v["silentsuite"]["db_password"] = "abc\ndef"'
 negative "an empty database password" "must not be empty" 'v["silentsuite"]["db_password"] = ""'
 negative "neither a certificate nor the HTTPS proxy option" "Select a certificate" 'v["network"]["behind_https_proxy"] = False'
 negative "both a certificate and the HTTPS proxy option" "Choose one" 'v["network"]["certificate_id"] = "1"'
