@@ -1082,7 +1082,7 @@ class TestVCard3DataUriPhoto:
     def test_undecodable_base64_photo_keeps_the_contact(self, mem_db, user, payload):
         stored_line = f"PHOTO;VALUE=URI:data:image/jpeg;base64,{payload}"
         card = self._serve(mem_db, user, stored_line)  # raises if the contact is left out
-        assert card.fn.value == "Synthetic Person", "BEHAVIOR: contact still served"
+        assert card.uid.value == "photo-1", "BEHAVIOR: contact still served"
         assert len(card.contents.get("photo", [])) == 1, "BEHAVIOR: one photo in, one photo out"
         assert "ENCODING" not in card.photo.params, "BEHAVIOR: undecodable payload not served as binary"
 
@@ -1093,6 +1093,6 @@ class TestVCard3DataUriPhoto:
 
 def test_vcard4_undecodable_base64_photo_keeps_the_contact(mem_db, user):
     _, _, _, card = TestVCard4PhotoDowngrade._serve(mem_db, user, "PHOTO:data:image/jpeg;base64,TQ")
-    assert card.fn.value == "Synthetic Person", "BEHAVIOR: contact still served"
+    assert card.uid.value == "photo-1", "BEHAVIOR: contact still served"
     assert len(card.contents.get("photo", [])) == 1, "BEHAVIOR: one photo in, one photo out"
     assert "ENCODING" not in card.photo.params, "BEHAVIOR: undecodable payload not served as binary"
