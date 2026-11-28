@@ -81,15 +81,15 @@ commit(work, 'init')
 const historical = commit(work, `chore: old\n\n${BOT_TRAILER}\n`).sha
 commit(work, 'chore: clean base tip')
 ok(work, ['push', '-q', 'origin', 'main'])
-const installed = install(work, ['main'])
+const installed = install(work, 'main')
 ok(work, ['worktree', 'add', '-q', '-b', 'feature', wt, 'origin/main'])
 
 test('installer writes the common hook directory, is idempotent and linked worktrees inherit it', () => {
   assert.equal(installed.written.length, 3)
-  assert.equal(install(work, ['main']).written.length, 0)
+  assert.equal(install(work, 'main').written.length, 0)
   assert.equal(ok(wt, ['rev-parse', '--path-format=absolute', '--git-path', 'hooks']), installed.hooks)
   assert.match(readFileSync(join(installed.hooks, 'pre-push'), 'utf8'), /pre-push --base main -- "\$@"/)
-  assert.match(hookFiles(['dev', 'main'])['pre-push'], /pre-push --base dev --base main -- "\$@"/)
+  assert.match(hookFiles('main')['pre-push'], /pre-push --base main -- "\$@"/)
   assert.equal(readFileSync(join(installed.hooks, 'commit-metadata-guard.mjs'), 'utf8'), readFileSync(guard, 'utf8'))
 })
 
@@ -97,13 +97,13 @@ test('installer refuses existing hooks and core.hooksPath without overwriting', 
   const other = join(root, 'other')
   ok(root, ['init', '-q', other])
   writeFileSync(join(other, '.git/hooks/pre-push'), '#!/bin/sh\nexit 0\n')
-  assert.throws(() => install(other, ['main']), /refusing to overwrite/)
+  assert.throws(() => install(other, 'main'), /refusing to overwrite/)
   assert.equal(readFileSync(join(other, '.git/hooks/pre-push'), 'utf8'), '#!/bin/sh\nexit 0\n')
   const configured = join(root, 'configured')
   ok(root, ['init', '-q', configured])
   ok(configured, ['config', 'core.hooksPath', 'custom-hooks'])
-  assert.throws(() => install(configured, ['main']), /core\.hooksPath is set/)
-  assert.throws(() => install(work, ['-main']), /invalid --base/)
+  assert.throws(() => install(configured, 'main'), /core\.hooksPath is set/)
+  assert.throws(() => install(work, '-main'), /invalid --base/)
 })
 
 test('installer refuses when another linked worktree overrides core.hooksPath', () => {
@@ -114,7 +114,7 @@ test('installer refuses when another linked worktree overrides core.hooksPath', 
   ok(primary, ['worktree', 'add', '-q', '-b', 'other', linked])
   ok(primary, ['config', 'extensions.worktreeConfig', 'true'])
   ok(linked, ['config', '--worktree', 'core.hooksPath', join(root, 'elsewhere-hooks')])
-  assert.throws(() => install(primary, ['main']), /core\.hooksPath is set/)
+  assert.throws(() => install(primary, 'main'), /core\.hooksPath is set/)
   assert.equal(existsSync(join(primary, '.git/hooks/pre-push')), false)
   assert.equal(existsSync(join(primary, '.git/hooks/commit-metadata-guard.mjs')), false)
 })
@@ -122,7 +122,7 @@ test('installer refuses when another linked worktree overrides core.hooksPath', 
 test('reinstall restores the executable mode of identical hooks and Git runs them again', () => {
   chmodSync(join(installed.hooks, 'commit-msg'), 0o644)
   chmodSync(join(installed.hooks, 'pre-push'), 0o644)
-  const again = install(work, ['main'])
+  const again = install(work, 'main')
   assert.deepEqual(again.repaired.sort(), [join(installed.hooks, 'commit-msg'), join(installed.hooks, 'pre-push')])
   for (const name of ['commit-msg', 'pre-push', 'commit-metadata-guard.mjs']) {
     assert.equal(statSync(join(installed.hooks, name)).mode & 0o777, 0o755, name)
@@ -199,75 +199,6 @@ test('already-pushed violations, new branches with imported ancestors, and delet
   assert.equal(head(work, 'refs/remotes/origin/legacy'), '')
 })
 
-test('with dev and main bases, pre-push checks against the one declared or destination target', () => {
-  const promoRemote = join(root, 'promo-remote.git')
-  const clone = join(root, 'promo-work')
-  ok(root, ['init', '-q', '--bare', '-b', 'main', promoRemote])
-  ok(root, ['clone', '-q', promoRemote, clone])
-  ok(clone, ['symbolic-ref', 'HEAD', 'refs/heads/main'])
-  commit(clone, 'init')
-  ok(clone, ['push', '-q', 'origin', 'main'])
-  ok(clone, ['checkout', '-q', '-b', 'dev'])
-  // Already pushed to dev before hooks existed; not yet on main.
-  const bad = commit(clone, `feat: dev-only\n\n${BOT_TRAILER}\n`).sha
-  ok(clone, ['push', '-q', 'origin', 'dev'])
-  assert.equal(install(clone, ['dev', 'main']).written.length, 3)
-  // B: a clean feature for dev is not rejected because dev already contains bad.
-  ok(clone, ['checkout', '-q', '-b', 'feature-c', 'origin/dev'])
-  assert.equal(commit(clone, 'feat: clean C').status, 0)
-  const undeclared = run(clone, ['push', 'origin', 'feature-c'])
-  assert.notEqual(undeclared.status, 0, 'an undeclared target must fail closed, not silently use dev')
-  assert.match(undeclared.stderr, /git config branch\.feature-c\.commitMetadataBase <dev\|main>/)
-  assert.equal(head(clone, 'refs/remotes/origin/feature-c'), '')
-  ok(clone, ['config', 'branch.feature-c.commitMetadataBase', 'dev'])
-  ok(clone, ['push', '-q', 'origin', 'feature-c'])
-  // Empty declarations are counted and invalid, alone or next to a valid value.
-  ok(clone, ['checkout', '-q', '-b', 'decl', 'origin/dev'])
-  assert.equal(commit(clone, 'feat: clean D').status, 0)
-  const key = 'branch.decl.commitMetadataBase'
-  const declare = values => {
-    run(clone, ['config', '--unset-all', key])
-    values.forEach((value, i) => ok(clone, ['config', ...(i ? ['--add'] : []), key, value]))
-    assert.equal(run(clone, ['config', '--get-all', '-z', key]).stdout.split('\0').length - 1, values.length)
-  }
-  for (const values of [[''], ['dev', ''], ['', 'dev'], ['', '']]) {
-    declare(values)
-    const result = run(clone, ['push', 'origin', 'decl'])
-    assert.notEqual(result.status, 0, JSON.stringify(values))
-    assert.match(result.stderr, /fail closed\): refs\/heads\/decl: invalid commitMetadataBase declaration/, JSON.stringify(values))
-    assert.equal(head(clone, 'refs/remotes/origin/decl'), '')
-  }
-  declare(['dev'])
-  ok(clone, ['push', '-q', 'origin', 'decl'])
-  // A: a promotion toward main is checked against main, so dev cannot hide bad.
-  ok(clone, ['checkout', '-q', '-b', 'promotion', 'origin/dev'])
-  assert.equal(commit(clone, 'chore: clean promotion tip').status, 0)
-  ok(clone, ['config', 'branch.promotion.commitMetadataBase', 'main'])
-  const push = run(clone, ['push', 'origin', 'promotion'])
-  assert.notEqual(push.status, 0)
-  assert.match(push.stderr, new RegExp(`${bad}: automated co-authored-by trailer`))
-  assert.equal(head(clone, 'refs/remotes/origin/promotion'), '')
-  // Exact protected destinations select themselves; conflicts and invalid targets fail closed.
-  const toMain = run(clone, ['push', 'origin', 'feature-c:refs/heads/main'])
-  assert.notEqual(toMain.status, 0)
-  assert.match(toMain.stderr, /conflicting/)
-  const direct = run(clone, ['push', 'origin', 'HEAD:refs/heads/main'])
-  assert.notEqual(direct.status, 0)
-  assert.match(direct.stderr, new RegExp(`${bad}: automated co-authored-by trailer`))
-  ok(clone, ['config', 'branch.promotion.commitMetadataBase', 'staging'])
-  assert.match(run(clone, ['push', 'origin', 'promotion']).stderr, /fail closed/)
-  ok(clone, ['config', '--add', 'branch.promotion.commitMetadataBase', 'main'])
-  assert.match(run(clone, ['push', 'origin', 'promotion']).stderr, /fail closed/)
-  assert.equal(head(clone, 'refs/remotes/origin/promotion'), '')
-  // CI range stays single-target.
-  assert.equal(guardRun(clone, ['range', '--base', 'origin/dev', '--head', 'promotion']).status, 0)
-  assert.equal(guardRun(clone, ['range', '--base', 'origin/main', '--head', 'promotion']).status, 1)
-  ok(clone, ['checkout', '-q', '-b', 'from-main', 'origin/main'])
-  assert.equal(commit(clone, 'feat: clean').status, 0)
-  ok(clone, ['config', 'branch.from-main.commitMetadataBase', 'main'])
-  ok(clone, ['push', '-q', 'origin', 'from-main'])
-})
-
 test('missing or unresolvable refs and unnamed remotes fail closed', () => {
   const zero = '0'.repeat(40)
   const tip = head(wt, 'feature')
@@ -275,9 +206,10 @@ test('missing or unresolvable refs and unnamed remotes fail closed', () => {
   const missingBase = guardRun(wt, ['pre-push', '--base', 'no-such-branch', '--', 'origin', remote], line)
   assert.equal(missingBase.status, 2)
   assert.match(missingBase.stderr, /fail closed/)
-  const toMissingDev = `refs/heads/feature ${tip} refs/heads/dev ${zero}\n`
-  assert.equal(guardRun(wt, ['pre-push', '--base', 'main', '--base', 'dev', '--', 'origin', remote], toMissingDev).status, 2)
-  assert.equal(guardRun(wt, ['pre-push', '--base', 'main', '--base', 'dev', '--', 'origin', remote], line).status, 2)
+  const twoBases = guardRun(wt, ['pre-push', '--base', 'main', '--base', 'other', '--', 'origin', remote], line)
+  assert.equal(twoBases.status, 2)
+  assert.match(twoBases.stderr, /exactly one --base/)
+  assert.equal(guardRun(wt, ['range', '--base', 'origin/main', '--base', 'origin/main', '--head', 'HEAD']).status, 2)
   assert.equal(guardRun(wt, ['pre-push', '--base', 'main', '--', 'origin', remote], line).status, 0)
   assert.equal(guardRun(wt, ['pre-push', '--base', 'main', '--', remote, remote], line).status, 2)
   assert.equal(guardRun(wt, ['pre-push', '--base', 'main', '--', 'origin', remote], 'garbage\n').status, 2)

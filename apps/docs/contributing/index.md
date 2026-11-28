@@ -10,6 +10,8 @@ Thank you for your interest in contributing to SilentSuite. This guide will help
 | [Architecture Overview](./architecture-overview.md) | How the codebase is organized |
 | [Code Conventions](./code-conventions.md) | Style guide and patterns we follow |
 | [Testing](./testing.md) | How to run and write tests |
+| [Authenticated Restore Smoke](https://github.com/silent-suite/silentsuite/blob/main/docs/contributing/authenticated-restore-smoke.md) | Verify encrypted-session restore with redacted diagnostics |
+| [Notes Markdown Profile](https://github.com/silent-suite/silentsuite/blob/main/docs/contributing/notes-markdown.md) | What a note may contain and how clients show it, with shared test vectors |
 | [Pull Request Guide](./pull-request-guide.md) | How to submit changes |
 | [Translation Guide](https://github.com/silent-suite/silentsuite/blob/main/TRANSLATING.md) | Help translate the web app safely and consistently |
 

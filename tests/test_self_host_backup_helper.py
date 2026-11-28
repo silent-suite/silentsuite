@@ -29,7 +29,6 @@ CI_SERVER = ROOT / ".github" / "workflows" / "ci-server.yml"
 
 DOCS = (
     ROOT / "self-host" / "SELF-HOSTING.md",
-    *sorted((ROOT / "docs" / "self-hosting").glob("*.md")),
     *sorted((ROOT / "apps" / "docs" / "self-hosting").glob("*.md")),
 )
 
@@ -98,12 +97,8 @@ def test_documentation_does_not_script_destructive_data_loss(doc):
 
 
 def test_uninstall_docs_do_not_guess_a_recursive_deletion_target():
-    canonical = ROOT / "docs" / "self-hosting" / "uninstalling.md"
-    mirror = ROOT / "apps" / "docs" / "self-hosting" / "uninstalling.md"
-    canonical_bytes = canonical.read_bytes()
-    assert mirror.read_bytes() == canonical_bytes, "the uninstall docs mirrors must be byte-identical"
-
-    text = canonical_bytes.decode("utf-8")
+    canonical = ROOT / "apps" / "docs" / "self-hosting" / "uninstalling.md"
+    text = canonical.read_text(encoding="utf-8")
     assert "pwd -P" in text, "operators must inspect and record the canonical install path"
     assert "remove that exact path yourself" in text
     for number, line in executable_lines(canonical):
@@ -129,7 +124,6 @@ def test_documentation_does_not_run_a_mutable_helper_image(doc):
 def test_the_canonical_docs_point_operators_at_the_helper():
     for doc in (
         ROOT / "self-host" / "SELF-HOSTING.md",
-        ROOT / "docs" / "self-hosting" / "backup-and-restore.md",
         ROOT / "apps" / "docs" / "self-hosting" / "backup-and-restore.md",
     ):
         text = doc.read_text(encoding="utf-8")
@@ -140,7 +134,6 @@ def test_the_canonical_docs_point_operators_at_the_helper():
 def test_the_canonical_docs_are_honest_about_recovery():
     for doc in (
         ROOT / "self-host" / "SELF-HOSTING.md",
-        ROOT / "docs" / "self-hosting" / "backup-and-restore.md",
         ROOT / "apps" / "docs" / "self-hosting" / "backup-and-restore.md",
     ):
         text = doc.read_text(encoding="utf-8")
@@ -841,12 +834,3 @@ def test_the_fixture_cleans_up_only_after_itself():
     assert harness.count("IMAGE=") == 1
     assert "postgres@sha256:" in harness
     assert ":latest" not in harness
-
-
-@pytest.mark.parametrize("name", ["backup-and-restore.md", "uninstalling.md"])
-def test_the_two_documentation_trees_stay_aligned(name):
-    """These two pages are sibling copies; a fix applied to one is a fix to both."""
-
-    published = (ROOT / "docs" / "self-hosting" / name).read_text(encoding="utf-8")
-    site = (ROOT / "apps" / "docs" / "self-hosting" / name).read_text(encoding="utf-8")
-    assert published == site, f"docs/self-hosting/{name} and its apps/docs sibling have drifted"

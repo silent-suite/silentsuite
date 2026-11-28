@@ -24,7 +24,6 @@
     <string name="skip">Skip</string>
     <string name="retry">Retry</string>
 
-    <string name="notification_channel_crash_reports">Crash Reports</string>
     <string name="notification_channel_debugging">Debugging</string>
     <string name="notification_channel_general">Other important messages</string>
     <string name="notification_channel_sync">Synchronization</string>
@@ -34,11 +33,6 @@
     <string name="notification_channel_sync_warnings_desc">Non-fatal synchronization problems like dismissed changes of read-only collections</string>
     <string name="notification_channel_sync_status">Status messages</string>
     <string name="notification_channel_sync_status_desc">Informational status messages like the sync change summary</string>
-
-    <!-- Crash -->
-    <string name="crash_title">SilentSuite has crashed!</string>
-    <string name="crash_message">Please send stack trace to developers.</string>
-    <string name="crash_email_body">If possible, please include any other relevant information such as what you did to trigger this error.</string>
 
     <!-- startup dialogs -->
     <string name="startup_battery_optimization">Battery Optimization</string>
@@ -61,21 +55,12 @@
     <string name="logging_to_external_storage">Logging to external storage: %s</string>
     <string name="logging_to_external_storage_warning">Disabling will delete logs</string>
     <string name="logging_couldnt_create_file">Couldn\'t create external log file: %s</string>
-    <string name="logging_no_external_storage">External storage not found</string>
 
     <!-- AccountsActivity -->
     <string name="navigation_drawer_open">Open navigation drawer</string>
     <string name="navigation_drawer_close">Close navigation drawer</string>
     <string name="navigation_drawer_subtitle">End-to-end encrypted sync</string>
-    <string name="navigation_drawer_about">About / License</string>
     <string name="navigation_drawer_settings">Settings</string>
-    <string name="navigation_drawer_external_links">silentsuite.io</string>
-    <string name="navigation_drawer_website">silentsuite.io</string>
-    <string name="navigation_drawer_webapp">app.silentsuite.io</string>
-    <string name="navigation_drawer_guide">docs.silentsuite.io</string>
-    <string name="navigation_drawer_website_label">Website</string>
-    <string name="navigation_drawer_webapp_label">Web App</string>
-    <string name="navigation_drawer_guide_label">Documentation</string>
     <string name="navigation_drawer_add_account">Add account</string>
     <string name="navigation_drawer_logout">Sign out</string>
     <string name="navigation_drawer_sync_overview">Sync overview</string>
@@ -87,20 +72,12 @@
     <string name="account_switcher_current">Current account</string>
     <string name="account_switcher_not_current">Not current</string>
     <string name="navigation_drawer_theme">Theme</string>
-    <string name="navigation_drawer_faq">FAQ</string>
-    <string name="navigation_drawer_report_issue">Report issue</string>
-    <string name="navigation_drawer_contact">Contact</string>
-    <string name="navigation_drawer_calendar">Calendar</string>
-    <string name="navigation_drawer_tasks">Tasks</string>
-    <string name="navigation_drawer_contacts">Contacts</string>
     <string name="signup_returned_from_web">You’re back in SilentSuite. Sign in to finish setup.</string>
     <string name="signup_open_failed">Couldn’t open the signup page. Please try again.</string>
 
     <string name="account_list_empty">Welcome to SilentSuite!</string>
     <string name="accounts_global_sync_disabled">System-wide automatic synchronization is disabled</string>
     <string name="accounts_global_sync_enable">Enable</string>
-    <string name="accounts_showcase_add">Tap here to sign in or create an account to start syncing.</string>
-    <string name="accounts_missing_permissions">Missing permissions: %s</string>
 
     <!-- Legacy v1 migration strings removed — not applicable to SilentSuite -->
 
@@ -109,13 +86,11 @@
     <!-- AppSettingsActivity -->
     <string name="app_settings">Settings</string>
     <string name="app_settings_theme">Theme</string>
-    <string name="app_settings_user_interface">User interface</string>
     <string name="app_settings_notification_settings">Notification settings</string>
     <string name="app_settings_notification_settings_summary">Manage notification channels and their settings</string>
     <string name="app_settings_reset_hints">Reset hints</string>
     <string name="app_settings_reset_hints_summary">Re-enables hints which have been dismissed previously</string>
     <string name="app_settings_reset_hints_success">All hints will be shown again</string>
-    <string name="app_settings_sync">Sync</string>
     <string name="app_settings_prefer_tasksorg">Prefer Tasks.org tasks provider</string>
     <string name="app_settings_prefer_tasksorg_on">Will sync tasks with Tasks.org if available</string>
     <string name="app_settings_prefer_tasksorg_off">Will sync tasks with OpenTasks if available</string>
@@ -150,22 +125,12 @@
     <!-- AccountActivity -->
     <string name="account_synchronize_now">Sync now</string>
     <string name="account_synchronizing_now">Synchronizing now</string>
-    <string name="account_settings">Account settings</string>
-    <string name="account_delete">Sign out</string>
     <string name="account_show_fingerprint">Verify encryption fingerprint</string>
     <string name="account_delete_confirmation_title">Sign out?</string>
     <string name="account_delete_confirmation_text">Local copies of your contacts, calendars and tasks will be removed from this device. Your data on the server is safe.</string>
     <string name="account_sign_out_failed">Couldn’t sign out. Your account and local data were preserved.</string>
     <string name="account_sign_out_cleanup_failed">The account was signed out, but local cleanup didn’t finish.</string>
-    <string name="account_delete_collection_last_title">Can\'t delete last collection</string>
-    <string name="account_delete_collection_last_text">Deleting the last collection is not allowed, please create a new one if you\'d like to delete this one.</string>
-    <string name="account_showcase_view_collection">Tap a collection to view recent sync activity, import data, or manage members.</string>
-    <string name="account_click_install_tasks">Install OpenTasks</string>
     <string name="account_tasks_not_showing">Task app needed. Android does not include a built-in task provider. Install Tasks.org or OpenTasks to create and sync tasks.</string>
-    <string name="account_section_status_loading">Checking sync status…</string>
-    <string name="account_section_status_synced">Up to date</string>
-    <string name="account_section_status_syncing">Syncing…</string>
-    <string name="account_section_status_setup_needed">Finish setup</string>
     <string name="dashboard_encrypted_sync">End-to-end encrypted sync for this account</string>
     <string name="dashboard_services_title">Sync services</string>
     <string name="dashboard_collections_title">Collections</string>
@@ -173,7 +138,6 @@
     <string name="dashboard_status_syncing">Syncing…</string>
     <string name="dashboard_status_never_synced">First sync pending</string>
     <string name="dashboard_status_synced">Up to date</string>
-    <string name="dashboard_recently">recently</string>
     <string name="dashboard_status_requested">Sync requested</string>
     <string name="dashboard_status_queued">Sync queued</string>
     <string name="dashboard_status_settling">Finishing sync…</string>
@@ -248,19 +212,12 @@
     <!-- ViewCollection -->
     <string name="change_journal_title">Recent sync activity</string>
     <string name="tasks_not_showing">Task app needed. Android does not include a built-in task provider. Install Tasks.org or OpenTasks to create and sync tasks on this device.</string>
-    <string name="account_showcase_import">In order to import contacts and calendars into SilentSuite, you need to click on the menu, and choose \"Import\".</string>
-    <string name="account_owner">Owner: %s</string>
-    <string name="members_owner_only">Only the owner of this collection (%s) is allowed to view its members.</string>
     <string name="collection_shared_with_us">Shared with us</string>
     <string name="collection_recent_activity_loading">Loading recent activity...</string>
     <string name="collection_recent_activity_none">No recent activity yet</string>
     <string name="collection_activity_accessibility">%1$s. %2$s. %3$s</string>
     <string name="not_allowed_title">Not Allowed</string>
-    <string name="edit_owner_only">Only the owner of this collection (%s) is allowed to edit it.</string>
     <string name="edit_owner_only_anon">Only the owner of this collection is allowed to edit it.</string>
-    <string name="members_old_journals_not_allowed">Sharing of old-style collections is not allowed. In order to share this collection, create a new one, and copy its contents over using the \"import\" dialog. If you are experiencing any issues, please contact support.</string>
-    <string name="use_native_apps_title">Did you know?</string>
-    <string name="use_native_apps_body">SilentSuite seamlessly integrates with Android, so to use it, just use your existing address book and calendar apps!\n\nFor more information, please check out the user guide.</string>
 
     <!-- CollectionMembers -->
     <string name="collection_members_title">Members</string>
@@ -269,7 +226,6 @@
     <string name="collection_members_list_load_error">Couldn\'t load members. Check your connection and try again.</string>
     <string name="collection_members_add">Invite user</string>
     <string name="collection_members_add_read_only">Read only</string>
-    <string name="collection_member_read_only">Read-only access</string>
     <string name="collection_member_accessibility">%1$s, member</string>
     <string name="collection_member_accessibility_read_only">%1$s, read-only member</string>
     <string name="collection_member_accessibility_admin">%1$s, administrator</string>
@@ -279,7 +235,6 @@
     <string name="trust_fingerprint_title">Verify security fingerprint</string>
     <string name="trust_fingerprint_body">Verify %s\'s security fingerprint to ensure the encryption is secure.</string>
     <string name="collection_members_error_user_not_found">User (%s) not found</string>
-    <string name="collection_members_removing">Removing member</string>
     <string name="collection_members_remove_error">Error removing member</string>
     <string name="collection_members_remove_title">Remove member</string>
     <string name="collection_members_remove">Would you like to revoke %s\'s access?\nPlease be advised that a malicious user would potentially be able to retain access to encryption keys. Please refer to the FAQ for more information.</string>
@@ -353,7 +308,6 @@
     <!-- AddAccountActivity -->
     <string name="login_title">Add account</string>
     <string name="login_username">Email</string>
-    <string name="login_username_error">Valid email address required</string>
     <string name="login_email_address">Email</string>
     <string name="login_email_address_error">Valid email required</string>
     <string name="login_password">Password</string>
@@ -363,12 +317,9 @@
     <string name="login_custom_server_collapsed">Custom server settings, collapsed</string>
     <string name="login_custom_server_expanded">Custom server settings, expanded</string>
     <string name="login_encryption_password">Encryption Password</string>
-    <string name="login_encryption_set_new_password">Please set your encryption password below, and make sure you got it right, as it *can\'t* be recovered if lost!</string>
-    <string name="login_encryption_enter_password">You are logged in as \"%s\". Please enter your encryption password to continue, or log out from the side menu.</string>
     <string name="login_encryption_check_password">* Please make sure you remember your password, as it can\'t be recovered if lost!</string>
     <string name="login_encryption_extra_info">* This password is used to encrypt your data, unlike the previous one, which is used to log into the service.\nYou are asked to choose a separate encryption password for security reasons. For more information, please refer to the FAQ at: %s</string>
     <string name="login_password_required">Password required</string>
-    <string name="login_login">Log In</string>
     <string name="login_sign_in_and_connect">Sign in and set up sync</string>
     <string name="login_signup">Sign Up</string>
     <string name="account_choice_title">Sync privately with Android apps</string>
@@ -378,25 +329,11 @@
     <string name="account_choice_contacts">Synced contacts appear in compatible contacts apps on this device.</string>
     <string name="account_choice_tasks">Synced tasks appear in Tasks.org or OpenTasks when installed.</string>
     <string name="login_existing_account_heading">Existing account</string>
-    <string name="login_existing_account_body">Enter the email address and password for your existing account.</string>
-    <string name="login_signup_heading">New to SilentSuite?</string>
-    <string name="login_signup_body">We’ll open the SilentSuite website. After you create your account, you’ll return to this app to finish setup.</string>
     <string name="login_signup_action">Create an account on the web</string>
     <string name="login_finish">Finish</string>
     <string name="login_back">Back</string>
-    <string name="login_enter_service_details">Connect Android sync</string>
-    <string name="login_sign_in_title">Set up SilentSuite</string>
-    <string name="login_sign_in_supporting_copy">Sign in with an existing account, or create a new account on the web.</string>
-    <string name="login_android_apps_heading">Works with Android apps</string>
-    <string name="login_calendar_outcome">Synced events appear in Android Calendar.</string>
-    <string name="login_contacts_outcome">Synced contacts appear in Android Contacts.</string>
-    <string name="login_tasks_outcome">Synced tasks appear in Tasks.org or OpenTasks when installed.</string>
     <string name="login_privacy_reassurance">Your encryption keys stay on this device.</string>
-    <string name="login_bridge_sync">Syncs with your phone\'s calendar, contacts, and task apps.</string>
-    <string name="login_bridge_encrypted">Your data is encrypted before it leaves this device.</string>
     <string name="login_enter_encryption_details">Secret Encryption Password</string>
-    <string name="login_encryption_account_label">Account:</string>
-    <string name="login_service_details_description">This is your login password, *not* your encryption password!</string>
     <string name="login_forgot_password">Forgot password?</string>
     <string name="login_forgot_password_message">SilentSuite cannot reset a forgotten password or recover your encrypted data for you. Your password protects your encryption keys.\n\nCheck your password manager for a saved password. Changing your password in settings requires your current password.\n\nIf you still have access to your data on another device, keep that access and back up any data you can before signing out or removing the account.</string>
 
@@ -410,9 +347,7 @@
     <string name="setting_up_encryption_content">Setting up end-to-end encryption…</string>
     <string name="setup_state_expired">Setup expired before it could finish. Please try signing in again.</string>
 
-    <string name="account_creation_failed">Account creation failed</string>
     <string name="wrong_encryption_password">Wrong encryption password</string>
-    <string name="wrong_encryption_password_content">Got an integrity error while accessing your account, which most likely means you put in the wrong encryption password.\nPlease note that the username is case sensitive, so please also try different capitalizations, for example make the first character uppercase.\n\nError: %s</string>
 
 
     <!-- ChangeEncryptionPasswordActivity -->
@@ -421,9 +356,6 @@
     <string name="change_encryption_password_are_you_sure">Are you sure you would like to continue? The process can not be stopped half way or be undone, and may take a while to complete.</string>
     <string name="change_encryption_password_success_title">Encryption Password Change</string>
     <string name="change_encryption_password_success_body">Encryption password has been successfully changed!</string>
-
-    <!-- SetupUserInfoFragment -->
-    <string name="login_user_info_error_title">Error Setting User Info</string>
 
     <!-- ImportFragment -->
     <string name="import_dialog_title">Import</string>
@@ -436,7 +368,6 @@
     <string name="import_dialog_adding_entries">Adding entries...</string>
     <string name="import_dialog_success">Processed %1$d entries.\nAdded: %2$d\nChanged: %3$d\nSkipped: %4$d</string>
     <string name="import_dialog_partial_success">Processed %1$d entries.\nAdded: %2$d\nChanged: %3$d\nSkipped: %4$d\nFailed: %5$d\n\nSome entries could not be imported.</string>
-    <string name="import_permission_required">Reading storage permission is required for import.</string>
     <string name="import_account_top_notice">Choose what to copy into this collection. Only accounts that share their data with Android are listed, so some setups, such as some Outlook accounts, may be missing.</string>
     <string name="import_device_permission_calendar">To copy events from another account on this phone, SilentSuite needs to read and write calendars.</string>
     <string name="import_device_permission_contacts">To copy contacts from another account on this phone, SilentSuite needs to read and write contacts.</string>
@@ -452,7 +383,6 @@
     <string name="choose_file">Choose file</string>
 
     <!-- AccountSettingsActivity -->
-    <string name="settings_title">Settings: %s</string>
     <string name="settings_manage_account">Manage Account</string>
     <string name="settings_account_dashboard">Account Dashboard</string>
     <string name="settings_manage_account_summary">Manage your payment and account settings</string>
@@ -462,7 +392,6 @@
     <string name="settings_enter_password">Enter your password:</string>
     <string name="settings_encryption_password">Encryption Password</string>
     <string name="settings_encryption_password_summary">Change your encryption password</string>
-    <string name="settings_enter_encryption_password">Enter your encryption password:</string>
     <string name="settings_sync">Synchronization</string>
     <string name="settings_sync_interval">Sync interval</string>
     <string name="settings_sync_summary_manually">Only manually</string>
@@ -512,7 +441,6 @@
     <string name="edit_collection">Edit collection</string>
     <string name="create_collection_color">Set the collection\'s color</string>
     <string name="create_collection_choose_color">Choose collection color</string>
-    <string name="create_collection_creating">Creating collection</string>
     <string name="create_collection_display_name">Display name (title) of this collection:</string>
     <string name="create_collection_display_name_required">Title is required</string>
     <string name="create_collection_description">Description (optional):</string>
@@ -524,7 +452,6 @@
     <string name="delete_collection">Delete</string>
     <string name="delete_collection_confirm_title">Are you sure?</string>
     <string name="delete_collection_confirm_warning">This collection (%s) and all its data will be removed from the server.</string>
-    <string name="delete_collection_deleting_collection">Deleting collection</string>
 
     <!-- JournalViewer -->
     <string name="journal_entries_list_empty">No recent sync activity.\nCreate or edit items in your Android app, then sync.</string>
@@ -560,11 +487,9 @@
     <string name="sync_error_contacts">Contacts sync failed (%s)</string>
     <string name="sync_error_tasks">Tasks sync failed (%s)</string>
     <string name="sync_error">Error while %s</string>
-    <string name="sync_error_integrity">Integrity error while %s</string>
     <string name="sync_error_http_dav">Server error while %s</string>
     <string name="sync_error_unavailable">Could not connect to server while %s</string>
     <string name="sync_error_local_storage">Database error while %s</string>
-    <string name="sync_error_journal_readonly">Collection is read only</string>
     <string name="sync_error_permission_denied">Permission denied: %s</string>
     <string name="sync_phase_prepare">preparing synchronization</string>
     <string name="sync_phase_journals">synchronizing collections</string>
@@ -573,11 +498,9 @@
     <string name="sync_phase_create_local_entries">creating local entries</string>
     <string name="sync_phase_fetch_entries">fetching remote entries</string>
     <string name="sync_phase_apply_remote_entries">applying remote entries</string>
-    <string name="sync_phase_apply_local_entries">reapplying local entries</string>
     <string name="sync_phase_push_entries">pushing entries</string>
     <string name="sync_phase_post_processing">post processing</string>
     <string name="sync_error_unauthorized">Authentication failed</string>
-    <string name="sync_error_user_inactive">User is inactive</string>
     <string name="sync_successfully_calendar">Calendar \"%s\" modified (%s)</string>
     <string name="sync_successfully_contacts">Contacts modified (%s)</string>
     <string name="sync_successfully_tasks">Tasks \"%s\" modified (%s)</string>
@@ -612,32 +535,12 @@
     <!-- Event (from Etar) -->
     <string name="event_info_organizer">Organizer:</string>
 
-    <!-- Notifications -->
-    <string name="notification_channel_name">SilentSuite</string>
-    <string name="notification_channel_description">SilentSuite notifications</string>
-
-    <!-- Billing / Subscription -->
-    <string name="sync_blocked_subscription_title">Sync paused</string>
-    <string name="sync_blocked_subscription_message">Your subscription is inactive. Your data is safe — reactivate to resume syncing.</string>
-
     <!-- Subscription status -->
-    <string name="subscription_plan_personal">Personal Plan</string>
-    <string name="subscription_plan_founding">Founding Member</string>
-    <string name="subscription_plan_trial">Trial</string>
-    <string name="subscription_plan_unknown">SilentSuite</string>
-    <string name="subscription_status_active">Active</string>
-    <string name="subscription_status_trialing">Trial</string>
     <string name="subscription_status_past_due">Payment pending</string>
     <string name="subscription_status_cancelled">Cancelled</string>
     <string name="subscription_status_expired">Expired</string>
-    <string name="subscription_status_unknown">Status unavailable</string>
-    <string name="subscription_renews">Active — renews %s</string>
-    <string name="subscription_expires">Active — expires %s</string>
-    <string name="subscription_trial_days">%d days remaining in trial</string>
     <string name="subscription_expired_message">Your subscription has expired. Your data is safe — tap to reactivate.</string>
-    <string name="subscription_manage">Manage Subscription</string>
     <string name="subscription_reactivate">Reactivate</string>
-    <string name="subscription_loading">Loading subscription status…</string>
     <!-- Theme mode arrays -->
     <string name="settings_theme_light">Light</string>
     <string name="settings_theme_dark">Dark</string>
@@ -654,7 +557,6 @@
     </string-array>
 
     <string name="post_login_setup_title">Finish setting up</string>
-    <string name="post_login_setup_status">%1$s</string>
     <string name="post_login_stage_connect">Account</string>
     <string name="post_login_stage_prepare">Android apps</string>
     <string name="post_login_stage_ready">Ready</string>
@@ -714,21 +616,13 @@
     <string name="post_login_ambiguous_body">SilentSuite can\'t prove that this setup owns the current Android account, so it won\'t change or remove it.</string>
     <string name="post_login_setup_continue">Continue setup</string>
     <string name="post_login_skip_for_now">Skip for now</string>
-    <string name="post_login_setup_skip_integrations">Skip for now</string>
     <string name="post_login_setup_remove_incomplete">Remove and sign in again</string>
     <string name="post_login_setup_done">Open sync overview</string>
-    <string name="post_login_setup_permissions">Allow SilentSuite to read and update local copies in Android Calendar and Contacts. Task access is requested only when a compatible task app is installed.</string>
-    <string name="post_login_setup_ready">Setup is ready. Initial sync was requested and may continue later; permissions, provider availability, network access, and Android sync settings can limit when data appears.</string>
-    <string name="post_login_setup_ready_master_sync_off">Setup is ready. Initial sync was requested, but Android master sync is off. You can finish now and enable it later in Android settings.</string>
-    <string name="post_login_setup_ready_requested">Setup is ready; initial sync was requested only and may still be delayed or unavailable offline.</string>
     <string name="post_login_setup_limit_master_sync">Android master sync is off.</string>
     <string name="post_login_setup_limit_calendar">Calendar permission is not granted.</string>
     <string name="post_login_setup_limit_contacts">Contacts permission is not granted.</string>
     <string name="post_login_setup_limit_tasks">No supported task provider is installed.</string>
     <string name="post_login_setup_limit_offline">Network connectivity is currently unavailable.</string>
-    <string name="post_login_setup_recovery">This incomplete account must be removed before you can sign in again.</string>
-    <string name="post_login_setup_removal_pending">Removing the incomplete account…</string>
-    <string name="post_login_setup_removal_failed">Removal didn\'t finish</string>
     <string name="post_login_setup_sync_retry">Android sync setup could not be completed. Check Android sync settings and try Continue setup again.</string>
     <string name="setup_account_busy_retry">An account with these details is still being created or already exists. Please try again.</string>
     <string name="post_login_setup_retry_inventory">Retry collection recovery</string>
@@ -795,7 +689,6 @@
     <string name="notes_syncing_notes">Syncing the notes in this notebook.</string>
     <string name="notes_not_synced">Notes have not synced to this device yet. Pull down to sync.</string>
     <string name="notes_untitled">Untitled</string>
-    <string name="notes_manage_notebook">Manage notebook</string>
     <string name="notes_notebooks_hint">Tap a notebook to read its notes. Touch and hold to manage sharing and settings.</string>
     <string name="notes_read_only_banner">This notebook is read-only.</string>
     <string name="notes_discard_unfinished_editing">A discard of unsynced text did not finish. Finish it in Settings, Unsynced Notes, to edit notes.</string>

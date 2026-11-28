@@ -1,2 +1,0 @@
-* Fix debug information for failed login attempts
-* Improve error message for bad encryption passwords

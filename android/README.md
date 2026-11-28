@@ -21,15 +21,16 @@ Based on [EteSync for Android](https://github.com/etesync/android) by Ricki Hirn
 
 # Building
 
-SilentSuite uses `git-submodules`, so cloning the code requires slightly different commands.
+The vendored libraries (`cert4android`, `ical4android`, `vcard4android`) are plain
+directories in this repository and build as subprojects of `android/`, so a normal clone is enough.
 
-1. Clone the repo: `git clone --recurse-submodules https://github.com/silent-suite/silentsuite`
+1. Clone the repo: `git clone https://github.com/silent-suite/silentsuite`
 2. Change to the directory `cd silentsuite/android`
 3. Open with Android studio or build with gradle:
   1. Android studio (easier): `android-studio .`
   2. Gradle: `./gradlew assembleDebug`
 
-To update the code to the latest version, run: `git pull --rebase --recurse-submodules`
+To update the code to the latest version, run: `git pull --rebase`
 
 
 Third Party Code

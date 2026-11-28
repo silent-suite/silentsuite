@@ -154,7 +154,7 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 229, f"expected 229 Android resource XML files, found {len(files)}"
+    assert len(files) == 209, f"expected 209 Android resource XML files, found {len(files)}"
     assert {
         "drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml",
         # The month widget adds 19 XML files; all remain subject to the color rules below.
@@ -1109,8 +1109,7 @@ TOP_BAR = "@color/semantic_system_bar"
 ON_TOP_BAR = "@color/semantic_on_system_bar"
 LEGACY_WINDOW_BAR_ACTIVITIES = (
     ".ui.AppSettingsActivity", ".ui.AccountSettingsActivity", ".ui.DebugInfoActivity",
-    ".ui.WebViewActivity", ".ui.ViewCollectionActivity", ".ui.CollectionMembersActivity",
-    ".ui.JournalItemActivity",
+    ".ui.WebViewActivity",
 )
 # Attributes that would make the light overflow popup (which inherits the toolbar context
 # unless a popupTheme is set) draw white text on its light surface.
