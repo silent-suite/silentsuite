@@ -6,6 +6,7 @@ import SettingsPage from '../page'
 const state = vi.hoisted(() => ({
   pathname: '/settings',
   selfHosted: false,
+  isAdmin: false,
   redirect: vi.fn(),
   replace: vi.fn(),
   wide: false,
@@ -26,6 +27,10 @@ vi.mock('@/app/lib/self-hosted', () => ({
   get isSelfHosted() {
     return state.selfHosted
   },
+}))
+
+vi.mock('@/app/stores/use-auth-store', () => ({
+  useAuthStore: (selector: (value: { user: { isAdmin: boolean } }) => unknown) => selector({ user: { isAdmin: state.isAdmin } }),
 }))
 
 const hostedLinks = [
@@ -62,6 +67,7 @@ describe('settings navigation', () => {
   beforeEach(() => {
     state.pathname = '/settings'
     state.selfHosted = false
+    state.isAdmin = false
     state.redirect.mockClear()
     state.replace.mockClear()
     state.wide = false
@@ -157,12 +163,41 @@ describe('settings navigation', () => {
     state.selfHosted = true
     const view = render(<SettingsPage />)
     expect(navLinks().map((link) => link.getAttribute('href'))).not.toContain('/settings/subscription')
-    expect(navLinks()).toHaveLength(hostedLinks.length - 1)
+    // Self-hosted users are admins, so the overview adds the Admin link.
+    expect(navLinks()).toHaveLength(hostedLinks.length)
     view.unmount()
 
     renderDetail('/settings/account')
     expect(navLinks().map((link) => link.getAttribute('href'))).not.toContain('/settings/subscription')
     expect(navLinks()).toHaveLength(hostedLinks.length - 1)
+  })
+
+  // The desktop sidebar holds the Admin link; below md the sidebar is hidden, so the
+  // phone-width settings overview carries it instead.
+  it('lists Admin last in the overview for hosted admins only', () => {
+    const view = render(<SettingsPage />)
+    expect(within(settingsNav()).queryByRole('link', { name: /^Admin/ })).toBeNull()
+    view.unmount()
+
+    state.isAdmin = true
+    render(<SettingsPage />)
+    const admin = within(settingsNav()).getByRole('link', { name: /^Admin/ })
+    expect(admin).toHaveAttribute('href', '/admin')
+    expect(admin).toHaveClass('min-h-11')
+    expect(navLinks().at(-1)).toBe(admin)
+    expect(settingsNav().parentElement).toHaveClass('lg:hidden')
+  })
+
+  it('lists Admin in the overview for self-hosted users', () => {
+    state.selfHosted = true
+    render(<SettingsPage />)
+    expect(within(settingsNav()).getByRole('link', { name: /^Admin/ })).toHaveAttribute('href', '/admin')
+  })
+
+  it('keeps Admin out of the desktop rail, where the sidebar already links it', () => {
+    state.isAdmin = true
+    renderDetail('/settings/account')
+    expect(navLinks().map((link) => link.getAttribute('href'))).not.toContain('/admin')
   })
 
   it('shows a desktop-only grouped rail with the current page marked on detail routes', () => {
