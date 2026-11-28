@@ -22,38 +22,40 @@
         android:paddingEnd="@dimen/spacing_16"
         android:paddingBottom="@dimen/spacing_24">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:labelFor="@id/display_name"
-            android:text="@string/create_collection_display_name"
-            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
-
-        <EditText
-            android:id="@+id/display_name"
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/display_name_layout"
+            style="@style/Widget.AppTheme.Material3.TextInputLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="@dimen/spacing_16"
-            android:hint="@string/create_calendar_display_name_hint"
-            android:minHeight="@dimen/touch_target_min"
-            android:singleLine="true" />
+            android:hint="@string/create_collection_display_name">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:labelFor="@id/description"
-            android:text="@string/create_collection_description"
-            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/display_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="@dimen/touch_target_min"
+                android:singleLine="true"
+                android:textSize="16sp" />
+        </com.google.android.material.textfield.TextInputLayout>
 
-        <EditText
-            android:id="@+id/description"
+        <com.google.android.material.textfield.TextInputLayout
+            style="@style/Widget.AppTheme.Material3.TextInputLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="@dimen/spacing_16"
-            android:gravity="top|start"
-            android:inputType="textAutoCorrect|textMultiLine"
-            android:minHeight="@dimen/touch_target_min"
-            android:minLines="2" />
+            android:hint="@string/create_collection_description">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/description"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="top|start"
+                android:inputType="textAutoCorrect|textMultiLine"
+                android:minHeight="@dimen/touch_target_min"
+                android:minLines="2"
+                android:textSize="16sp" />
+        </com.google.android.material.textfield.TextInputLayout>
 
         <LinearLayout
             android:id="@+id/color_group"

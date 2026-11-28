@@ -25,6 +25,26 @@ class SiblingMaterialAccessibilityContractTest {
     }
 
     @Test
+    fun createCollectionFormUsesOutlinedFieldsPlainLabelsAndTextActions() {
+        val layout = source("res/layout/activity_create_collection.xml")
+        val strings = source("res/values/strings.xml")
+        val fragment = source("java/io/silentsuite/sync/ui/etebase/EditCollectionFragment.kt")
+
+        assertTrue(layout.contains("Widget.AppTheme.Material3.TextInputLayout"))
+        assertTrue(layout.contains("android:id=\"@+id/display_name\""))
+        assertTrue(layout.contains("android:id=\"@+id/description\""))
+        assertFalse(layout.contains("<EditText"))
+        assertTrue(strings.contains("<string name=\"create_collection_display_name\">Name</string>"))
+        assertTrue(strings.contains("<string name=\"create_collection_submit\">Create</string>"))
+        assertFalse(strings.contains("Display name (title)"))
+        listOf("activity_create_collection.xml", "fragment_edit_collection.xml").forEach {
+            assertFalse(source("res/menu/$it").contains("ic_save_light"))
+        }
+        assertTrue(fragment.contains("setTitle(R.string.create_collection_submit)"))
+        assertFalse(fragment.contains("title.setHint("))
+    }
+
+    @Test
     fun siblingLayoutsAreRtlSafeScrollableAndExposeNonColorStatus() {
         val layouts = listOf(
             "activity_permissions.xml",
@@ -87,7 +107,11 @@ class SiblingMaterialAccessibilityContractTest {
         assertTrue(activity.contains("ExactAccountRouting.validate"))
         assertTrue(activity.contains("accountCreationId = requireNotNull(creationId)"))
         assertTrue(activity.contains("findViewById<TextView>(R.id.account_name).text = account.name"))
-        assertTrue(layout.split("android:saveEnabled=\"false\"").size - 1 >= 2)
+        assertTrue(layout.split("android:saveEnabled=\"false\"").size - 1 >= 3)
+        assertTrue(layout.contains("@+id/confirm_new_encryption_password"))
+        assertTrue(layout.contains("@string/change_password_all_devices"))
+        assertFalse(activity.contains("R.string.setting_up_encryption"))
+        assertTrue(activity.contains("NewPasswordRules.matches(new_password, confirm_password)"))
         assertTrue(layout.contains("Widget.AppTheme.Material3.TextInputLayout"))
         assertTrue(activity.split("ExactAccountRouting.validate").size - 1 >= 4)
     }
@@ -119,6 +143,7 @@ class SiblingMaterialAccessibilityContractTest {
         assertTrue(fingerprint.contains("class FingerprintDialogFragment : DialogFragment()"))
         assertTrue(fingerprint.contains("ExactAccountRouting.validate"))
         assertTrue(fingerprint.contains("ARG_CREATION_ID"))
+        assertTrue(fingerprint.contains("setText(R.string.fingerprint_compare_hint)"))
         val copyCallback = fingerprint.substringAfter("setNeutralButton(R.string.copy_fingerprint)")
         assertTrue(copyCallback.indexOf("ExactAccountRouting.validate") < copyCallback.indexOf("clipboard.setPrimaryClip"))
         assertTrue(copyCallback.contains("dismissAllowingStateLoss()"))
@@ -142,5 +167,14 @@ class SiblingMaterialAccessibilityContractTest {
         assertTrue(layout.contains("android:accessibilityLiveRegion=\"polite\""))
         assertTrue(fragment.contains("if (stats.text != status)"))
         assertTrue(fragment.contains("stats.text = status"))
+    }
+
+    @Test
+    fun collectionScreenShowsItsNameOnceAndOneEmptyMessage() {
+        val fragment = source("java/io/silentsuite/sync/ui/etebase/ViewCollectionFragment.kt")
+
+        assertTrue(fragment.contains("findViewById<View>(R.id.display_name).visibility = View.GONE"))
+        assertTrue(fragment.contains("R.id.stats_row).visibility = if (count == 0) View.GONE else View.VISIBLE"))
+        assertFalse(source("res/values/strings.xml").contains("collection_recent_activity_none"))
     }
 }

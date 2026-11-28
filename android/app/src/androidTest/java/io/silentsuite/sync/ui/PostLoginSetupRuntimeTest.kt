@@ -36,6 +36,7 @@ import io.silentsuite.sync.ui.setup.PostLoginSetupMigration
 import io.silentsuite.sync.ui.setup.StartupDiagnosticReport
 import io.silentsuite.sync.ui.setup.StartupDiagnosticReportDialog
 import io.silentsuite.sync.utils.AndroidCompat
+import io.silentsuite.sync.utils.NotificationUtils
 import at.bitfire.ical4android.TaskProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -558,6 +559,19 @@ class PostLoginSetupRuntimeTest {
                         org.junit.Assert.assertTrue("Unapproved setup title: $title", title in approvedTitles)
                         org.junit.Assert.assertFalse(states.any { body == it.name })
                         org.junit.Assert.assertFalse(body.startsWith("Setup:"))
+                        val notificationHint = activity.findViewById<android.widget.TextView>(
+                            requiredViewId(activity, "setup_notification_hint")
+                        )
+                        assertEquals(
+                            "Allow notifications so SilentSuite can tell you when sync needs attention.",
+                            notificationHint.text.toString(),
+                        )
+                        assertEquals(
+                            if (state == PostLoginSetupState.READY &&
+                                NotificationUtils.shouldRequestPermission(activity)
+                            ) View.VISIBLE else View.GONE,
+                            notificationHint.visibility,
+                        )
                         org.junit.Assert.assertTrue(
                             activity.findViewById<View>(requiredViewId(activity, "setup_stepper"))
                                 .contentDescription.toString().startsWith("Setup progress, step ")
@@ -724,6 +738,22 @@ class PostLoginSetupRuntimeTest {
             })
             launchSetup(context, account, creationId) { activity ->
                 assertEquals("Android access wasn't allowed", setupTitle(activity))
+                assertEquals(
+                    "Contacts access wasn't allowed. Try again, or continue without it.",
+                    viewText(activity, "setup_body"),
+                )
+                assertEquals(
+                    "Events appear in Android Calendar.\nAllowed",
+                    viewText(activity, "setup_calendar_outcome"),
+                )
+                assertEquals(
+                    "Contacts appear in Android Contacts.\nNot allowed",
+                    viewText(activity, "setup_contacts_outcome"),
+                )
+                assertEquals(
+                    "Tasks appear in Tasks.org or OpenTasks when a compatible app is installed.",
+                    viewText(activity, "setup_tasks_outcome"),
+                )
                 assertEquals(PostLoginSetupState.PERMISSIONS, AccountSettings.setupState(manager, account, true))
             }
 
@@ -1273,6 +1303,10 @@ class PostLoginSetupRuntimeTest {
 
     private fun setupTitle(activity: PostLoginSetupActivity): String =
         activity.findViewById<android.widget.TextView>(requiredViewId(activity, "setup_title"))
+            .text.toString()
+
+    private fun viewText(activity: PostLoginSetupActivity, name: String): String =
+        activity.findViewById<android.widget.TextView>(requiredViewId(activity, name))
             .text.toString()
 
     private fun requiredViewId(activity: android.app.Activity, name: String): Int {

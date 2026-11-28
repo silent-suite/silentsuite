@@ -56,6 +56,7 @@ class ViewCollectionFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        hideNameInHeader(view)
         hideItemsForNotebook(view, requireIdentity().collectionType)
         runtimeFixture(requireContext(), requireIdentity())?.let { fixture ->
             initFixtureUi(view, fixture)
@@ -76,13 +77,24 @@ class ViewCollectionFragment : Fragment() {
         itemsModel.observe(viewLifecycleOwner) {
             val stats = view.findViewById<TextView>(R.id.stats)
             view.findViewById<View>(R.id.progressBar).visibility = View.GONE
-            val status = if (it.isEmpty()) {
-                getString(R.string.collection_recent_activity_none)
-            } else {
-                resources.getQuantityString(R.plurals.collection_recent_activity_items, it.size, it.size)
+            showCountRow(view, it.size)
+            if (it.isNotEmpty()) {
+                val status = resources.getQuantityString(R.plurals.collection_recent_activity_items, it.size, it.size)
+                if (stats.text != status) stats.text = status
             }
-            if (stats.text != status) stats.text = status
+            hideItemsForNotebook(view, requireIdentity().collectionType)
         }
+    }
+
+    /** The toolbar already shows the name; the header keeps the colour, description and owner. */
+    private fun hideNameInHeader(container: View) {
+        container.findViewById<View>(R.id.display_name).visibility = View.GONE
+        (container.findViewById<View>(R.id.color).layoutParams as? ViewGroup.MarginLayoutParams)?.marginStart = 0
+    }
+
+    /** With no activity the list below shows the one empty message, so the count row hides. */
+    private fun showCountRow(container: View, count: Int) {
+        container.findViewById<View>(R.id.stats_row).visibility = if (count == 0) View.GONE else View.VISIBLE
     }
 
     /**
@@ -108,9 +120,10 @@ class ViewCollectionFragment : Fragment() {
         }
         container.findViewById<TextView>(R.id.owner).visibility =
             if (fixture.accessLevel == CollectionAccessLevel.Admin) View.GONE else View.VISIBLE
-        val stats = container.findViewById<TextView>(R.id.stats)
-        stats.text = if (fixture.itemContents.isEmpty()) getString(R.string.collection_recent_activity_none)
-        else resources.getQuantityString(R.plurals.collection_recent_activity_items, fixture.itemContents.size, fixture.itemContents.size)
+        val count = fixture.itemContents.size
+        showCountRow(container, count)
+        if (count > 0) container.findViewById<TextView>(R.id.stats).text =
+            resources.getQuantityString(R.plurals.collection_recent_activity_items, count, count)
         container.findViewById<View>(R.id.progressBar).visibility = View.GONE
         hideItemsForNotebook(container, fixture.type)
     }

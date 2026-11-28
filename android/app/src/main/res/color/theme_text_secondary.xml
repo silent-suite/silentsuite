@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AppTheme's android:textColorSecondary (setting summaries and similar): 38% when disabled, in both themes. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false" android:alpha="0.38" android:color="@color/semantic_on_surface_variant" />
+    <item android:color="@color/semantic_on_surface_variant" />
+</selector>
