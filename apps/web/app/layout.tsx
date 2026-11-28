@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next'
-import { interVariables } from '@/app/fonts/inter'
+import { interVariables } from '@/app/fonts/inter-font'
 import { ThemeProvider } from 'next-themes'
 import { NextIntlClientProvider } from 'next-intl'
 import { getLocale, getMessages } from 'next-intl/server'

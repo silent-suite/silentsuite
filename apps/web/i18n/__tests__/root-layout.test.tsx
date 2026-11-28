@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const intl = vi.hoisted(() => ({ locale: 'en' }))
 
-vi.mock('@/app/fonts/inter', () => ({ interVariables: 'font-inter' }))
+vi.mock('@/app/fonts/inter-font', () => ({ interVariables: 'font-inter' }))
 vi.mock('next-themes', () => ({ ThemeProvider: ({ children }: { children: unknown }) => children }))
 vi.mock('@/app/providers/auth-provider', () => ({ AuthProvider: ({ children }: { children: unknown }) => children }))
 vi.mock('@/app/globals.css', () => ({}))

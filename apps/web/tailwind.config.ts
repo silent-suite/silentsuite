@@ -55,7 +55,7 @@ const config: Config = {
         },
       },
       fontFamily: {
-        // One variable per Inter subset file (app/fonts/inter.ts); the browser takes
+        // One variable per Inter subset file (app/fonts/inter-font.ts); the browser takes
         // each character from the first family whose range covers it.
         sans: [
           'var(--font-inter-latin)',
