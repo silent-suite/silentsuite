@@ -14,7 +14,15 @@ on:
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
-      - 'apps/web/app/globals.css'
+      # Debug builds package a static copy of the web app (apps/web/android-bundle),
+      # so the web app and everything its install reads are build inputs too.
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'patches/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.npmrc'
       - 'runbooks/android-release.md'
       - 'scripts/check-android-signing-boundary.py'
       - '.github/workflows/**'
@@ -23,7 +31,15 @@ on:
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
-      - 'apps/web/app/globals.css'
+      # Debug builds package a static copy of the web app (apps/web/android-bundle),
+      # so the web app and everything its install reads are build inputs too.
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'patches/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.npmrc'
       - 'runbooks/android-release.md'
       - 'scripts/check-android-signing-boundary.py'
       - '.github/workflows/**'
@@ -107,8 +123,9 @@ jobs:
 
   # The trigger stays broad so the static contracts and the signing boundary see
   # every workflow change. Everything that builds or runs the app waits for this
-  # job and runs only when the change touches what those jobs read: android/**
-  # and this workflow. Jobs that need conscrypt-r28 or etebase-16kb skip with
+  # job and runs only when the change touches what those jobs read: android/**,
+  # this workflow, and the web app with its install inputs (debug builds package
+  # a static copy of it, apps/web/android-bundle). Jobs that need conscrypt-r28 or etebase-16kb skip with
   # them. Manual dispatches, and pushes whose base cannot be read, build
   # everything.
   #
@@ -156,7 +173,8 @@ jobs:
             # quoted names (non-ASCII, quotes, control characters) cannot slip
             # through. Exit 1: an Android input changed; 0: none did; other: fail.
             status=0
-            git diff --quiet --no-renames "$base" HEAD -- android .github/workflows/build-android.yml || status=$?
+            git diff --quiet --no-renames "$base" HEAD -- android .github/workflows/build-android.yml \
+              apps/web packages patches package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc || status=$?
             case "$status" in
               0) android=false ;;
               1) ;;

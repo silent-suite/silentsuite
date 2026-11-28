@@ -635,6 +635,8 @@ def test_only_android_build_inputs_start_the_build_jobs(candidate):
 
     detect = next(step for step in jobs[CHANGES_JOB]["steps"] if step.get("id") == "detect")["run"]
     assert "-- android .github/workflows/build-android.yml" in detect
+    # Debug builds package the web bundle, so the web app and its install inputs build too.
+    assert "apps/web packages patches package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc" in detect
     assert jobs[CHANGES_JOB]["outputs"] == {"android": "${{ steps.detect.outputs.android }}"}
     assert jobs[CHANGES_JOB]["permissions"] == {"contents": "read"}
 
@@ -646,7 +648,13 @@ def test_only_android_build_inputs_start_the_build_jobs(candidate):
         ('android/app/src/main/res/raw/quote"name.txt', "true"),
         ("android/build.gradle.kts", "true"),
         (".github/workflows/build-android.yml", "true"),
-        ("apps/web/app/globals.css", "false"),
+        ("apps/web/app/globals.css", "true"),
+        ("apps/web/app/(app)/calendar/page.tsx", "true"),
+        ("packages/core/src/index.ts", "true"),
+        ("patches/example.patch", "true"),
+        ("pnpm-lock.yaml", "true"),
+        (".npmrc", "true"),
+        ("apps/docs/index.md", "false"),
         ("docs/android/notes.md", "false"),
         (".github/workflows/ci.yml", "false"),
     ],
