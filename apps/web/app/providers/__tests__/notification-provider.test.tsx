@@ -258,4 +258,24 @@ describe('NotificationProvider schedules zone-correct alarms for a UTC-anchored 
     view.unmount()
   })
 
+  it('keeps a moved occurrence apart from the occurrence it lands on', async () => {
+    vi.setSystemTime(new Date('2026-03-09T12:00:00Z'))
+    state.events = [deserializeCalendarEvent(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+      'BEGIN:VEVENT', 'UID:collide', 'SUMMARY:Daily', 'DTSTART:20260309T180000Z', 'DTEND:20260309T190000Z',
+      'RRULE:FREQ=DAILY;COUNT=3', 'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT15M', 'END:VALARM', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:collide', 'RECURRENCE-ID:20260310T180000Z', 'DTSTART:20260311T180000Z', 'DTEND:20260311T190000Z',
+      'SUMMARY:Moved', 'END:VEVENT',
+      'END:VCALENDAR'].join('\r\n'))]
+    const view = render(<NotificationProvider>{null}</NotificationProvider>)
+    await flushAsync()
+    const alarms = scheduleMessages().at(-1) ?? []
+    expect(alarms.map(a => [a.triggerAt, a.title]).sort()).toEqual([
+      [ms('2026-03-09T17:45:00Z'), 'Daily'],
+      [ms('2026-03-11T17:45:00Z'), 'Daily'],
+      [ms('2026-03-11T17:45:00Z'), 'Moved'],
+    ].sort())
+    expect(new Set(alarms.map(a => a.id)).size).toBe(3)
+    view.unmount()
+  })
+
 })

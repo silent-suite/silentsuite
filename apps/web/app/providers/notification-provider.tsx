@@ -127,8 +127,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         const seconds = absolute ? null : parseICalDurationSeconds(alarm.trigger)
         if (!absolute && seconds === null) continue
         const offset = (seconds ?? 0) * 1000
-        let occurrences: Array<{ start: Date; end: Date; title: string }>
-        const single = [{ start: event.startDate, end: event.endDate, title: event.title }]
+        // `instance` is the occurrence's recurrence identity: a moved one keeps its original start,
+        // so it cannot collide with the occurrence it lands on.
+        let occurrences: Array<{ start: Date; end: Date; title: string; instance: Date }>
+        const single = [{ start: event.startDate, end: event.endDate, title: event.title, instance: event.startDate }]
         let absoluteAt = NaN
         if (absolute) {
           const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(alarm.trigger)
@@ -147,17 +149,19 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           try {
             // The agenda's expansion: moved occurrences at their new time, cancelled ones left out.
             occurrences = expandEventsForRange([event], { start: new Date(start), end: new Date(end) })
-              .map((occurrence) => ({ start: occurrence.startDate, end: occurrence.endDate, title: occurrence.title }))
+              .map((occurrence) => ({
+                start: occurrence.startDate, end: occurrence.endDate, title: occurrence.title, instance: occurrence.instanceDate,
+              }))
           } catch {
             occurrences = single
           }
         } else {
           occurrences = single
         }
-        for (const { start: occStart, end: occEnd, title: occTitle } of occurrences) {
+        for (const { start: occStart, end: occEnd, title: occTitle, instance } of occurrences) {
           const alarmTime = absolute ? absoluteAt : (relatedEnd ? occEnd : occStart).getTime() + offset
           const timerId = absolute ? `${event.id}_absolute_${alarmIndex}_${alarm.trigger}`
-            : `${event.id}_${occStart.getTime()}_${alarm.trigger}${relatedEnd ? `_end_${alarmIndex}` : alarmIndex ? `_${alarmIndex}` : ''}`
+            : `${event.id}_${instance.getTime()}_${alarm.trigger}${relatedEnd ? `_end_${alarmIndex}` : alarmIndex ? `_${alarmIndex}` : ''}`
           const notificationTitle = !absolute && !relatedEnd && offset < 0 ? `Event in ${formatTimeLabel(-offset)}` : occTitle
           // Only schedule if in the future and within lookahead window
           if (alarmTime > now && alarmTime < now + LOOKAHEAD_MS) {
