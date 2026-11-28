@@ -17,6 +17,7 @@ on:
       # Debug builds package a static copy of the web app (apps/web/android-bundle),
       # so the web app and everything its install reads are build inputs too.
       - 'apps/web/**'
+      - 'apps/web/app/globals.css'
       - 'packages/**'
       - 'patches/**'
       - 'package.json'
@@ -34,6 +35,7 @@ on:
       # Debug builds package a static copy of the web app (apps/web/android-bundle),
       # so the web app and everything its install reads are build inputs too.
       - 'apps/web/**'
+      - 'apps/web/app/globals.css'
       - 'packages/**'
       - 'patches/**'
       - 'package.json'

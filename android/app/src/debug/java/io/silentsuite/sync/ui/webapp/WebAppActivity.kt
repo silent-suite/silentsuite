@@ -14,6 +14,7 @@ import android.accounts.OnAccountsUpdateListener
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.res.AssetManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -29,6 +30,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
+import androidx.annotation.VisibleForTesting
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.ProfileStore
@@ -62,10 +64,17 @@ class WebAppActivity : BaseActivity() {
     private var listeningForAccounts = false
     private val accountsListener = OnAccountsUpdateListener { closeUnlessStillBound() }
 
+    /** Where the bundle is read from: the app's own files, unless a test put its fixture in place. */
+    private val bundleAssets: AssetManager get() = assetsOverride ?: assets
+
+    /** The web view on screen, or null while a message is shown instead. Read by tests only. */
+    @get:VisibleForTesting
+    internal val webViewForTesting: WebView? get() = webView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val bundle = WebAppBundle.load(assets) ?: return showMessage("This build carries no web bundle.")
+        val bundle = WebAppBundle.load(bundleAssets) ?: return showMessage("This build carries no web bundle.")
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
             return showMessage("This screen needs a newer Android System WebView.")
         }
@@ -95,7 +104,7 @@ class WebAppActivity : BaseActivity() {
      */
     private fun closeUnlessStillBound() {
         val account = boundAccount ?: return
-        val bundle = WebAppBundle.load(assets)
+        val bundle = WebAppBundle.load(bundleAssets)
         val stillBound = bundle != null && accountExists(account) && profileFor(account, bundle) == boundProfile
         if (!stillBound) {
             boundAccount = null
@@ -286,5 +295,10 @@ class WebAppActivity : BaseActivity() {
         /** Name of the account to open; without it the device's only account is used. */
         const val EXTRA_ACCOUNT = "account"
         private const val STATE_PROFILE = "webapp.profile"
+
+        /** Instrumentation seam: tests load a small fixture bundle from their own APK. Null everywhere else. */
+        @VisibleForTesting
+        @Volatile
+        internal var assetsOverride: AssetManager? = null
     }
 }

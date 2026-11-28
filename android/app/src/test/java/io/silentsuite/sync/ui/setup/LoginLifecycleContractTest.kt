@@ -277,12 +277,12 @@ class LoginLifecycleContractTest {
     fun freshEmulatorShardsAreBoundedDisjointAndExactlyCoverRuntimeMethods() {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         assertTrue(runtimeScript.contains("focused-runtime-ledger-v1.json"))
-        assertTrue(runtimeScript.contains("if len(tests) != 275 or len(set(tests)) != 275"))
+        assertTrue(runtimeScript.contains("if len(tests) != 284 or len(set(tests)) != 284"))
         listOf(
             "\"29:mixed\": 1", "\"29:requested\": 1", "\"29:account-dashboard\": 38",
-            "\"35:all\": 275", "\"36:account-dashboard\": 33", "\"36:launcher-recovery\": 7",
-            "\"36:first-run-setup\": 20", "\"36:sibling-routes\": 54", "\"36:status-routes\": 161",
-            "[1, 1, 38, 20, 54, 161]", "API 29 execution shards are not a disjoint cover of the canonical runtime ledger",
+            "\"35:all\": 284", "\"36:account-dashboard\": 33", "\"36:launcher-recovery\": 7",
+            "\"36:first-run-setup\": 20", "\"36:sibling-routes\": 63", "\"36:status-routes\": 161",
+            "[1, 1, 38, 20, 63, 161]", "API 29 execution shards are not a disjoint cover of the canonical runtime ledger",
         ).forEach { assertTrue(runtimeScript.contains(it)) }
         assertTrue(runtimeScript.contains("api29_account_dashboard_selectors=\"\$(ledger_selectors '29:account-dashboard')\""))
         assertFalse(runtimeScript.contains("remaining_selectors"))
