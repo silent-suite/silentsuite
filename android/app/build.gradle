@@ -70,6 +70,12 @@ android {
         includeInBundle = false
     }
 
+    // Debug builds carry the bundled web app when it has been built
+    // (apps/web/android-bundle/build.mjs writes it there); release builds never do.
+    sourceSets {
+        debug.assets.srcDirs += rootProject.file('../apps/web/android-bundle/dist')
+    }
+
 
     testOptions {
         unitTests.returnDefaultValues = true
@@ -226,6 +232,10 @@ dependencies {
     androidTestImplementation "androidx.test.uiautomator:uiautomator:${androidX.uiAutomator}"
     androidTestImplementation "androidx.test.espresso:espresso-core:${androidX.espresso}"
     androidTestImplementation 'net.sf.kxml:kxml2:2.3.0'
+    // Debug builds only: separate web storage profiles for the bundled web app screen
+    // (ui/webapp/WebAppActivity). Release builds do not carry this library.
+    debugImplementation 'androidx.webkit:webkit:1.11.0'
+
     testImplementation 'junit:junit:4.13.2'
     // JSON parser for ProblemReport assertions only; nothing in the APK uses Gson.
     testImplementation 'com.google.code.gson:gson:2.13.2'
