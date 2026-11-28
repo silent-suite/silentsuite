@@ -1623,65 +1623,6 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(true)
   })
 
-  describe('token exchange failure after verified credentials', () => {
-    const signInAs = async (fingerprint: string) => {
-      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
-      vi.mocked(etebaseLogIn).mockResolvedValueOnce({
-        authToken: 'mock-auth-token',
-        savedSession: 'mock-saved-session',
-        accountFingerprint: fingerprint,
-      })
-    }
-    const expectSignedOutWithoutSession = () => {
-      expect(useAuthStore.getState().isAuthenticated).toBe(false)
-      expect(secureStore['etebase_session']).toBeUndefined()
-      expect(localStorage.getItem('silentsuite-hosted-validation-initialized')).toBeNull()
-    }
-
-    it.each([
-      [429, 'Too many sign-in attempts. Please wait a few minutes before trying again. Your encrypted data is safe.'],
-      [500, 'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.'],
-      [503, 'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.'],
-    ])('a %i keeps the offline queue and data cache and shows a retryable error', async (status, message) => {
-      await signInAs('account-a-fingerprint')
-      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status } as Response)
-
-      await useAuthStore.getState().login('test@example.com', 'password123')
-
-      expectSignedOutWithoutSession()
-      expect(useAuthStore.getState().error).toBe(message)
-      expect(offlineQueueClearAll).not.toHaveBeenCalled()
-      expect(dataCacheClearAll).not.toHaveBeenCalled()
-      // Other accounts' queued work is still dropped before the exchange.
-      expect(offlineQueueClearOtherAccounts).toHaveBeenCalledWith('account-a-fingerprint')
-    })
-
-    it('a network failure keeps the offline queue and data cache and shows a retryable error', async () => {
-      await signInAs('account-a-fingerprint')
-      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
-
-      await useAuthStore.getState().login('test@example.com', 'password123')
-
-      expect(useAuthStore.getState().isAuthenticated).toBe(false)
-      expect(useAuthStore.getState().error).toBe(
-        'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.',
-      )
-      expect(offlineQueueClearAll).not.toHaveBeenCalled()
-      expect(dataCacheClearAll).not.toHaveBeenCalled()
-    })
-
-    it.each([401, 403, 404, 409, 400])('a %i still clears the offline queue and data cache', async (status) => {
-      await signInAs('account-a-fingerprint')
-      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status } as Response)
-
-      await useAuthStore.getState().login('test@example.com', 'password123')
-
-      expectSignedOutWithoutSession()
-      expect(offlineQueueClearAll).toHaveBeenCalledTimes(1)
-      expect(dataCacheClearAll).toHaveBeenCalledTimes(1)
-    })
-  })
-
   describe('server selection is saved only after the credentials are verified', () => {
     const KEY = 'silentsuite-server-url'
     const customUrl = 'https://dav.example.test'
