@@ -255,7 +255,7 @@ ct rm -f /root/markers
 grep -v '^control-' "$MARKERS" | cut -f2 >"$work/own-markers"
 hits=$({ grep -lF -f "$work/own-markers" "$work"/*.log || true; } | wc -l)
 [ "$hits" = 0 ] || fail "log markers: $hits installer output file(s) contain a secret or identifier"
-pass "installation secrets of both installs, every auth token the witness obtained and the witness IDs appear in no installer output, /var/log/yunohost, nginx log or journal (except YunoHost's own db_pwd trace, and request IDs in nginx lines while YunoHost had the app removed)"
+pass "installation secrets of both installs, every auth token the witness obtained and the witness IDs appear in no installer output, /var/log/yunohost, nginx log or journal (except YunoHost's own db_pwd trace, and request IDs in nginx lines during a failed upgrade's removal-to-restore operation interval)"
 
 group "remove"
 purge_app

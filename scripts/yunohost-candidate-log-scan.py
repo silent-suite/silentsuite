@@ -76,7 +76,7 @@ def main():
                           if (t := line_time(line)) is not None
                           and any(a <= t <= b for a, b in windows)]
                 if inside:
-                    print(f"INFO {kind} in {name}: {len(inside)} line(s) while the app was removed")
+                    print(f"INFO {kind} in {name}: {len(inside)} line(s) during the removal-to-restore operation interval")
                 matching = [line for line in matching if line not in inside]
                 if not matching:
                     continue
