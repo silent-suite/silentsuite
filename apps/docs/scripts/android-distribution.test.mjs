@@ -287,8 +287,9 @@ test('current docs and Settings expose iOS only as unsupported roadmap work', ()
   assert.match(hostedIos, /## Planned/)
   assert.match(hostedIos, /scope and timing haven't been decided/)
   assert.match(hostedIos, /does not support iOS native sync yet/)
-  assert.match(settingsMobile, /On the roadmap, coming soon/)
-  assert.match(settingsMobile, /iOS is not currently supported\./)
+  assert.match(settingsMobile, /Native app planned/)
+  assert.match(settingsMobile, /iOS isn&apos;t supported yet, and the app&apos;s scope and timing haven&apos;t been decided\./)
+  assert.doesNotMatch(settingsMobile, /coming soon/i)
 
   for (const path of inventory) {
     const content = read(path)

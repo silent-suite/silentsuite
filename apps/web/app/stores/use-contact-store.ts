@@ -372,16 +372,20 @@ export const useContactStore = create<ContactState & ContactActions>()(
           }
           let skipped = 0
           for (const target of targets) {
+            // A destination that vanished during the read has nothing to match; its cards stay not sent.
+            if (!target.collectionUid || useEtebaseStore.getState().resolveCollectionUid('contacts', target.collectionUid) !== target.collectionUid) continue
             for (const position of target.positions) {
               const uid = newContacts[position]!.uid
               if (!uid || !target.onServer.has(uid)) continue
               outcomes[position] = 'skipped'
               skipped++
-              if (target.collectionUid) uncertainFileImports.delete(uncertainKey(accountEpoch, target.collectionUid, uid))
+              uncertainFileImports.delete(uncertainKey(accountEpoch, target.collectionUid, uid))
             }
           }
           if (skipped > 0) options.onSkipped?.(skipped)
           const total = outcomes.filter((outcome) => outcome !== 'skipped').length
+          // The count drops skipped cards now, not only once the first batch is encrypted.
+          if (skipped > 0) set({ fileImport: { saved: 0, total } })
           let savedBefore = 0
           const now = new Date()
           for (const target of targets) {
