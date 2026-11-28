@@ -506,3 +506,24 @@ def test_list_accounts_shows_signed_out_accounts_with_local_copy(
         in out
     )
     assert "alice@example.com (remove with" not in out
+
+
+def test_list_accounts_survives_corrupt_cache(tmp_path, monkeypatch, capsys):
+    from silentsuite_bridge.local_cache import db
+
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    accounts.store_authenticated_account(
+        "alice@example.com", "password", "alice-session", "https://server-a.test",
+    )
+    corrupt = tmp_path / "bridge_data.db"
+    corrupt.write_bytes(b"not a sqlite database" * 100)
+    monkeypatch.setattr(config, "DATABASE_FILE", str(corrupt))
+    monkeypatch.setattr(db.database_proxy, "obj", None)
+
+    code = _run_main(["--list-accounts"], monkeypatch)
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "alice@example.com (https://server-a.test)" in captured.out
+    assert "could not read the local cache" in captured.err
+    assert corrupt.read_bytes() == b"not a sqlite database" * 100
