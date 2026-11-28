@@ -111,10 +111,11 @@ services:
             sys.exit(1)
 
         # Root never follows a link inside the mounted folders: every file it reads, writes
-        # or re-owns is opened with O_NOFOLLOW, and temporary files are created exclusively.
+        # or re-owns is opened with O_NOFOLLOW (and O_NONBLOCK, so a FIFO is refused rather than
+        # waited on), and temporary files are created exclusively.
         def read(name):
             try:
-                descriptor = os.open("/secrets/" + name, os.O_RDONLY | os.O_NOFOLLOW)
+                descriptor = os.open("/secrets/" + name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
                 with os.fdopen(descriptor, encoding="ascii") as handle:
                     if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
                         return None
@@ -148,7 +149,7 @@ services:
             fsync_dir(os.path.dirname(path))
 
         def own(path, uid, gid, mode, directory=False):
-            flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if directory else 0)
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | (os.O_DIRECTORY if directory else 0)
             try:
                 descriptor = os.open(path, flags)
             except OSError:
@@ -389,7 +390,7 @@ x-casaos:
 
         To create your account, open your HTTPS address, choose Sign up and enter the installation password. You find it in the Files app at /DATA/AppData/silentsuite/installation-password/password.txt. Then choose your own account password. It encrypts your data and is never sent to the server, so it cannot be recovered if you lose it.
 
-        Backups: stop SilentSuite in the dashboard first, then copy the whole /DATA/AppData/silentsuite folder as root keeping owners and permissions, for example with sudo cp -a. The folder holds the database, the encrypted files and the generated credentials; a copy taken while the app runs may not restore. To restore, stop the app, move the existing folder aside, copy the backup back to /DATA/AppData/silentsuite, then start the app.
+        Backups: stop SilentSuite in the dashboard first, then copy the contents of /DATA/AppData/silentsuite as root into a new, empty folder, keeping owners and permissions: sudo mkdir NEW-FOLDER && sudo cp -a /DATA/AppData/silentsuite/. NEW-FOLDER/ (mkdir refuses a name that is already taken). The folder holds the database, the encrypted files and the generated credentials; a copy taken while the app runs may not restore. To restore, stop the app, move the existing folder aside, recreate /DATA/AppData/silentsuite with sudo mkdir and copy the backup's contents into it, then start the app. The guide linked under Docs has the exact commands.
   website: https://silentsuite.io
   repo: https://github.com/silent-suite/silentsuite
   docs: https://github.com/silent-suite/silentsuite/blob/main/self-host/casaos/README.md

@@ -153,7 +153,7 @@ describe('CasaOS package credentials', () => {
   it('never follows a link as root: no-follow opens, exclusive temporary files, fd-based ownership', () => {
     const init = program('silentsuite-init')
     expect(init).toContain('os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW')
-    expect(init).toContain('os.O_RDONLY | os.O_NOFOLLOW')
+    expect(init).toContain('os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK')
     expect(init).not.toMatch(/os\.(chown|chmod)\(/)
     expect(init).not.toContain('os.makedirs')
   })
@@ -214,7 +214,7 @@ describe('CasaOS listing copy', () => {
 
   it('documents a stopped, ownership-preserving backup and a move-aside restore', () => {
     expect(tips).toContain('stop SilentSuite in the dashboard first')
-    expect(tips).toContain('sudo cp -a')
+    expect(tips).toContain('sudo mkdir NEW-FOLDER && sudo cp -a /DATA/AppData/silentsuite/. NEW-FOLDER/')
     expect(tips).toContain('move the existing folder aside')
   })
 

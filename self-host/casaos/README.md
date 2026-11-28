@@ -68,13 +68,13 @@ not accept them. Restore the folder from your backup.
 Stop SilentSuite in the dashboard before you copy anything. A copy taken while PostgreSQL runs
 may not restore.
 
-Back up to a folder that does not exist yet. If the destination already exists, `cp -a` copies
-into it instead of replacing it, and the restore would pick up the older copy. The command
-below names each backup by date and time and stops if that name is taken:
+Back up to a new folder. `sudo mkdir` creates it and fails if that name is already taken, even
+in a folder only root can read, and the copy runs only if `mkdir` succeeded. Copying the
+folder's contents (`silentsuite/.`) into the new folder keeps every backup at the same depth:
 
 ```bash
 dest=/path/to/backup/silentsuite-$(date +%Y%m%d-%H%M%S)
-test ! -e "$dest" && sudo cp -a /DATA/AppData/silentsuite "$dest"
+sudo mkdir "$dest" && sudo cp -a /DATA/AppData/silentsuite/. "$dest"/
 ```
 
 Then start the app again. `cp -a` keeps owners and permissions. The containers need both.
@@ -82,17 +82,18 @@ Then start the app again. `cp -a` keeps owners and permissions. The containers n
 Restore:
 
 1. Stop SilentSuite in the dashboard and check that its containers have stopped.
-2. Move the current folder aside, under a name that is not taken yet:
+2. Move the current folder aside into a new folder (it ends up at `$aside/silentsuite`):
 
    ```bash
    aside=/DATA/AppData/silentsuite.before-restore-$(date +%Y%m%d-%H%M%S)
-   test ! -e "$aside" && sudo mv /DATA/AppData/silentsuite "$aside"
+   sudo mkdir "$aside" && sudo mv /DATA/AppData/silentsuite "$aside"/
    ```
 
-3. Copy the backup back. This stops if `/DATA/AppData/silentsuite` still exists:
+3. Copy the backup back. `mkdir` fails, and nothing is copied, if `/DATA/AppData/silentsuite`
+   still exists:
 
    ```bash
-   test ! -e /DATA/AppData/silentsuite && sudo cp -a /path/to/backup/silentsuite-<date-time> /DATA/AppData/silentsuite
+   sudo mkdir /DATA/AppData/silentsuite && sudo cp -a /path/to/backup/silentsuite-<date-time>/. /DATA/AppData/silentsuite/
    ```
 
 4. Start SilentSuite.

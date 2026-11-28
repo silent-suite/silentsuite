@@ -318,16 +318,30 @@ run_probe owner-login ci_upgrade_user
 step "backup and restore"
 dc down >/dev/null
 test -z "$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT")" || fail "containers still running"
-sudo cp -a "$up_dir" "$work/backup"
+# The README's commands, verbatim apart from the paths. The backup parent is root-only, so an
+# unprivileged existence check could not see a taken name; mkdir must refuse it instead.
+backup_parent="$work/backups"
+sudo mkdir -m 700 "$backup_parent"
+dest="$backup_parent/silentsuite-1"
+sudo mkdir "$dest" && sudo cp -a "$up_dir"/. "$dest"/
+before="$(sudo ls -A "$dest" | sort)"
+if sudo mkdir "$dest" 2>/dev/null && sudo cp -a "$up_dir"/. "$dest"/; then
+  fail "a second backup to a taken name was not refused"
+fi
+test "$(sudo ls -A "$dest" | sort)" = "$before" || fail "a refused backup changed the existing snapshot"
 dc up -d >/dev/null
 wait_init; test "$INIT_EXIT" = 0 || fail "init failed after the backup"
 run_probe full ci_after_backup_user
 add_sentinel "$up_dir" ci-sentinel-2
 dc down >/dev/null
 test -z "$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT")" || fail "containers still running"
-sudo mv "$up_dir" "$work/upgrade-aside"
-sudo cp -a "$work/backup" "$up_dir"
-sudo mv "$work/backup" "$work/backup-away"  # the restored copy must not depend on the backup
+if sudo mkdir "$up_dir" 2>/dev/null && sudo cp -a "$dest"/. "$up_dir"/; then
+  fail "restore over an existing app folder was not refused"
+fi
+aside="$work/upgrade-aside"
+sudo mkdir "$aside" && sudo mv "$up_dir" "$aside"/
+sudo mkdir "$up_dir" && sudo cp -a "$dest"/. "$up_dir"/
+sudo mv "$dest" "$backup_parent/moved-away"  # the restored copy must not depend on the backup
 dc up -d >/dev/null
 wait_init; test "$INIT_EXIT" = 0 || fail "init failed after the restore"
 run_probe after-restart ci_upgrade_user
