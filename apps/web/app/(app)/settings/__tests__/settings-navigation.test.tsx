@@ -33,6 +33,10 @@ vi.mock('@/app/stores/use-auth-store', () => ({
   useAuthStore: (selector: (value: { user: { isAdmin: boolean } }) => unknown) => selector({ user: { isAdmin: state.isAdmin } }),
 }))
 
+vi.mock('@/app/components/OnboardingChecklist', () => ({
+  OnboardingChecklistAt: ({ width }: { width: string }) => <div data-testid="onboarding-checklist">{width}</div>,
+}))
+
 const hostedLinks = [
   ['Account', '/settings/account', 'Profile, date & time, reminders'],
   ['Security', '/settings/security', 'Password & account fingerprint'],
@@ -134,6 +138,19 @@ describe('settings navigation', () => {
       expect(link).not.toHaveAttribute('aria-current')
       expect(link).not.toHaveAttribute('role', 'tab')
     })
+  })
+
+  it('opens the overview with the phone-width onboarding checklist', () => {
+    render(<SettingsPage />)
+    const checklist = screen.getByTestId('onboarding-checklist')
+    expect(checklist).toHaveTextContent('below-md')
+    expect(checklist.parentElement).toBe(settingsNav().parentElement)
+    expect(checklist.parentElement?.firstElementChild).toBe(checklist)
+  })
+
+  it('leaves the onboarding checklist off settings detail routes', () => {
+    renderDetail('/settings/account')
+    expect(screen.queryByTestId('onboarding-checklist')).toBeNull()
   })
 
   it('does not duplicate a rail or back link on the overview', () => {
